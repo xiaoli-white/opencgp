@@ -15,10 +15,13 @@ from typing import Any, Callable
 
 from app.config import Settings, get_settings
 from app.ports.database import Database
+from app.ports.embedding import EmbeddingProvider
 from app.ports.exporter import Exporter
 from app.ports.llm import LLMProvider
+from app.ports.parser import DocumentParser
 from app.ports.storage import StorageBackend
 from app.ports.vectorstore import VectorStore
+from app.services.ingest import IngestService
 
 
 class Container:
@@ -78,16 +81,51 @@ class Container:
 
         return self._get_or_build("llm", build)
 
+    def parser(self) -> DocumentParser:
+        def build() -> DocumentParser:
+            backend = self.settings.parser.backend
+            if backend == "builtin":
+                from app.adapters.parser.builtin import BuiltinDocumentParser
+
+                return BuiltinDocumentParser()
+            raise ValueError(f"不支持的 parser backend: {backend!r}")
+
+        return self._get_or_build("parser", build)
+
+    def embedder(self) -> EmbeddingProvider | None:
+        def build() -> EmbeddingProvider | None:
+            backend = self.settings.embedding.backend
+            if backend in ("", "none"):
+                return None
+            raise ValueError(f"不支持的 embedding backend: {backend!r}")
+
+        return self._get_or_build("embedder", build)
+
     def vectorstore(self) -> VectorStore:
         def build() -> VectorStore:
             backend = self.settings.vectorstore.backend
             if backend == "simple":
                 from app.adapters.vectorstore.simple import SimpleVectorStore
 
-                return SimpleVectorStore(path=self.settings.vectorstore.path)
+                return SimpleVectorStore(
+                    path=self.settings.vectorstore.path,
+                    embedder=self.embedder(),
+                )
             raise ValueError(f"不支持的 vectorstore backend: {backend!r}")
 
         return self._get_or_build("vectorstore", build)
+
+    def ingest(self) -> IngestService:
+        def build() -> IngestService:
+            return IngestService(
+                vectorstore=self.vectorstore(),
+                parser=self.parser(),
+                chunk_size=self.settings.ingest.chunk_size,
+                chunk_overlap=self.settings.ingest.chunk_overlap,
+                max_file_mb=self.settings.ingest.max_file_mb,
+            )
+
+        return self._get_or_build("ingest", build)
 
     def exporter(self) -> Exporter:
         def build() -> Exporter:

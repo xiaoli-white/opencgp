@@ -5,8 +5,10 @@
 """
 
 from app.ports.database import Database
+from app.ports.embedding import EmbeddingProvider
 from app.ports.exporter import Exporter
 from app.ports.llm import LLMProvider
+from app.ports.parser import DocumentParser, ParsedDocument
 from app.ports.storage import StorageBackend
 from app.ports.vectorstore import VectorStore
 
@@ -16,4 +18,7 @@ __all__ = [
     "LLMProvider",
     "VectorStore",
     "Exporter",
+    "DocumentParser",
+    "ParsedDocument",
+    "EmbeddingProvider",
 ]

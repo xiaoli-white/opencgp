@@ -24,6 +24,8 @@ STORAGE_BACKENDS = ("local", "s3", "rustfs")
 LLM_BACKENDS = ("openai_compat", "dummy")
 VECTORSTORE_BACKENDS = ("simple", "pgvector")
 EXPORTER_BACKENDS = ("builtin",)
+PARSER_BACKENDS = ("builtin",)
+EMBEDDING_BACKENDS = ("none", "openai_compat")
 
 
 def _find_dotenv() -> Path | None:
@@ -123,6 +125,49 @@ class ExporterConfig:
 
 
 @dataclass
+class ParserConfig:
+    backend: str = "builtin"
+
+    @classmethod
+    def from_env(cls) -> "ParserConfig":
+        return cls(backend=_env("PARSER_BACKEND", "builtin"))
+
+
+@dataclass
+class EmbeddingConfig:
+    backend: str = "none"
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    dimension: int = 1024
+
+    @classmethod
+    def from_env(cls) -> "EmbeddingConfig":
+        return cls(
+            backend=_env("EMBEDDING_BACKEND", "none"),
+            base_url=_env("EMBEDDING_BASE_URL", ""),
+            api_key=_env("EMBEDDING_API_KEY", ""),
+            model=_env("EMBEDDING_MODEL", ""),
+            dimension=int(_env("EMBEDDING_DIMENSION", "1024") or 1024),
+        )
+
+
+@dataclass
+class IngestConfig:
+    chunk_size: int = 800
+    chunk_overlap: int = 120
+    max_file_mb: int = 20
+
+    @classmethod
+    def from_env(cls) -> "IngestConfig":
+        return cls(
+            chunk_size=int(_env("INGEST_CHUNK_SIZE", "800") or 800),
+            chunk_overlap=int(_env("INGEST_CHUNK_OVERLAP", "120") or 120),
+            max_file_mb=int(_env("INGEST_MAX_FILE_MB", "20") or 20),
+        )
+
+
+@dataclass
 class Settings:
     """应用总配置。"""
 
@@ -133,6 +178,9 @@ class Settings:
     llm: LLMConfig = field(default_factory=LLMConfig)
     vectorstore: VectorStoreConfig = field(default_factory=VectorStoreConfig)
     exporter: ExporterConfig = field(default_factory=ExporterConfig)
+    parser: ParserConfig = field(default_factory=ParserConfig)
+    embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+    ingest: IngestConfig = field(default_factory=IngestConfig)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -144,6 +192,9 @@ class Settings:
             llm=LLMConfig.from_env(),
             vectorstore=VectorStoreConfig.from_env(),
             exporter=ExporterConfig.from_env(),
+            parser=ParserConfig.from_env(),
+            embedding=EmbeddingConfig.from_env(),
+            ingest=IngestConfig.from_env(),
         )
 
 

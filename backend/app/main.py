@@ -1,22 +1,24 @@
 """FastAPI 应用入口。
 
-提供健康检查端点 ``/health``，并装配 Port/Adapter 容器。
+提供健康检查端点 ``/health``、LLM 生成端点与 RAG 知识库端点，
+并装配 Port/Adapter 容器。
 启动方式（M0 单机）：:
 
     cd backend
-    uvicorn app.main:app --reload --port 8000
+    uvicorn app.main:app --port 8000
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.container import get_container
+from app.models.citation import Citation
 
 settings = get_settings()
 container = get_container()
@@ -47,7 +49,7 @@ def health() -> dict[str, Any]:
     便于编排系统（如 Docker Compose / K8s）做探针判断。
     """
     adapters: dict[str, Any] = {}
-    for name in ("database", "storage", "llm", "vectorstore", "exporter"):
+    for name in ("database", "storage", "llm", "vectorstore", "exporter", "parser"):
         try:
             obj = getattr(container, name)()
             ok = bool(obj.healthcheck())
@@ -90,3 +92,44 @@ async def generate_stream(req: GenerateRequest) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/api/v1/kb/upload")
+async def kb_upload(
+    file: UploadFile = File(...),
+    source_name: str | None = Form(default=None),
+) -> dict[str, Any]:
+    data = await file.read()
+    filename = file.filename or "upload.bin"
+    try:
+        result = await container.ingest().ingest_bytes(
+            data, filename, source_name=source_name
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result.model_dump()
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1, le=50)
+    source_ids: list[str] | None = None
+
+
+@app.post("/api/v1/kb/search")
+async def kb_search(req: SearchRequest) -> dict[str, Any]:
+    citations: list[Citation] = await container.ingest().search(
+        req.query, top_k=req.top_k, source_ids=req.source_ids
+    )
+    return {
+        "query": req.query,
+        "top_k": req.top_k,
+        "count": len(citations),
+        "citations": [citation.model_dump() for citation in citations],
+    }
+
+
+@app.delete("/api/v1/kb/sources/{source_id}")
+async def kb_delete_source(source_id: str) -> dict[str, Any]:
+    removed = await container.ingest().delete_source(source_id)
+    return {"source_id": source_id, "deleted_chunks": removed}
