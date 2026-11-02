@@ -21,7 +21,7 @@ ENV_PREFIX = "COURSE_STUDIO_"
 # 各模块允许的 adapter 名称（供文档与校验参考）
 DATABASE_BACKENDS = ("sqlite", "postgres")
 STORAGE_BACKENDS = ("local", "s3", "rustfs")
-LLM_BACKENDS = ("openai_compat",)
+LLM_BACKENDS = ("openai_compat", "dummy")
 VECTORSTORE_BACKENDS = ("simple", "pgvector")
 EXPORTER_BACKENDS = ("builtin",)
 

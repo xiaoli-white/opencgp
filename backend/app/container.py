@@ -58,7 +58,15 @@ class Container:
     def llm(self) -> LLMProvider:
         def build() -> LLMProvider:
             backend = self.settings.llm.backend
+            if backend == "dummy":
+                from app.adapters.llm.dummy import DummyProvider
+
+                return DummyProvider()
             if backend == "openai_compat":
+                if not self.settings.llm.api_key:
+                    from app.adapters.llm.dummy import DummyProvider
+
+                    return DummyProvider()
                 from app.adapters.llm.openai_compat import OpenAICompatLLM
 
                 return OpenAICompatLLM(

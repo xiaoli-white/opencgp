@@ -12,6 +12,8 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from app.config import get_settings
 from app.container import get_container
@@ -61,3 +63,30 @@ def health() -> dict[str, Any]:
         "env": settings.env,
         "adapters": adapters,
     }
+
+
+class GenerateRequest(BaseModel):
+    prompt: str
+
+
+@app.post("/api/v1/generate")
+async def generate(req: GenerateRequest) -> dict[str, str]:
+    provider = container.llm()
+    text = await provider.complete(req.prompt)
+    return {"text": text}
+
+
+@app.post("/api/v1/generate/stream")
+async def generate_stream(req: GenerateRequest) -> StreamingResponse:
+    provider = container.llm()
+
+    async def event_stream():
+        async for token in provider.stream_complete(req.prompt):
+            yield f"data: {token}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
