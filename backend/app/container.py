@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from app.config import Settings, get_settings
+from app.ports.course_repository import CourseRepository
 from app.ports.database import Database
 from app.ports.embedding import EmbeddingProvider
 from app.ports.exporter import Exporter
@@ -21,6 +22,7 @@ from app.ports.llm import LLMProvider
 from app.ports.parser import DocumentParser
 from app.ports.storage import StorageBackend
 from app.ports.vectorstore import VectorStore
+from app.services.generation import GenerationService
 from app.services.ingest import IngestService
 
 
@@ -137,6 +139,27 @@ class Container:
             raise ValueError(f"不支持的 exporter backend: {backend!r}")
 
         return self._get_or_build("exporter", build)
+
+    def course_repository(self) -> CourseRepository:
+        def build() -> CourseRepository:
+            from app.adapters.database.course_repository import DatabaseCourseRepository
+
+            return DatabaseCourseRepository(database=self.database())
+
+        return self._get_or_build("course_repository", build)
+
+    def generation(self) -> GenerationService:
+        def build() -> GenerationService:
+            return GenerationService(
+                repository=self.course_repository(),
+                vectorstore=self.vectorstore(),
+                llm=self.llm(),
+                default_top_k=self.settings.generation.top_k,
+                evidence_char_limit=self.settings.generation.evidence_char_limit,
+                max_evidence=self.settings.generation.max_evidence,
+            )
+
+        return self._get_or_build("generation", build)
 
 
 _default_container: Container | None = None

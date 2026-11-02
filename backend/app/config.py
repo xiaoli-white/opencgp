@@ -168,6 +168,21 @@ class IngestConfig:
 
 
 @dataclass
+class GenerationConfig:
+    top_k: int = 5
+    evidence_char_limit: int = 600
+    max_evidence: int = 8
+
+    @classmethod
+    def from_env(cls) -> "GenerationConfig":
+        return cls(
+            top_k=int(_env("GENERATION_TOP_K", "5") or 5),
+            evidence_char_limit=int(_env("GENERATION_EVIDENCE_CHAR_LIMIT", "600") or 600),
+            max_evidence=int(_env("GENERATION_MAX_EVIDENCE", "8") or 8),
+        )
+
+
+@dataclass
 class Settings:
     """应用总配置。"""
 
@@ -181,6 +196,7 @@ class Settings:
     parser: ParserConfig = field(default_factory=ParserConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
+    generation: GenerationConfig = field(default_factory=GenerationConfig)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -195,6 +211,7 @@ class Settings:
             parser=ParserConfig.from_env(),
             embedding=EmbeddingConfig.from_env(),
             ingest=IngestConfig.from_env(),
+            generation=GenerationConfig.from_env(),
         )
 
 

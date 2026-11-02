@@ -19,6 +19,8 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.container import get_container
 from app.models.citation import Citation
+from app.models.course import Course, Lesson
+from app.services.generation import LessonNotFoundError
 
 settings = get_settings()
 container = get_container()
@@ -133,3 +135,168 @@ async def kb_search(req: SearchRequest) -> dict[str, Any]:
 async def kb_delete_source(source_id: str) -> dict[str, Any]:
     removed = await container.ingest().delete_source(source_id)
     return {"source_id": source_id, "deleted_chunks": removed}
+
+
+class CourseCreateRequest(BaseModel):
+    title: str = Field(min_length=1)
+    subtitle: str = ""
+    audience: str = ""
+    difficulty: str = "intermediate"
+    language: str = "zh"
+
+
+class LessonCreateRequest(BaseModel):
+    title: str = Field(min_length=1)
+    order_index: int | None = Field(default=None, ge=1)
+    learning_objectives: list[str] = Field(default_factory=list)
+    prerequisites: list[str] = Field(default_factory=list)
+    content: str = ""
+    note: str = "create"
+
+
+class LessonGenerateRequest(BaseModel):
+    topic: str | None = None
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    note: str = ""
+    source_ids: list[str] | None = None
+
+
+class LessonRevertRequest(BaseModel):
+    version: int = Field(ge=1)
+    note: str = ""
+
+
+def _require_course(course_id: str) -> Course:
+    course = container.course_repository().get_course(course_id)
+    if course is None:
+        raise HTTPException(status_code=404, detail=f"课程不存在: {course_id}")
+    return course
+
+
+def _require_lesson(lesson_id: str) -> Lesson:
+    lesson = container.course_repository().get_lesson(lesson_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}")
+    return lesson
+
+
+@app.post("/api/v1/courses", status_code=201)
+def create_course(req: CourseCreateRequest) -> dict[str, Any]:
+    course = container.course_repository().create_course(
+        title=req.title,
+        subtitle=req.subtitle,
+        audience=req.audience,
+        difficulty=req.difficulty,
+        language=req.language,
+    )
+    return course.model_dump()
+
+
+@app.get("/api/v1/courses")
+def list_courses() -> dict[str, Any]:
+    courses = container.course_repository().list_courses()
+    return {"count": len(courses), "courses": [course.model_dump() for course in courses]}
+
+
+@app.get("/api/v1/courses/{course_id}")
+def get_course(course_id: str) -> dict[str, Any]:
+    course = _require_course(course_id)
+    lessons = container.course_repository().list_lessons(course_id)
+    return {
+        "course": course.model_dump(),
+        "lesson_count": len(lessons),
+        "lessons": [lesson.model_dump() for lesson in lessons],
+    }
+
+
+@app.post("/api/v1/courses/{course_id}/lessons", status_code=201)
+def create_lesson(course_id: str, req: LessonCreateRequest) -> dict[str, Any]:
+    _require_course(course_id)
+    repository = container.course_repository()
+    lesson = repository.create_lesson(
+        course_id=course_id,
+        title=req.title,
+        order_index=req.order_index,
+        learning_objectives=req.learning_objectives,
+        prerequisites=req.prerequisites,
+    )
+    version = 0
+    if req.content.strip():
+        applied = repository.append_version(
+            lesson.id,
+            content=req.content,
+            citations=[],
+            note=req.note,
+            status="draft",
+        )
+        if applied is not None:
+            lesson, record = applied
+            version = record.version
+    return {"lesson": lesson.model_dump(), "version": version}
+
+
+@app.get("/api/v1/courses/{course_id}/lessons")
+def list_lessons(course_id: str) -> dict[str, Any]:
+    _require_course(course_id)
+    lessons = container.course_repository().list_lessons(course_id)
+    return {
+        "course_id": course_id,
+        "count": len(lessons),
+        "lessons": [lesson.model_dump() for lesson in lessons],
+    }
+
+
+@app.get("/api/v1/lessons/{lesson_id}")
+def get_lesson(lesson_id: str) -> dict[str, Any]:
+    lesson = _require_lesson(lesson_id)
+    return lesson.model_dump()
+
+
+@app.post("/api/v1/lessons/{lesson_id}/generate")
+async def generate_lesson(
+    lesson_id: str, req: LessonGenerateRequest | None = None
+) -> dict[str, Any]:
+    payload = req or LessonGenerateRequest()
+    try:
+        result = await container.generation().generate_lesson(
+            lesson_id,
+            topic=payload.topic,
+            top_k=payload.top_k,
+            note=payload.note,
+            source_ids=payload.source_ids,
+        )
+    except LessonNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
+    return result.model_dump()
+
+
+@app.get("/api/v1/lessons/{lesson_id}/versions")
+def list_lesson_versions(lesson_id: str) -> dict[str, Any]:
+    lesson = _require_lesson(lesson_id)
+    versions = container.course_repository().list_versions(lesson_id)
+    return {
+        "lesson_id": lesson_id,
+        "current_version": lesson.current_version,
+        "count": len(versions),
+        "versions": [version.model_dump() for version in versions],
+    }
+
+
+@app.post("/api/v1/lessons/{lesson_id}/revert")
+def revert_lesson(lesson_id: str, req: LessonRevertRequest) -> dict[str, Any]:
+    _require_lesson(lesson_id)
+    repository = container.course_repository()
+    if repository.get_version(lesson_id, req.version) is None:
+        raise HTTPException(
+            status_code=404, detail=f"版本不存在: {lesson_id} v{req.version}"
+        )
+    applied = repository.revert_to_version(lesson_id, req.version, note=req.note)
+    if applied is None:
+        raise HTTPException(status_code=404, detail=f"版本不存在: {lesson_id} v{req.version}")
+    lesson, record = applied
+    return {
+        "lesson": lesson.model_dump(),
+        "version": record.version,
+        "reverted_from": req.version,
+        "note": record.note,
+    }

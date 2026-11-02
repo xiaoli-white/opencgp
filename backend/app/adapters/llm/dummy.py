@@ -7,6 +7,8 @@ from app.ports.llm import LLMProvider
 
 
 class DummyProvider(LLMProvider):
+    is_placeholder = True
+
     def __init__(self, delay: float = 0.01) -> None:
         self.delay = delay
 
