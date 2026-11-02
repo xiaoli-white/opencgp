@@ -183,6 +183,25 @@ class GenerationConfig:
 
 
 @dataclass
+class ConversationConfig:
+    history_limit: int = 20
+    history_char_limit: int = 400
+    content_char_limit: int = 6000
+    evidence_char_limit: int = 600
+
+    @classmethod
+    def from_env(cls) -> "ConversationConfig":
+        return cls(
+            history_limit=int(_env("CONVERSATION_HISTORY_LIMIT", "20") or 20),
+            history_char_limit=int(_env("CONVERSATION_HISTORY_CHAR_LIMIT", "400") or 400),
+            content_char_limit=int(_env("CONVERSATION_CONTENT_CHAR_LIMIT", "6000") or 6000),
+            evidence_char_limit=int(
+                _env("CONVERSATION_EVIDENCE_CHAR_LIMIT", "600") or 600
+            ),
+        )
+
+
+@dataclass
 class Settings:
     """应用总配置。"""
 
@@ -197,6 +216,7 @@ class Settings:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
+    conversation: ConversationConfig = field(default_factory=ConversationConfig)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -212,6 +232,7 @@ class Settings:
             embedding=EmbeddingConfig.from_env(),
             ingest=IngestConfig.from_env(),
             generation=GenerationConfig.from_env(),
+            conversation=ConversationConfig.from_env(),
         )
 
 

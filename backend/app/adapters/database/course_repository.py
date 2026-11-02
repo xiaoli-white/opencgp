@@ -61,27 +61,6 @@ SCHEMA: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_lesson_versions_lesson ON lesson_versions(lesson_id, version)",
-    """
-    CREATE TABLE IF NOT EXISTS threads (
-        id TEXT PRIMARY KEY,
-        course_id TEXT,
-        lesson_id TEXT,
-        title TEXT NOT NULL DEFAULT '',
-        created_at REAL NOT NULL,
-        updated_at REAL NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY,
-        thread_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        citations_json TEXT NOT NULL DEFAULT '[]',
-        created_at REAL NOT NULL
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id, created_at)",
 )
 
 

@@ -22,6 +22,8 @@
 │   │   │   ├── storage.py    #   StorageBackend
 │   │   │   ├── llm.py        #   LLMProvider
 │   │   │   ├── vectorstore.py#   VectorStore
+│   │   │   ├── course_repository.py      #   课程/讲/版本仓库
+│   │   │   ├── conversation_repository.py#   对话线（thread/message）仓库
 │   │   │   └── exporter.py   #   Exporter
 │   │   └── adapters/         # 具体实现（builtin 默认）
 │   │       ├── database/sqlite.py
@@ -121,6 +123,33 @@ npm run dev
 - 后端所有配置经 `backend/app/config.py` 读取，前缀 `COURSE_STUDIO_`，支持 `.env`（`.env` 不覆盖已存在的环境变量）。
 - 完整配置项见 [`backend/.env.example`](backend/.env.example)。
 - 前端跨域/API 地址后续用 `NEXT_PUBLIC_API_BASE_URL` 注入。
+
+---
+
+## API 一览（M0）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/health` | 健康检查（各 adapter 探活） |
+| POST | `/api/v1/kb/upload` | 上传知识库文档（pdf/docx/md/txt） |
+| POST | `/api/v1/kb/search` | 检索知识库，返回带来源的引用 |
+| DELETE | `/api/v1/kb/sources/{source_id}` | 删除知识源与其分块 |
+| POST | `/api/v1/courses` | 创建课程 |
+| GET | `/api/v1/courses` | 课程列表 |
+| GET | `/api/v1/courses/{course_id}` | 课程详情（含讲次） |
+| POST | `/api/v1/courses/{course_id}/lessons` | 创建讲次 |
+| GET | `/api/v1/courses/{course_id}/lessons` | 讲次列表 |
+| GET | `/api/v1/lessons/{lesson_id}` | 讲次详情（当前正文与版本号） |
+| POST | `/api/v1/lessons/{lesson_id}/generate` | 带引用的单讲生成（落 vN） |
+| GET | `/api/v1/lessons/{lesson_id}/versions` | 版本历史 |
+| POST | `/api/v1/lessons/{lesson_id}/revert` | 回滚到指定版本（追加新版本） |
+| POST | `/api/v1/lessons/{lesson_id}/ask` | 追问：基于正文 + 证据 + 对话线作答 |
+| POST | `/api/v1/lessons/{lesson_id}/amend` | 局部修改：按自然语言指令落新版本 |
+| POST | `/api/v1/lessons/{lesson_id}/drilldown` | 沉淀：把某次追问回答追加进该讲 |
+| GET | `/api/v1/lessons/{lesson_id}/thread` | 该讲对话线（消息 + 证据） |
+| GET | `/api/v1/threads/{thread_id}` | 按对话线 ID 读取消息 |
+
+追问 / 修改 / 沉淀都复用追加式版本机制：正文变更只新增 `lesson_versions`，指令原文写入版本 `note`，历史可 diff、可回滚。
 
 ---
 

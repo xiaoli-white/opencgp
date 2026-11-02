@@ -19,15 +19,12 @@ from app.models.generation import Evidence, GenerationResult
 from app.ports.course_repository import CourseRepository
 from app.ports.llm import LLMProvider
 from app.ports.vectorstore import VectorStore
+from app.services.errors import LessonNotFoundError
 
 NO_EVIDENCE_NOTICE = (
     "资料不足：知识库中未检索到与本节主题相关的证据，暂不生成正文。\n\n"
     "请先上传相关资料到知识库，或调整本节主题后重试。"
 )
-
-
-class LessonNotFoundError(LookupError):
-    pass
 
 
 class GenerationService:

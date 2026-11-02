@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -20,7 +20,13 @@ from app.config import get_settings
 from app.container import get_container
 from app.models.citation import Citation
 from app.models.course import Course, Lesson
-from app.services.generation import LessonNotFoundError
+from app.models.thread import LessonThreadView
+from app.services.errors import (
+    EmptyLLMResponseError,
+    LessonContentEmptyError,
+    LessonNotFoundError,
+    MessageNotFoundError,
+)
 
 settings = get_settings()
 container = get_container()
@@ -166,6 +172,20 @@ class LessonRevertRequest(BaseModel):
     note: str = ""
 
 
+class LessonAskRequest(BaseModel):
+    question: str = Field(min_length=1)
+
+
+class LessonAmendRequest(BaseModel):
+    instruction: str = Field(min_length=1)
+    target: str | None = None
+
+
+class LessonDrilldownRequest(BaseModel):
+    message_id: str | None = None
+    question: str | None = None
+
+
 def _require_course(course_id: str) -> Course:
     course = container.course_repository().get_course(course_id)
     if course is None:
@@ -299,4 +319,103 @@ def revert_lesson(lesson_id: str, req: LessonRevertRequest) -> dict[str, Any]:
         "version": record.version,
         "reverted_from": req.version,
         "note": record.note,
+    }
+
+
+@app.post("/api/v1/lessons/{lesson_id}/ask")
+async def ask_lesson(lesson_id: str, req: LessonAskRequest) -> dict[str, Any]:
+    question = req.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+    try:
+        result = await container.conversation().ask(lesson_id, question)
+    except LessonNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
+    except EmptyLLMResponseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return result.model_dump()
+
+
+@app.post("/api/v1/lessons/{lesson_id}/amend")
+async def amend_lesson(lesson_id: str, req: LessonAmendRequest) -> dict[str, Any]:
+    instruction = req.instruction.strip()
+    if not instruction:
+        raise HTTPException(status_code=400, detail="修改指令不能为空")
+    try:
+        result = await container.conversation().amend(
+            lesson_id, instruction, target=req.target
+        )
+    except LessonNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
+    except LessonContentEmptyError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"该讲尚无正文，无法局部修改: {lesson_id}"
+        ) from exc
+    except EmptyLLMResponseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return result.model_dump()
+
+
+@app.post("/api/v1/lessons/{lesson_id}/drilldown")
+async def drilldown_lesson(
+    lesson_id: str, req: LessonDrilldownRequest | None = None
+) -> dict[str, Any]:
+    payload = req or LessonDrilldownRequest()
+    try:
+        result = await container.conversation().drilldown(
+            lesson_id, message_id=payload.message_id, question=payload.question
+        )
+    except LessonNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
+    except MessageNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "未找到可沉淀的追问回答，请先调用 ask 或指定有效的 message_id: "
+                f"{payload.message_id or payload.question or lesson_id}"
+            ),
+        ) from exc
+    return result.model_dump()
+
+
+@app.get("/api/v1/lessons/{lesson_id}/thread")
+def get_lesson_thread(
+    lesson_id: str, limit: int | None = Query(default=None, ge=1, le=200)
+) -> dict[str, Any]:
+    _require_lesson(lesson_id)
+    conversations = container.conversation_repository()
+    thread = conversations.get_lesson_thread(lesson_id)
+    if thread is None:
+        empty = LessonThreadView(
+            lesson_id=lesson_id, thread_id="", title="", message_count=0, messages=[]
+        )
+        return empty.model_dump()
+    messages = conversations.list_messages(thread.id, limit=limit)
+    view = LessonThreadView(
+        lesson_id=lesson_id,
+        thread_id=thread.id,
+        title=thread.title,
+        message_count=conversations.count_messages(thread.id),
+        messages=messages,
+    )
+    payload = view.model_dump()
+    payload["course_id"] = thread.course_id
+    payload["returned_count"] = len(messages)
+    payload["created_at"] = thread.created_at
+    payload["updated_at"] = thread.updated_at
+    return payload
+
+
+@app.get("/api/v1/threads/{thread_id}")
+def get_thread(thread_id: str, limit: int | None = Query(default=None, ge=1, le=200)) -> dict[str, Any]:
+    conversations = container.conversation_repository()
+    thread = conversations.get_thread(thread_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail=f"对话线不存在: {thread_id}")
+    messages = conversations.list_messages(thread.id, limit=limit)
+    return {
+        "thread": thread.model_dump(),
+        "message_count": conversations.count_messages(thread.id),
+        "returned_count": len(messages),
+        "messages": [message.model_dump() for message in messages],
     }

@@ -4,6 +4,7 @@
 不 import 任何具体 adapter 实现。
 """
 
+from app.ports.conversation_repository import ConversationRepository
 from app.ports.course_repository import CourseRepository
 from app.ports.database import Database
 from app.ports.embedding import EmbeddingProvider
@@ -14,6 +15,7 @@ from app.ports.storage import StorageBackend
 from app.ports.vectorstore import VectorStore
 
 __all__ = [
+    "ConversationRepository",
     "CourseRepository",
     "Database",
     "StorageBackend",

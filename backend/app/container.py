@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from app.config import Settings, get_settings
+from app.ports.conversation_repository import ConversationRepository
 from app.ports.course_repository import CourseRepository
 from app.ports.database import Database
 from app.ports.embedding import EmbeddingProvider
@@ -22,6 +23,7 @@ from app.ports.llm import LLMProvider
 from app.ports.parser import DocumentParser
 from app.ports.storage import StorageBackend
 from app.ports.vectorstore import VectorStore
+from app.services.conversation import ConversationService
 from app.services.generation import GenerationService
 from app.services.ingest import IngestService
 
@@ -160,6 +162,31 @@ class Container:
             )
 
         return self._get_or_build("generation", build)
+
+    def conversation_repository(self) -> ConversationRepository:
+        def build() -> ConversationRepository:
+            from app.adapters.database.conversation_repository import (
+                DatabaseConversationRepository,
+            )
+
+            return DatabaseConversationRepository(database=self.database())
+
+        return self._get_or_build("conversation_repository", build)
+
+    def conversation(self) -> ConversationService:
+        def build() -> ConversationService:
+            settings = self.settings.conversation
+            return ConversationService(
+                repository=self.course_repository(),
+                conversations=self.conversation_repository(),
+                llm=self.llm(),
+                history_limit=settings.history_limit,
+                history_char_limit=settings.history_char_limit,
+                content_char_limit=settings.content_char_limit,
+                evidence_char_limit=settings.evidence_char_limit,
+            )
+
+        return self._get_or_build("conversation", build)
 
 
 _default_container: Container | None = None
