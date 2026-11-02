@@ -1,0 +1,19 @@
+"""端口（Port）层：定义全部抽象接口。
+
+每个端口对应一类可插拔能力，业务代码只依赖这些 Protocol，
+不 import 任何具体 adapter 实现。
+"""
+
+from app.ports.database import Database
+from app.ports.exporter import Exporter
+from app.ports.llm import LLMProvider
+from app.ports.storage import StorageBackend
+from app.ports.vectorstore import VectorStore
+
+__all__ = [
+    "Database",
+    "StorageBackend",
+    "LLMProvider",
+    "VectorStore",
+    "Exporter",
+]

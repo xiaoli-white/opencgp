@@ -1,0 +1,8 @@
+# AI 课程工作室 · 后端依赖（M0 最小集）
+# 安装：pip install -r requirements.txt
+
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+
+# 说明：SQLite 使用标准库 sqlite3，无需额外依赖。
+# 生产切 PostgreSQL 时追加：psycopg2-binary 或 asyncpg

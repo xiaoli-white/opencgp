@@ -1,0 +1,42 @@
+# 环境
+.env
+.env.local
+
+# Python venv（单独虚拟环境）
+.venv/
+venv/
+backend/.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 后端运行时数据
+backend/data/
+
+# 前端
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# 系统
+.DS_Store
+
+# ---- 本工作区历史无关文件（非本项目，忽略）----
+# 旧教程产物
+Operit_AI_*.docx
+Operit_AI_*.pdf
+Vibe_Coding*.docx
+gen_docx.py
+gen_noimg.py
+gen_noimg.py.pre_deai.bak
+gen_pdf.py
+_pdfcheck/
+_tmp_*.txt
+fonts/
+wqy-microhei.ttc
+
+# 其他项目 / 仓库
+repo/
+repo_llvmswift/
+swift-truss/
+vyx-fixes/
