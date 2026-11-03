@@ -5,7 +5,9 @@ import HomePage from "./pages/HomePage";
 import CoursePage from "./pages/CoursePage";
 import KbPage from "./pages/KbPage";
 import LoginPage from "./pages/LoginPage";
-import SettingsPage from "./pages/SettingsPage";
+import ProfileSettingsPage from "./pages/settings/ProfileSettingsPage";
+import WorkspaceSettingsPage from "./pages/settings/WorkspaceSettingsPage";
+import ServerSettingsPage from "./pages/settings/ServerSettingsPage";
 import NotFoundPage from "./pages/NotFoundPage";
 
 export default function App() {
@@ -17,7 +19,10 @@ export default function App() {
           <Route path="/courses/:id" element={<CoursePage />} />
           <Route path="/kb" element={<KbPage />} />
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/settings" element={<ProfileSettingsPage />} />
+          <Route path="/settings/workspace" element={<WorkspaceSettingsPage />} />
+          <Route path="/settings/server" element={<ServerSettingsPage />} />
+          <Route path="/settings/*" element={<NotFoundPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </AppShell>

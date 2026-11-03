@@ -23,9 +23,7 @@ import {
   type RoleScope,
 } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
-import ProviderCard from "@/components/settings/ProviderCard";
-import MyProvidersCard from "@/components/settings/MyProvidersCard";
-import ServerProvidersCard from "@/components/settings/ServerProvidersCard";
+import SettingsBreadcrumb from "@/components/settings/SettingsBreadcrumb";
 import type { RoleAction } from "@/lib/session";
 
 const ACTIONS: { value: RoleAction; label: string }[] = [
@@ -70,11 +68,10 @@ const EMPTY_FORM: RoleForm = {
   builtin: false,
 };
 
-export default function SettingsPage() {
+export default function WorkspaceSettingsPage() {
   const { tenant, role, roleName, can, refresh } = useSession();
   const canManage = can("manage_members");
   const canQuota = can("manage_quota");
-  const canServer = can("manage_server");
 
   const [members, setMembers] = useState<Member[]>([]);
   const [roles, setRoles] = useState<RoleRecord[]>([]);
@@ -269,6 +266,8 @@ export default function SettingsPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4">
+      <SettingsBreadcrumb current="空间设置" />
+
       {!canManage ? (
         <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-2.5 text-[11px] text-amber-700 dark:text-amber-300">
           你以 {roleName || "只读"} 身份访问，仅可读取，成员与配额信息可查看不可修改。
@@ -293,45 +292,6 @@ export default function SettingsPage() {
         <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-2.5 text-[11px] text-emerald-700 dark:text-emerald-300">
           {notice}
         </div>
-      ) : null}
-
-      <ProviderCard
-        canWrite={can("write")}
-        canManageServer={canServer}
-        onNotice={(message) => {
-          setError("");
-          setNotice(message);
-        }}
-        onError={(message) => {
-          setNotice("");
-          setError(message);
-        }}
-      />
-
-      <MyProvidersCard
-        canWrite={can("write")}
-        onNotice={(message) => {
-          setError("");
-          setNotice(message);
-        }}
-        onError={(message) => {
-          setNotice("");
-          setError(message);
-        }}
-      />
-
-      {canServer ? (
-        <ServerProvidersCard
-          canManage={canServer}
-          onNotice={(message) => {
-            setError("");
-            setNotice(message);
-          }}
-          onError={(message) => {
-            setNotice("");
-            setError(message);
-          }}
-        />
       ) : null}
 
       <motion.section

@@ -4,11 +4,12 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
   BookOpen,
+  IdCard,
   LayoutGrid,
   Library,
   LogOut,
   Menu,
-  Plus,
+  Server,
   ShieldCheck,
   Sparkles,
   Users,
@@ -22,10 +23,26 @@ import { ROLE_LABEL } from "@/lib/session";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useSession } from "@/components/auth/SessionProvider";
 
-const NAV_ITEMS = [
-  { href: "/", label: "课程工作台", icon: LayoutGrid },
-  { href: "/kb", label: "知识库", icon: Library },
-  { href: "/settings", label: "设置与配额", icon: Users },
+type NavItem = {
+  href: string;
+  label: string;
+  icon: typeof LayoutGrid;
+  exact: boolean;
+  requireServer?: boolean;
+};
+
+const NAV_ITEMS: NavItem[] = [
+  { href: "/", label: "课程工作台", icon: LayoutGrid, exact: true },
+  { href: "/kb", label: "知识库", icon: Library, exact: false },
+  { href: "/settings", label: "个人设置", icon: IdCard, exact: true },
+  { href: "/settings/workspace", label: "空间设置", icon: Users, exact: true },
+  {
+    href: "/settings/server",
+    label: "服务器设置",
+    icon: Server,
+    exact: true,
+    requireServer: true,
+  },
 ];
 
 type Status = "checking" | "online" | "degraded" | "offline";
@@ -38,7 +55,7 @@ type SidebarProps = {
 };
 
 function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
-  const { me, role, roleName, tenant, tenantName, tenants, switchTenant, logout } =
+  const { me, role, roleName, tenant, tenantName, tenants, switchTenant, logout, can } =
     useSession();
 
   const displayName = me?.user.display_name || me?.user.email || "本地用户";
@@ -84,11 +101,8 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
       </Link>
 
       <nav className="mt-4 space-y-1">
-        {NAV_ITEMS.map((item) => {
-          const active =
-            item.href === "/"
-              ? pathname === "/"
-              : pathname.startsWith(item.href);
+        {NAV_ITEMS.filter((item) => !item.requireServer || can("manage_server")).map((item) => {
+          const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
           const Icon = item.icon;
           return (
             <Link
@@ -289,16 +303,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       : pathname === "/kb"
         ? "知识库"
         : pathname === "/settings"
-          ? "设置与配额"
-          : activeCourse?.title ?? "课程";
+          ? "个人设置"
+          : pathname === "/settings/workspace"
+            ? "空间设置"
+            : pathname === "/settings/server"
+              ? "服务器设置"
+              : activeCourse?.title ?? "课程";
   const subtitle =
     pathname === "/"
       ? "从主题到成体系课程，逐讲生成、随时追问"
       : pathname === "/kb"
         ? "上传资料，作为写作与追问的证据底座"
         : pathname === "/settings"
-          ? "模型服务 · 成员角色 · 用量与配额"
-          : activeCourse?.subtitle || "大纲 · 阅读 · 追问 · 版本";
+          ? "我的模型 · 我的通道 · 账号信息"
+          : pathname === "/settings/workspace"
+            ? "角色 · 空间成员 · 用量与配额"
+            : pathname === "/settings/server"
+              ? "服务器模型通道 · 运行概览（全局生效）"
+              : activeCourse?.subtitle || "大纲 · 阅读 · 追问 · 版本";
 
   if (pathname === "/login") {
     return <main className="min-h-screen px-4 py-6">{children}</main>;
@@ -331,7 +353,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 {subtitle}
               </p>
             </div>
-            <Link to="/settings" className="btn-quiet hidden lg:inline-flex">
+            <Link to="/settings/workspace" className="btn-quiet hidden lg:inline-flex">
               <Users size={14} />
               成员
             </Link>

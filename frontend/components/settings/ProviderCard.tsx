@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   AlertCircle,
-  ArrowDown,
+  ArrowRight,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -487,14 +488,13 @@ export default function ProviderCard({
               />
             </button>
             {canManageServer ? (
-              <button
-                type="button"
-                onClick={() => jumpTo("server-providers")}
+              <Link
+                to="/settings/server"
                 className="text-[10.5px] text-indigo-500 underline-offset-2 transition hover:underline dark:text-indigo-300"
               >
                 去管理服务器模型
-                <ArrowDown size={10} className="ml-1 inline align-[-1px]" />
-              </button>
+                <ArrowRight size={10} className="ml-1 inline align-[-1px]" />
+              </Link>
             ) : null}
             <span className="text-[10px] text-slate-400">
               测试连接会先保存当前表单再校验
