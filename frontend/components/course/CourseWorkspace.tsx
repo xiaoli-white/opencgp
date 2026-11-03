@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -20,12 +20,19 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import {
+  ApiError,
   api,
   type CourseDetail,
   type CourseProgress,
   type GenerationMode,
   type LessonVersion,
 } from "@/lib/api";
+import {
+  createLessonLockController,
+  releaseLessonLockBeacon,
+  type LessonLockController,
+  type LessonLockState,
+} from "@/lib/lock";
 import {
   contentLength,
   difficultyLabel,
@@ -42,6 +49,10 @@ import BlueprintBoard from "@/components/blueprint/BlueprintBoard";
 import ReviewControls from "@/components/course/ReviewControls";
 import CourseGrantsPanel from "@/components/course/CourseGrantsPanel";
 import StatusBadge from "@/components/course/StatusBadge";
+import LessonLockBanner from "@/components/course/LessonLockBanner";
+import ConflictDialog, {
+  type VersionConflict,
+} from "@/components/course/ConflictDialog";
 import { useSession } from "@/components/auth/SessionProvider";
 
 type WorkspaceView = "reader" | "blueprint" | "continuous";
@@ -54,10 +65,9 @@ const VIEWS: { value: WorkspaceView; label: string; icon: typeof BookOpen }[] = 
 
 export default function CourseWorkspace({ courseId }: { courseId: string }) {
   const { can, roleName } = useSession();
-  const readOnly = !can("write");
-  const guard = readOnly
-    ? { disabled: true, title: "当前角色只读" }
-    : {};
+  const canWrite = can("write");
+  const canManage = can("manage_members");
+  const readOnly = !canWrite;
   const [detail, setDetail] = useState<CourseDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -83,6 +93,24 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   const [view, setView] = useState<WorkspaceView>("reader");
   const [progress, setProgress] = useState<CourseProgress | null>(null);
   const [blueprintTick, setBlueprintTick] = useState(0);
+  const [lockState, setLockState] = useState<LessonLockState>({
+    status: "idle",
+  });
+  const [conflict, setConflict] = useState<VersionConflict | null>(null);
+  const [conflictBusy, setConflictBusy] = useState(false);
+  const lockController = useRef<LessonLockController | null>(null);
+
+  const lockBlocked =
+    canWrite && (lockState.status === "blocked" || lockState.status === "lost");
+  const lockReason =
+    lockState.status === "blocked"
+      ? `${lockState.name} 正在编辑这一讲`
+      : "编辑锁已失效";
+  const guard = readOnly
+    ? { disabled: true, title: "当前角色只读" }
+    : lockBlocked
+      ? { disabled: true, title: lockReason }
+      : {};
 
   const loadCourse = useCallback(
     async (preferred?: string | null) => {
@@ -203,8 +231,53 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     [currentVersionRecord, activeLesson],
   );
 
-  const runGenerate = async () => {
+  useEffect(() => {
+    if (!activeId || !canWrite) {
+      setLockState({ status: "idle" });
+      return;
+    }
+    const controller = createLessonLockController({
+      lessonId: activeId,
+      onState: setLockState,
+    });
+    lockController.current = controller;
+    void controller.start();
+    const handleUnload = () => {
+      const token = controller.token();
+      if (token) releaseLessonLockBeacon(activeId, token);
+    };
+    window.addEventListener("beforeunload", handleUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleUnload);
+      controller.stop(true);
+      if (lockController.current === controller) lockController.current = null;
+    };
+  }, [activeId, canWrite]);
+
+  const handleLoadLatest = useCallback(() => {
+    setConflict(null);
+    void refreshWorkspace();
+  }, [refreshWorkspace]);
+
+  const handleRetryConflict = async () => {
+    const current = conflict;
+    if (!current) return;
+    setConflict(null);
+    setConflictBusy(true);
+    try {
+      await current.retry();
+    } finally {
+      setConflictBusy(false);
+    }
+  };
+
+  const runGenerate = async (expectedVersion?: number) => {
     if (!activeLesson || generating) return;
+    if (lockBlocked) {
+      setError(lockReason);
+      return;
+    }
+    const baseline = expectedVersion ?? activeLesson.current_version;
     setGenerating(true);
     setError("");
     try {
@@ -212,6 +285,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         topic: topic.trim() || undefined,
         top_k: topK,
         mode: generateMode,
+        expected_version: baseline,
       });
       await loadCourse(activeLesson.id);
       setVersionTick((tick) => tick + 1);
@@ -226,23 +300,55 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
       );
       window.dispatchEvent(new Event("course-studio:refresh"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "生成失败");
+      const info = err instanceof ApiError ? err.conflict() : null;
+      if (info && info.current_version !== undefined) {
+        const current = info.current_version;
+        setConflict({
+          expectedVersion: baseline,
+          currentVersion: current,
+          label: "本讲正文",
+          retry: () => runGenerate(current),
+        });
+      } else {
+        setError(err instanceof Error ? err.message : "生成失败");
+      }
     } finally {
       setGenerating(false);
     }
   };
 
-  const handleRevert = async (version: number) => {
+  const handleRevert = async (version: number, expectedVersion?: number) => {
     if (!activeLesson) return;
+    if (lockBlocked) {
+      setError(lockReason);
+      return;
+    }
+    const baseline = expectedVersion ?? activeLesson.current_version;
     setReverting(version);
     setError("");
     try {
-      await api.revertLesson(activeLesson.id, version, `revert to v${version}`);
+      await api.revertLesson(
+        activeLesson.id,
+        version,
+        `revert to v${version}`,
+        baseline,
+      );
       await loadCourse(activeLesson.id);
       setVersionTick((tick) => tick + 1);
       setNotice(`已回滚：基于 v${version} 生成新版本，历史仍可追溯`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "回滚失败");
+      const info = err instanceof ApiError ? err.conflict() : null;
+      if (info && info.current_version !== undefined) {
+        const current = info.current_version;
+        setConflict({
+          expectedVersion: baseline,
+          currentVersion: current,
+          label: "版本回滚",
+          retry: () => handleRevert(version, current),
+        });
+      } else {
+        setError(err instanceof Error ? err.message : "回滚失败");
+      }
     } finally {
       setReverting(null);
     }
@@ -390,7 +496,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               type="button"
               {...guard}
               onClick={() => setChatOpen(true)}
-              disabled={readOnly || !activeLesson}
+              disabled={readOnly || lockBlocked || !activeLesson}
               className="btn btn-primary"
             >
               <MessageSquare size={14} />
@@ -620,7 +726,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     type="button"
                     {...guard}
                     onClick={() => setGenerateOpen((value) => !value)}
-                    disabled={readOnly || generating}
+                    disabled={readOnly || lockBlocked || generating}
                     className="btn btn-primary"
                   >
                     {generating ? (
@@ -641,12 +747,24 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 </div>
               </div>
 
+              <LessonLockBanner
+                state={lockState}
+                canTakeOver={canManage}
+                readOnly={readOnly}
+                busy={lockState.status === "acquiring"}
+                onRefresh={() => void refreshWorkspace()}
+                onTakeOver={() => void lockController.current?.force()}
+                onReacquire={() => void lockController.current?.retry()}
+              />
+
               <ReviewControls
                 lesson={activeLesson}
                 progress={progress}
                 onReviewed={refreshWorkspace}
                 onNotice={setNotice}
                 onError={setError}
+                locked={lockBlocked}
+                lockedReason={lockReason}
               />
 
               <AnimatePresence initial={false}>
@@ -701,8 +819,8 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                         <button
                           type="button"
                           {...guard}
-                          onClick={runGenerate}
-                          disabled={readOnly || generating}
+                          onClick={() => void runGenerate()}
+                          disabled={readOnly || lockBlocked || generating}
                           className="btn btn-primary"
                         >
                           {generating ? (
@@ -755,7 +873,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 </div>
               )}
 
-              <div className="mt-6">
+              <div className="relative mt-6">
                 {activeLesson.content ? (
                   <MarkdownReader
                     content={activeLesson.content}
@@ -779,7 +897,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                         type="button"
                         {...guard}
                         onClick={() => setGenerateOpen(true)}
-                        disabled={readOnly}
+                        disabled={readOnly || lockBlocked}
                         className="btn btn-primary"
                       >
                         <Sparkles size={14} />
@@ -791,6 +909,13 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     </div>
                   </div>
                 )}
+                {lockBlocked ? (
+                  <div className="pointer-events-none absolute inset-0 rounded-2xl bg-white/30 dark:bg-slate-950/35">
+                    <div className="sticky top-3 mx-auto mt-3 w-fit rounded-full border border-amber-400/40 bg-amber-50/90 px-3 py-1 text-[11px] font-medium text-amber-800 shadow-sm backdrop-blur-sm dark:border-amber-300/25 dark:bg-amber-400/15 dark:text-amber-200">
+                      {lockReason} · 正文只读
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               <div className="mt-8 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70 pt-4 text-[11px] text-slate-400 dark:border-white/10 dark:text-slate-500">
@@ -846,6 +971,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           onNotice={setNotice}
           onError={setError}
           onProgressRefresh={() => void refreshProgress()}
+          onVersionConflict={setConflict}
         />
       ) : null}
 
@@ -922,6 +1048,17 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         onClose={handleCloseChat}
         onApplied={handleChatApplied}
         onNotice={setNotice}
+        onVersionConflict={setConflict}
+      />
+
+      <ConflictDialog
+        conflict={conflict}
+        busy={conflictBusy}
+        onLoadLatest={handleLoadLatest}
+        onRetry={() => void handleRetryConflict()}
+        onClose={() => {
+          if (!conflictBusy) setConflict(null);
+        }}
       />
 
       <CourseGrantsPanel

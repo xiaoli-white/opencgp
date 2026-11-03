@@ -28,6 +28,7 @@ import {
 import { formatRelative, modeLabel } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
 import ModePicker from "@/components/course/ModePicker";
+import type { VersionConflict } from "@/components/course/ConflictDialog";
 import LearningPathTimeline from "@/components/blueprint/LearningPathTimeline";
 import GlossaryGrid from "@/components/blueprint/GlossaryGrid";
 
@@ -40,6 +41,7 @@ type BlueprintBoardProps = {
   onNotice: (message: string) => void;
   onError: (message: string) => void;
   onProgressRefresh: () => void;
+  onVersionConflict?: (conflict: VersionConflict) => void;
 };
 
 export default function BlueprintBoard({
@@ -51,6 +53,7 @@ export default function BlueprintBoard({
   onNotice,
   onError,
   onProgressRefresh,
+  onVersionConflict,
 }: BlueprintBoardProps) {
   const { can } = useSession();
   const readOnly = !can("write");
@@ -90,14 +93,17 @@ export default function BlueprintBoard({
     return map;
   }, [lessons]);
 
+  const blueprintVersion = blueprint?.version ?? null;
+
   const boundCount = useMemo(
     () => blueprint?.outline.filter((node) => node.lesson_id).length ?? 0,
     [blueprint],
   );
 
   const runGenerate = useCallback(
-    async (overrideMode?: GenerationMode) => {
+    async (overrideMode?: GenerationMode, expectedVersion?: number) => {
       const useMode = overrideMode ?? mode;
+      const baseline = expectedVersion ?? blueprintVersion;
       setGenerating(true);
       setConflict("");
       onError("");
@@ -106,6 +112,7 @@ export default function BlueprintBoard({
           mode: useMode,
           top_k: topK,
           focus: focus.trim(),
+          expected_version: baseline,
         });
         setBlueprint(result);
         setRegenerateOpen(false);
@@ -116,7 +123,16 @@ export default function BlueprintBoard({
         );
         onProgressRefresh();
       } catch (err) {
-        if (err instanceof ApiError && err.status === 409) {
+        const info = err instanceof ApiError ? err.conflict() : null;
+        if (info && info.current_version !== undefined && onVersionConflict) {
+          const current = info.current_version;
+          onVersionConflict({
+            expectedVersion: baseline ?? 0,
+            currentVersion: current,
+            label: "蓝图",
+            retry: () => runGenerate(useMode, current),
+          });
+        } else if (err instanceof ApiError && err.status === 409) {
           setConflict(err.message);
         } else {
           onError(err instanceof Error ? err.message : "蓝图生成失败");
@@ -125,7 +141,17 @@ export default function BlueprintBoard({
         setGenerating(false);
       }
     },
-    [courseId, focus, mode, onError, onNotice, onProgressRefresh, topK],
+    [
+      blueprintVersion,
+      courseId,
+      focus,
+      mode,
+      onError,
+      onNotice,
+      onProgressRefresh,
+      onVersionConflict,
+      topK,
+    ],
   );
 
   const handleApply = async () => {

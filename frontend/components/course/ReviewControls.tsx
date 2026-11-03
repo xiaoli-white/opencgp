@@ -25,6 +25,8 @@ type ReviewControlsProps = {
   onReviewed: () => Promise<void> | void;
   onNotice: (message: string) => void;
   onError: (message: string) => void;
+  locked?: boolean;
+  lockedReason?: string;
 };
 
 export default function ReviewControls({
@@ -33,9 +35,17 @@ export default function ReviewControls({
   onReviewed,
   onNotice,
   onError,
+  locked = false,
+  lockedReason = "",
 }: ReviewControlsProps) {
   const { can } = useSession();
   const readOnly = !can("review");
+  const writeTitle = readOnly
+    ? "当前角色只读"
+    : locked
+      ? lockedReason || "该讲正被他人编辑"
+      : "";
+  const writeBlocked = readOnly || locked;
   const [reviews, setReviews] = useState<LessonReview[]>([]);
   const [busy, setBusy] = useState<"approve" | "request_revision" | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -65,6 +75,7 @@ export default function ReviewControls({
   const latest = reviews[0];
 
   const submit = async (action: "approve" | "request_revision") => {
+    if (writeBlocked) return;
     setBusy(action);
     onError("");
     try {
@@ -115,8 +126,11 @@ export default function ReviewControls({
           <button
             type="button"
             onClick={() => void submit("approve")}
-            disabled={readOnly || !hasContent || busy !== null}
-            title={readOnly ? "当前角色只读" : hasContent ? "通过本讲审核" : "先生成本讲正文再审核"}
+            disabled={writeBlocked || !hasContent || busy !== null}
+            title={
+              writeTitle ||
+              (hasContent ? "通过本讲审核" : "先生成本讲正文再审核")
+            }
             className={clsx(
               "inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[11.5px] font-medium ring-1 transition",
               hasContent
@@ -134,8 +148,8 @@ export default function ReviewControls({
           <button
             type="button"
             onClick={() => setNoteOpen((value) => !value)}
-            disabled={readOnly || busy !== null}
-            title={readOnly ? "当前角色只读" : ""}
+            disabled={writeBlocked || busy !== null}
+            title={writeTitle}
             className="inline-flex items-center gap-1 rounded-full bg-amber-400/18 px-3 py-1.5 text-[11.5px] font-medium text-amber-700 ring-1 ring-amber-500/30 transition hover:bg-amber-400/26 disabled:opacity-50 dark:bg-amber-300/14 dark:text-amber-300 dark:ring-amber-300/25 dark:hover:bg-amber-300/20"
           >
             <MessageSquareWarning size={12} />
@@ -183,8 +197,8 @@ export default function ReviewControls({
                 <button
                   type="button"
                   onClick={() => void submit("request_revision")}
-                  disabled={readOnly || busy !== null}
-                  title={readOnly ? "当前角色只读" : ""}
+                  disabled={writeBlocked || busy !== null}
+                  title={writeTitle}
                   className="btn btn-primary !px-3 !py-1.5 text-[11px]"
                 >
                   {busy === "request_revision" ? (

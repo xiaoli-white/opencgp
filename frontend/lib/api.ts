@@ -365,13 +365,47 @@ export type ReviewResult = {
   course_progress: CourseProgress;
 };
 
+export type LessonLockInfo = {
+  lesson_id: string;
+  tenant_id?: string;
+  user_id: string;
+  user_name: string;
+  token: string;
+  heartbeat_at?: number;
+  expires_at: number;
+};
+
+export type VersionConflictPayload = {
+  detail?: string;
+  expected_version?: number;
+  current_version?: number;
+};
+
 export class ApiError extends Error {
   status: number;
+  payload: Record<string, unknown> | null;
 
-  constructor(message: string, status: number) {
+  constructor(
+    message: string,
+    status: number,
+    payload: Record<string, unknown> | null = null,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.payload = payload;
+  }
+
+  conflict(): VersionConflictPayload | null {
+    if (this.status !== 409 || !this.payload) return null;
+    const current = this.payload.current_version;
+    if (typeof current !== "number") return null;
+    const expected = this.payload.expected_version;
+    return {
+      detail: this.message,
+      current_version: current,
+      expected_version: typeof expected === "number" ? expected : undefined,
+    };
   }
 }
 
@@ -411,8 +445,10 @@ async function request<T>(
   }
   if (!response.ok) {
     let message = `请求失败（${response.status}）`;
+    let body: Record<string, unknown> | null = null;
     try {
-      const payload = await response.json();
+      const payload = (await response.json()) as Record<string, unknown> | null;
+      body = payload;
       const detail = payload?.detail;
       if (typeof detail === "string") {
         message = detail;
@@ -428,7 +464,7 @@ async function request<T>(
     if (response.status === 401 && typeof window !== "undefined") {
       window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
     }
-    throw new ApiError(message, response.status);
+    throw new ApiError(message, response.status, body);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -484,6 +520,7 @@ export const api = {
       note?: string;
       source_ids?: string[];
       mode?: GenerationMode;
+      expected_version?: number | null;
     } = {},
   ) =>
     request<GenerationResult>(`/api/v1/lessons/${lessonId}/generate`, {
@@ -499,7 +536,12 @@ export const api = {
       versions: LessonVersion[];
     }>(`/api/v1/lessons/${lessonId}/versions`),
 
-  revertLesson: (lessonId: string, version: number, note = "") =>
+  revertLesson: (
+    lessonId: string,
+    version: number,
+    note = "",
+    expectedVersion?: number | null,
+  ) =>
     request<{
       lesson: Lesson;
       version: number;
@@ -507,7 +549,11 @@ export const api = {
       note: string;
     }>(`/api/v1/lessons/${lessonId}/revert`, {
       method: "POST",
-      body: JSON.stringify({ version, note }),
+      body: JSON.stringify({
+        version,
+        note,
+        expected_version: expectedVersion ?? null,
+      }),
     }),
 
   askLesson: (lessonId: string, question: string, selection?: string) =>
@@ -524,10 +570,16 @@ export const api = {
     instruction: string,
     target?: string,
     mode: GenerationMode = "strict",
+    expectedVersion?: number | null,
   ) =>
     request<AmendResult>(`/api/v1/lessons/${lessonId}/amend`, {
       method: "POST",
-      body: JSON.stringify({ instruction, target: target ?? null, mode }),
+      body: JSON.stringify({
+        instruction,
+        target: target ?? null,
+        mode,
+        expected_version: expectedVersion ?? null,
+      }),
     }),
 
   getThread: (lessonId: string) =>
@@ -567,6 +619,7 @@ export const api = {
       top_k?: number;
       source_ids?: string[];
       focus?: string;
+      expected_version?: number | null;
     } = {},
   ) =>
     request<Blueprint>(`/api/v1/courses/${courseId}/blueprint/generate`, {
@@ -576,14 +629,45 @@ export const api = {
         top_k: payload.top_k ?? null,
         source_ids: payload.source_ids ?? null,
         focus: payload.focus ?? "",
+        expected_version: payload.expected_version ?? null,
       }),
     }),
 
-  saveBlueprint: (courseId: string, blueprint: Blueprint) =>
+  saveBlueprint: (
+    courseId: string,
+    blueprint: Blueprint,
+    expectedVersion?: number | null,
+  ) =>
     request<Blueprint>(`/api/v1/courses/${courseId}/blueprint`, {
       method: "PUT",
-      body: JSON.stringify({ blueprint }),
+      body: JSON.stringify({
+        blueprint,
+        expected_version: expectedVersion ?? null,
+      }),
     }),
+
+  getLessonLock: (lessonId: string) =>
+    request<{ lock: LessonLockInfo | null }>(
+      `/api/v1/lessons/${lessonId}/lock`,
+    ),
+
+  acquireLessonLock: (lessonId: string, force = false) =>
+    request<{ acquired: boolean; lock: LessonLockInfo }>(
+      `/api/v1/lessons/${lessonId}/lock`,
+      { method: "POST", body: JSON.stringify({ force }) },
+    ),
+
+  heartbeatLessonLock: (lessonId: string, token: string) =>
+    request<{ lock: LessonLockInfo }>(
+      `/api/v1/lessons/${lessonId}/lock/heartbeat`,
+      { method: "POST", body: JSON.stringify({ token }) },
+    ),
+
+  releaseLessonLock: (lessonId: string, token: string) =>
+    request<{ ok: boolean }>(
+      `/api/v1/lessons/${lessonId}/lock?token=${encodeURIComponent(token)}`,
+      { method: "DELETE" },
+    ),
 
   applyBlueprint: (courseId: string) =>
     request<ApplyBlueprintResult>(

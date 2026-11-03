@@ -11,10 +11,11 @@ import {
   X,
 } from "lucide-react";
 import clsx from "clsx";
-import { api, type AmendResult, type GenerationMode, type Message } from "@/lib/api";
+import { api, ApiError, type AmendResult, type GenerationMode, type Message } from "@/lib/api";
 import { contentLength, formatRelative, modeLabel, sourceLabel } from "@/lib/format";
 import MarkdownReader from "@/components/reader/MarkdownReader";
 import ModePicker from "@/components/course/ModePicker";
+import type { VersionConflict } from "@/components/course/ConflictDialog";
 
 type ChatPanelProps = {
   open: boolean;
@@ -26,6 +27,7 @@ type ChatPanelProps = {
   onClose: () => void;
   onApplied: () => void | Promise<void>;
   onNotice: (text: string) => void;
+  onVersionConflict?: (conflict: VersionConflict) => void;
 };
 
 type Tab = "ask" | "amend";
@@ -46,6 +48,7 @@ export default function ChatPanel({
   onClose,
   onApplied,
   onNotice,
+  onVersionConflict,
 }: ChatPanelProps) {
   const [tab, setTab] = useState<Tab>("ask");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -160,8 +163,20 @@ export default function ChatPanel({
     }
 
     setBusy(true);
+    void runAmend(text, currentVersion);
+  };
+
+  const runAmend = async (text: string, expectedVersion: number) => {
+    if (!lessonId) return;
+    setBusy(true);
     try {
-      const result = await api.amendLesson(lessonId, text, undefined, amendMode);
+      const result = await api.amendLesson(
+        lessonId,
+        text,
+        undefined,
+        amendMode,
+        expectedVersion,
+      );
       setAmendInfo(result);
       setInput("");
       onNotice(
@@ -169,7 +184,18 @@ export default function ChatPanel({
       );
       await onApplied();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "修改失败");
+      const info = err instanceof ApiError ? err.conflict() : null;
+      if (info && info.current_version !== undefined && onVersionConflict) {
+        const current = info.current_version;
+        onVersionConflict({
+          expectedVersion,
+          currentVersion: current,
+          label: "本次修改",
+          retry: () => runAmend(text, current),
+        });
+      } else {
+        setError(err instanceof Error ? err.message : "修改失败");
+      }
     } finally {
       setBusy(false);
     }
