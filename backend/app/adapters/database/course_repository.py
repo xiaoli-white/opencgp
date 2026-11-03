@@ -14,6 +14,7 @@ import time
 import uuid
 from typing import Any, Mapping, Sequence
 
+from app.models.auth import DEFAULT_TENANT_ID
 from app.models.citation import Citation
 from app.models.course import Course, Lesson, LessonVersion
 from app.ports.course_repository import CourseRepository
@@ -28,6 +29,7 @@ SCHEMA: tuple[str, ...] = (
         audience TEXT NOT NULL DEFAULT '',
         difficulty TEXT NOT NULL DEFAULT 'intermediate',
         language TEXT NOT NULL DEFAULT 'zh',
+        tenant_id TEXT NOT NULL DEFAULT '',
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
     )
@@ -66,6 +68,7 @@ SCHEMA: tuple[str, ...] = (
 )
 
 COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("courses", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
     ("lessons", "last_mode", "TEXT NOT NULL DEFAULT ''"),
     ("lesson_versions", "mode", "TEXT NOT NULL DEFAULT ''"),
 )
@@ -97,6 +100,7 @@ class DatabaseCourseRepository(CourseRepository):
         audience: str = "",
         difficulty: str = "intermediate",
         language: str = "zh",
+        tenant_id: str = "",
     ) -> Course:
         self.ensure_schema()
         now = time.time()
@@ -112,7 +116,7 @@ class DatabaseCourseRepository(CourseRepository):
         )
         self.database.execute(
             "INSERT INTO courses (id, title, subtitle, audience, difficulty, language,"
-            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 course.id,
                 course.title,
@@ -120,20 +124,38 @@ class DatabaseCourseRepository(CourseRepository):
                 course.audience,
                 course.difficulty,
                 course.language,
+                tenant_id or "",
                 course.created_at,
                 course.updated_at,
             ),
         )
         return course
 
-    def get_course(self, course_id: str) -> Course | None:
+    def get_course(self, course_id: str, tenant_id: str | None = None) -> Course | None:
         self.ensure_schema()
-        row = self.database.fetchone("SELECT * FROM courses WHERE id = ?", (course_id,))
+        if tenant_id is None:
+            row = self.database.fetchone(
+                "SELECT * FROM courses WHERE id = ?", (course_id,)
+            )
+        else:
+            row = self.database.fetchone(
+                "SELECT * FROM courses WHERE id = ? AND"
+                " (CASE WHEN tenant_id = '' THEN ? ELSE tenant_id END) = ?",
+                (course_id, DEFAULT_TENANT_ID, _tenant(tenant_id)),
+            )
         return _to_course(row) if row else None
 
-    def list_courses(self) -> list[Course]:
+    def list_courses(self, tenant_id: str | None = None) -> list[Course]:
         self.ensure_schema()
-        rows = self.database.fetchall("SELECT * FROM courses ORDER BY created_at ASC")
+        if tenant_id is None:
+            rows = self.database.fetchall("SELECT * FROM courses ORDER BY created_at ASC")
+        else:
+            rows = self.database.fetchall(
+                "SELECT * FROM courses WHERE"
+                " (CASE WHEN tenant_id = '' THEN ? ELSE tenant_id END) = ?"
+                " ORDER BY created_at ASC",
+                (DEFAULT_TENANT_ID, _tenant(tenant_id)),
+            )
         return [_to_course(row) for row in rows]
 
     def create_lesson(
@@ -390,3 +412,8 @@ def _to_version(row: Mapping[str, Any]) -> LessonVersion:
         note=str(row["note"] or ""),
         created_at=float(row["created_at"]),
     )
+
+
+def _tenant(tenant_id: str) -> str:
+    value = (tenant_id or "").strip()
+    return value or DEFAULT_TENANT_ID

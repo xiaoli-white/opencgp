@@ -29,13 +29,14 @@ class CourseRepository(Protocol):
         audience: str = "",
         difficulty: str = "intermediate",
         language: str = "zh",
+        tenant_id: str = "",
     ) -> Course:
         ...
 
-    def get_course(self, course_id: str) -> Course | None:
+    def get_course(self, course_id: str, tenant_id: str | None = None) -> Course | None:
         ...
 
-    def list_courses(self) -> list[Course]:
+    def list_courses(self, tenant_id: str | None = None) -> list[Course]:
         ...
 
     def create_lesson(

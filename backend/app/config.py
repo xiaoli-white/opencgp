@@ -217,6 +217,30 @@ class ConversationConfig:
 
 
 @dataclass
+class AuthConfig:
+    mode: str = "disabled"
+    secret: str = ""
+    token_ttl_hours: int = 168
+
+    @classmethod
+    def from_env(cls) -> "AuthConfig":
+        return cls(
+            mode=_env("AUTH_MODE", "disabled"),
+            secret=_env("AUTH_SECRET", ""),
+            token_ttl_hours=int(_env("AUTH_TOKEN_TTL_HOURS", "168") or 168),
+        )
+
+
+@dataclass
+class LockConfig:
+    ttl_seconds: int = 120
+
+    @classmethod
+    def from_env(cls) -> "LockConfig":
+        return cls(ttl_seconds=int(_env("LOCK_TTL_SECONDS", "120") or 120))
+
+
+@dataclass
 class Settings:
     """应用总配置。"""
 
@@ -233,6 +257,8 @@ class Settings:
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     blueprint: BlueprintConfig = field(default_factory=BlueprintConfig)
     conversation: ConversationConfig = field(default_factory=ConversationConfig)
+    auth: AuthConfig = field(default_factory=AuthConfig)
+    locks: LockConfig = field(default_factory=LockConfig)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -250,6 +276,8 @@ class Settings:
             generation=GenerationConfig.from_env(),
             blueprint=BlueprintConfig.from_env(),
             conversation=ConversationConfig.from_env(),
+            auth=AuthConfig.from_env(),
+            locks=LockConfig.from_env(),
         )
 
 

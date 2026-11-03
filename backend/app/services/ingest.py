@@ -36,6 +36,7 @@ class IngestService:
         source_name: str | None = None,
         source_id: str | None = None,
         meta: dict[str, Any] | None = None,
+        tenant_id: str = "",
     ) -> IngestResult:
         if not data:
             raise ValueError("上传文件为空")
@@ -52,6 +53,7 @@ class IngestService:
             source_name=source_name or parsed.source_name,
             source_id=source_id or _source_id(digest),
             meta={**merged_meta, "parser": parsed.parser},
+            tenant_id=tenant_id,
         )
 
     async def ingest_text(
@@ -60,6 +62,7 @@ class IngestService:
         source_name: str,
         source_id: str | None = None,
         meta: dict[str, Any] | None = None,
+        tenant_id: str = "",
     ) -> IngestResult:
         normalized = normalize_text(text)
         if not normalized:
@@ -68,7 +71,7 @@ class IngestService:
         chunks = self._build_chunks(normalized, resolved_id, source_name, meta or {})
         if not chunks:
             raise ValueError("文档分块结果为空")
-        await self.vectorstore.add_chunks(resolved_id, chunks)
+        await self.vectorstore.add_chunks(resolved_id, chunks, tenant_id=tenant_id)
         parser_name = str((meta or {}).get("parser", "unknown"))
         return IngestResult(
             source_id=resolved_id,
@@ -89,11 +92,14 @@ class IngestService:
         query: str,
         top_k: int = 5,
         source_ids: Sequence[str] | None = None,
+        tenant_id: str = "",
     ) -> list[Citation]:
-        return await self.vectorstore.search(query, top_k=top_k, source_ids=source_ids)
+        return await self.vectorstore.search(
+            query, top_k=top_k, source_ids=source_ids, tenant_id=tenant_id
+        )
 
-    async def delete_source(self, source_id: str) -> int:
-        return await self.vectorstore.delete_by_source(source_id)
+    async def delete_source(self, source_id: str, tenant_id: str = "") -> int:
+        return await self.vectorstore.delete_by_source(source_id, tenant_id=tenant_id)
 
     def _build_chunks(
         self,

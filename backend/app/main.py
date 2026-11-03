@@ -12,26 +12,38 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.container import get_container
+from app.models.auth import DEFAULT_TENANT_ID, AuthContext
 from app.models.citation import Citation
 from app.models.blueprint import CourseBlueprint, GlossaryTerm
 from app.models.course import Course, Lesson
 from app.models.mode import GenerationMode
 from app.models.thread import LessonThreadView
 from app.services.errors import (
+    AuthRequiredError,
     BlueprintNotFoundError,
+    EmailAlreadyRegisteredError,
+    InvalidCredentialsError,
+    MembershipNotFoundError,
+    PermissionDeniedError,
+    TenantNotFoundError,
     BlueprintParseError,
     EmptyLLMResponseError,
     LessonContentEmptyError,
     LessonNotFoundError,
     MessageNotFoundError,
     NoEvidenceError,
+    QuotaExceededError,
+    VersionConflictError,
+    LessonLockedError,
+    LessonLockLostError,
+    LockTokenMismatchError,
 )
 
 settings = get_settings()
@@ -50,6 +62,111 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(min_length=3)
+    password: str = Field(min_length=1)
+    display_name: str = ""
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+
+
+class TenantCreateRequest(BaseModel):
+    name: str = Field(min_length=1)
+
+
+class MemberAddRequest(BaseModel):
+    email: str = Field(min_length=3)
+    role: str = "viewer"
+
+
+class MemberRoleRequest(BaseModel):
+    role: str = Field(min_length=1)
+
+
+def get_auth_context(
+    authorization: str | None = Header(default=None),
+    x_tenant_id: str | None = Header(default=None),
+) -> AuthContext:
+    service = container.auth_service()
+    if service.mode != "required":
+        return service.local_context()
+    token = ""
+    if authorization:
+        scheme, _, value = authorization.partition(" ")
+        token = value.strip() if scheme.lower() == "bearer" else authorization.strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="缺少访问令牌")
+    try:
+        return service.resolve(token, x_tenant_id)
+    except AuthRequiredError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except MembershipNotFoundError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except TenantNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _enforce(ctx: AuthContext, action: str) -> AuthContext:
+    try:
+        return container.auth_service().require(ctx, action)
+    except AuthRequiredError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+def require_read(ctx: AuthContext = Depends(get_auth_context)) -> AuthContext:
+    return _enforce(ctx, "read")
+
+
+def require_write(ctx: AuthContext = Depends(get_auth_context)) -> AuthContext:
+    return _enforce(ctx, "write")
+
+
+def _tenant_of(ctx: AuthContext) -> str:
+    if ctx is None or ctx.tenant is None:
+        return DEFAULT_TENANT_ID
+    return ctx.tenant.id or DEFAULT_TENANT_ID
+
+
+def _is_privileged(ctx: AuthContext) -> bool:
+    return ctx.role in ("owner", "admin")
+
+
+def _charge(ctx: AuthContext, kind: str, units: int = 1, ref_id: str = "") -> None:
+    try:
+        container.quota_service().check_and_record(
+            _tenant_of(ctx), ctx.user.id, kind, units, ref_id
+        )
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+
+def _guard_lock(lesson_id: str, ctx: AuthContext) -> None:
+    try:
+        container.lock_service().guard(lesson_id, ctx.user.id)
+    except LessonLockedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"该讲正被 {exc.name} 编辑，请先协商或接管",
+        ) from exc
+
+
+def _conflict(exc: VersionConflictError) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": "版本冲突：内容已被他人更新",
+            "expected_version": exc.expected,
+            "current_version": exc.current,
+        },
+    )
 
 
 @app.get("/")
@@ -120,12 +237,19 @@ async def generate_stream(req: GenerateRequest) -> StreamingResponse:
 async def kb_upload(
     file: UploadFile = File(...),
     source_name: str | None = Form(default=None),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
+    _enforce(ctx, "write")
     data = await file.read()
     filename = file.filename or "upload.bin"
+    _charge(ctx, "upload", 1, ref_id=filename)
+    _charge(ctx, "storage", len(data), ref_id=filename)
     try:
         result = await container.ingest().ingest_bytes(
-            data, filename, source_name=source_name
+            data,
+            filename,
+            source_name=source_name,
+            tenant_id=_tenant_of(ctx),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -139,9 +263,15 @@ class SearchRequest(BaseModel):
 
 
 @app.post("/api/v1/kb/search")
-async def kb_search(req: SearchRequest) -> dict[str, Any]:
+async def kb_search(
+    req: SearchRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
     citations: list[Citation] = await container.ingest().search(
-        req.query, top_k=req.top_k, source_ids=req.source_ids
+        req.query,
+        top_k=req.top_k,
+        source_ids=req.source_ids,
+        tenant_id=_tenant_of(ctx),
     )
     return {
         "query": req.query,
@@ -152,8 +282,11 @@ async def kb_search(req: SearchRequest) -> dict[str, Any]:
 
 
 @app.delete("/api/v1/kb/sources/{source_id}")
-async def kb_delete_source(source_id: str) -> dict[str, Any]:
-    removed = await container.ingest().delete_source(source_id)
+async def kb_delete_source(
+    source_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    removed = await container.ingest().delete_source(source_id, tenant_id=_tenant_of(ctx))
     return {"source_id": source_id, "deleted_chunks": removed}
 
 
@@ -180,11 +313,13 @@ class LessonGenerateRequest(BaseModel):
     note: str = ""
     source_ids: list[str] | None = None
     mode: GenerationMode = GenerationMode.strict
+    expected_version: int | None = None
 
 
 class LessonRevertRequest(BaseModel):
     version: int = Field(ge=1)
     note: str = ""
+    expected_version: int | None = None
 
 
 class LessonAskRequest(BaseModel):
@@ -196,6 +331,7 @@ class LessonAmendRequest(BaseModel):
     instruction: str = Field(min_length=1)
     target: str | None = None
     mode: GenerationMode = GenerationMode.strict
+    expected_version: int | None = None
 
 
 class LessonDrilldownRequest(BaseModel):
@@ -203,41 +339,51 @@ class LessonDrilldownRequest(BaseModel):
     question: str | None = None
 
 
-def _require_course(course_id: str) -> Course:
-    course = container.course_repository().get_course(course_id)
+def _require_course(course_id: str, tenant_id: str | None = None) -> Course:
+    course = container.course_repository().get_course(course_id, tenant_id)
     if course is None:
         raise HTTPException(status_code=404, detail=f"课程不存在: {course_id}")
     return course
 
 
-def _require_lesson(lesson_id: str) -> Lesson:
+def _require_lesson(lesson_id: str, tenant_id: str | None = None) -> Lesson:
     lesson = container.course_repository().get_lesson(lesson_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}")
+    if tenant_id is not None:
+        _require_course(lesson.course_id, tenant_id)
     return lesson
 
 
 @app.post("/api/v1/courses", status_code=201)
-def create_course(req: CourseCreateRequest) -> dict[str, Any]:
+def create_course(
+    req: CourseCreateRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
     course = container.course_repository().create_course(
         title=req.title,
         subtitle=req.subtitle,
         audience=req.audience,
         difficulty=req.difficulty,
         language=req.language,
+        tenant_id=_tenant_of(ctx),
     )
     return course.model_dump()
 
 
 @app.get("/api/v1/courses")
-def list_courses() -> dict[str, Any]:
-    courses = container.course_repository().list_courses()
+def list_courses(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    courses = container.course_repository().list_courses(_tenant_of(ctx))
     return {"count": len(courses), "courses": [course.model_dump() for course in courses]}
 
 
 @app.get("/api/v1/courses/{course_id}")
-def get_course(course_id: str) -> dict[str, Any]:
-    course = _require_course(course_id)
+def get_course(
+    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    course = _require_course(course_id, _tenant_of(ctx))
     lessons = container.course_repository().list_lessons(course_id)
     return {
         "course": course.model_dump(),
@@ -248,8 +394,13 @@ def get_course(course_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/v1/courses/{course_id}/lessons", status_code=201)
-def create_lesson(course_id: str, req: LessonCreateRequest) -> dict[str, Any]:
-    _require_course(course_id)
+def create_lesson(
+    course_id: str,
+    req: LessonCreateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_course(course_id, _tenant_of(ctx))
     repository = container.course_repository()
     lesson = repository.create_lesson(
         course_id=course_id,
@@ -274,8 +425,11 @@ def create_lesson(course_id: str, req: LessonCreateRequest) -> dict[str, Any]:
 
 
 @app.get("/api/v1/courses/{course_id}/lessons")
-def list_lessons(course_id: str) -> dict[str, Any]:
-    _require_course(course_id)
+def list_lessons(
+    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_course(course_id, _tenant_of(ctx))
     lessons = container.course_repository().list_lessons(course_id)
     return {
         "course_id": course_id,
@@ -285,16 +439,25 @@ def list_lessons(course_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/v1/lessons/{lesson_id}")
-def get_lesson(lesson_id: str) -> dict[str, Any]:
-    lesson = _require_lesson(lesson_id)
+def get_lesson(
+    lesson_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    lesson = _require_lesson(lesson_id, _tenant_of(ctx))
     return lesson.model_dump()
 
 
 @app.post("/api/v1/lessons/{lesson_id}/generate")
 async def generate_lesson(
-    lesson_id: str, req: LessonGenerateRequest | None = None
+    lesson_id: str,
+    req: LessonGenerateRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_lesson(lesson_id, _tenant_of(ctx))
+    _guard_lock(lesson_id, ctx)
     payload = req or LessonGenerateRequest()
+    _charge(ctx, "generate", 1, ref_id=lesson_id)
     try:
         result = await container.generation().generate_lesson(
             lesson_id,
@@ -303,15 +466,22 @@ async def generate_lesson(
             note=payload.note,
             source_ids=payload.source_ids,
             mode=payload.mode.value,
+            expected_version=payload.expected_version,
+            tenant_id=_tenant_of(ctx),
         )
     except LessonNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
+    except VersionConflictError as exc:
+        return _conflict(exc)
     return result.model_dump()
 
 
 @app.get("/api/v1/lessons/{lesson_id}/versions")
-def list_lesson_versions(lesson_id: str) -> dict[str, Any]:
-    lesson = _require_lesson(lesson_id)
+def list_lesson_versions(
+    lesson_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    lesson = _require_lesson(lesson_id, _tenant_of(ctx))
     versions = container.course_repository().list_versions(lesson_id)
     return {
         "lesson_id": lesson_id,
@@ -322,8 +492,18 @@ def list_lesson_versions(lesson_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/v1/lessons/{lesson_id}/revert")
-def revert_lesson(lesson_id: str, req: LessonRevertRequest) -> dict[str, Any]:
-    _require_lesson(lesson_id)
+def revert_lesson(
+    lesson_id: str,
+    req: LessonRevertRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    lesson_now = _require_lesson(lesson_id, _tenant_of(ctx))
+    _guard_lock(lesson_id, ctx)
+    if req.expected_version is not None and int(req.expected_version) != lesson_now.current_version:
+        return _conflict(
+            VersionConflictError(int(req.expected_version), lesson_now.current_version)
+        )
     repository = container.course_repository()
     if repository.get_version(lesson_id, req.version) is None:
         raise HTTPException(
@@ -342,10 +522,15 @@ def revert_lesson(lesson_id: str, req: LessonRevertRequest) -> dict[str, Any]:
 
 
 @app.post("/api/v1/lessons/{lesson_id}/ask")
-async def ask_lesson(lesson_id: str, req: LessonAskRequest) -> dict[str, Any]:
+async def ask_lesson(
+    lesson_id: str, req: LessonAskRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_lesson(lesson_id, _tenant_of(ctx))
     question = req.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
+    _charge(ctx, "ask", 1, ref_id=lesson_id)
     selection = (req.selection or "").strip() or None
     try:
         result = await container.conversation().ask(
@@ -359,14 +544,28 @@ async def ask_lesson(lesson_id: str, req: LessonAskRequest) -> dict[str, Any]:
 
 
 @app.post("/api/v1/lessons/{lesson_id}/amend")
-async def amend_lesson(lesson_id: str, req: LessonAmendRequest) -> dict[str, Any]:
+async def amend_lesson(
+    lesson_id: str,
+    req: LessonAmendRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_lesson(lesson_id, _tenant_of(ctx))
     instruction = req.instruction.strip()
     if not instruction:
         raise HTTPException(status_code=400, detail="修改指令不能为空")
+    _guard_lock(lesson_id, ctx)
+    _charge(ctx, "amend", 1, ref_id=lesson_id)
     try:
         result = await container.conversation().amend(
-            lesson_id, instruction, target=req.target, mode=req.mode.value
+            lesson_id,
+            instruction,
+            target=req.target,
+            mode=req.mode.value,
+            expected_version=req.expected_version,
         )
+    except VersionConflictError as exc:
+        return _conflict(exc)
     except LessonNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
     except LessonContentEmptyError as exc:
@@ -380,8 +579,12 @@ async def amend_lesson(lesson_id: str, req: LessonAmendRequest) -> dict[str, Any
 
 @app.post("/api/v1/lessons/{lesson_id}/drilldown")
 async def drilldown_lesson(
-    lesson_id: str, req: LessonDrilldownRequest | None = None
+    lesson_id: str,
+    req: LessonDrilldownRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_lesson(lesson_id, _tenant_of(ctx))
     payload = req or LessonDrilldownRequest()
     try:
         result = await container.conversation().drilldown(
@@ -402,9 +605,12 @@ async def drilldown_lesson(
 
 @app.get("/api/v1/lessons/{lesson_id}/thread")
 def get_lesson_thread(
-    lesson_id: str, limit: int | None = Query(default=None, ge=1, le=200)
+    lesson_id: str,
+    limit: int | None = Query(default=None, ge=1, le=200),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
-    _require_lesson(lesson_id)
+    _enforce(ctx, "read")
+    _require_lesson(lesson_id, _tenant_of(ctx))
     conversations = container.conversation_repository()
     thread = conversations.get_lesson_thread(lesson_id)
     if thread is None:
@@ -429,11 +635,17 @@ def get_lesson_thread(
 
 
 @app.get("/api/v1/threads/{thread_id}")
-def get_thread(thread_id: str, limit: int | None = Query(default=None, ge=1, le=200)) -> dict[str, Any]:
+def get_thread(
+    thread_id: str,
+    limit: int | None = Query(default=None, ge=1, le=200),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
     conversations = container.conversation_repository()
     thread = conversations.get_thread(thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail=f"对话线不存在: {thread_id}")
+    _require_course(thread.course_id, _tenant_of(ctx))
     messages = conversations.list_messages(thread.id, limit=limit)
     return {
         "thread": thread.model_dump(),
@@ -452,6 +664,7 @@ class BlueprintGenerateRequest(BaseModel):
 
 class BlueprintSaveRequest(BaseModel):
     blueprint: CourseBlueprint
+    expected_version: int | None = None
 
 
 class GlossaryUpdateRequest(BaseModel):
@@ -473,8 +686,11 @@ def _glossary_payload(course_id: str, blueprint: CourseBlueprint | None) -> dict
 
 
 @app.get("/api/v1/courses/{course_id}/blueprint")
-def get_course_blueprint(course_id: str) -> dict[str, Any]:
-    _require_course(course_id)
+def get_course_blueprint(
+    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_course(course_id, _tenant_of(ctx))
     blueprint = container.blueprint().get_blueprint(course_id)
     return {
         "exists": blueprint is not None,
@@ -484,10 +700,14 @@ def get_course_blueprint(course_id: str) -> dict[str, Any]:
 
 @app.post("/api/v1/courses/{course_id}/blueprint/generate")
 async def generate_course_blueprint(
-    course_id: str, req: BlueprintGenerateRequest | None = None
+    course_id: str,
+    req: BlueprintGenerateRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
+    _enforce(ctx, "write")
     payload = req or BlueprintGenerateRequest()
-    _require_course(course_id)
+    _require_course(course_id, _tenant_of(ctx))
+    _charge(ctx, "blueprint", 1, ref_id=course_id)
     try:
         blueprint = await container.blueprint().generate(
             course_id,
@@ -495,6 +715,7 @@ async def generate_course_blueprint(
             top_k=payload.top_k,
             source_ids=payload.source_ids,
             focus=payload.focus,
+            tenant_id=_tenant_of(ctx),
         )
     except NoEvidenceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -506,18 +727,30 @@ async def generate_course_blueprint(
 
 
 @app.put("/api/v1/courses/{course_id}/blueprint")
-def save_course_blueprint(course_id: str, req: BlueprintSaveRequest) -> dict[str, Any]:
-    _require_course(course_id)
+def save_course_blueprint(
+    course_id: str,
+    req: BlueprintSaveRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_course(course_id, _tenant_of(ctx))
     try:
-        saved = container.blueprint().save_blueprint(course_id, req.blueprint)
+        saved = container.blueprint().save_blueprint(
+            course_id, req.blueprint, expected_version=req.expected_version
+        )
     except BlueprintNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VersionConflictError as exc:
+        return _conflict(exc)
     return saved.model_dump()
 
 
 @app.post("/api/v1/courses/{course_id}/blueprint/apply")
-def apply_course_blueprint(course_id: str) -> dict[str, Any]:
-    _require_course(course_id)
+def apply_course_blueprint(
+    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_course(course_id, _tenant_of(ctx))
     try:
         blueprint, created = container.blueprint().apply(course_id)
     except BlueprintNotFoundError as exc:
@@ -530,15 +763,23 @@ def apply_course_blueprint(course_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/v1/courses/{course_id}/glossary")
-def get_course_glossary(course_id: str) -> dict[str, Any]:
-    _require_course(course_id)
+def get_course_glossary(
+    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_course(course_id, _tenant_of(ctx))
     blueprint = container.blueprint().get_blueprint(course_id)
     return _glossary_payload(course_id, blueprint)
 
 
 @app.put("/api/v1/courses/{course_id}/glossary")
-def update_course_glossary(course_id: str, req: GlossaryUpdateRequest) -> dict[str, Any]:
-    _require_course(course_id)
+def update_course_glossary(
+    course_id: str,
+    req: GlossaryUpdateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_course(course_id, _tenant_of(ctx))
     try:
         blueprint = container.blueprint().set_glossary(course_id, req.terms)
     except BlueprintNotFoundError as exc:
@@ -547,13 +788,23 @@ def update_course_glossary(course_id: str, req: GlossaryUpdateRequest) -> dict[s
 
 
 @app.get("/api/v1/courses/{course_id}/progress")
-def get_course_progress(course_id: str) -> dict[str, Any]:
-    _require_course(course_id)
+def get_course_progress(
+    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_course(course_id, _tenant_of(ctx))
     return container.blueprint().progress(course_id)
 
 
 @app.post("/api/v1/lessons/{lesson_id}/review")
-def review_lesson(lesson_id: str, req: LessonReviewRequest) -> dict[str, Any]:
+def review_lesson(
+    lesson_id: str,
+    req: LessonReviewRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "review")
+    _require_lesson(lesson_id, _tenant_of(ctx))
+    _guard_lock(lesson_id, ctx)
     try:
         lesson, review = container.blueprint().review_lesson(
             lesson_id, req.action, note=req.note
@@ -575,11 +826,266 @@ def review_lesson(lesson_id: str, req: LessonReviewRequest) -> dict[str, Any]:
 
 
 @app.get("/api/v1/lessons/{lesson_id}/reviews")
-def list_lesson_reviews(lesson_id: str) -> dict[str, Any]:
-    _require_lesson(lesson_id)
+def list_lesson_reviews(
+    lesson_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_lesson(lesson_id, _tenant_of(ctx))
     reviews = container.blueprint().list_reviews(lesson_id)
     return {
         "lesson_id": lesson_id,
         "count": len(reviews),
         "reviews": [review.model_dump() for review in reviews],
     }
+
+
+def _auth_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, EmailAlreadyRegisteredError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, InvalidCredentialsError):
+        return HTTPException(status_code=401, detail=str(exc))
+    if isinstance(exc, AuthRequiredError):
+        return HTTPException(status_code=401, detail=str(exc))
+    if isinstance(exc, PermissionDeniedError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, MembershipNotFoundError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, TenantNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/v1/auth/register", status_code=201)
+def auth_register(req: RegisterRequest) -> dict[str, Any]:
+    service = container.auth_service()
+    try:
+        user, token = service.register(req.email, req.password, req.display_name)
+    except (EmailAlreadyRegisteredError, ValueError) as exc:
+        raise _auth_error(exc) from exc
+    return {"token": token, "user": user.model_dump(), "tenants": service.tenants_payload(user)}
+
+
+@app.post("/api/v1/auth/login")
+def auth_login(req: LoginRequest) -> dict[str, Any]:
+    service = container.auth_service()
+    try:
+        user, token = service.login(req.email, req.password)
+    except InvalidCredentialsError as exc:
+        raise _auth_error(exc) from exc
+    return {"token": token, "user": user.model_dump(), "tenants": service.tenants_payload(user)}
+
+
+@app.get("/api/v1/auth/me")
+def auth_me(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    service = container.auth_service()
+    return {
+        "user": ctx.user.model_dump(),
+        "tenant": ctx.tenant.model_dump(),
+        "role": ctx.role,
+        "tenants": service.tenants_payload(ctx.user),
+        "auth_mode": service.mode,
+    }
+
+
+@app.post("/api/v1/auth/logout")
+def auth_logout() -> dict[str, Any]:
+    return {"ok": True}
+
+
+@app.get("/api/v1/tenants")
+def list_tenants(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    tenants = container.auth_service().list_tenants(ctx.user)
+    return {"count": len(tenants), "tenants": tenants}
+
+
+@app.post("/api/v1/tenants", status_code=201)
+def create_tenant(
+    req: TenantCreateRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    service = container.auth_service()
+    try:
+        tenant, role = service.create_tenant(ctx.user, req.name)
+    except ValueError as exc:
+        raise _auth_error(exc) from exc
+    return {"tenant": tenant.model_dump(), "role": role}
+
+
+def _require_tenant_action(ctx: AuthContext, tenant_id: str, action: str) -> str:
+    service = container.auth_service()
+    try:
+        role = service.role_in_tenant(ctx.user, tenant_id)
+        service.require(AuthContext(user=ctx.user, tenant=ctx.tenant, role=role), action)
+    except (MembershipNotFoundError, PermissionDeniedError, TenantNotFoundError) as exc:
+        raise _auth_error(exc) from exc
+    return role
+
+
+@app.get("/api/v1/tenants/{tenant_id}/members")
+def list_tenant_members(
+    tenant_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _require_tenant_action(ctx, tenant_id, "read")
+    try:
+        members = container.auth_service().list_members(tenant_id)
+    except TenantNotFoundError as exc:
+        raise _auth_error(exc) from exc
+    return {"count": len(members), "members": [member.model_dump() for member in members]}
+
+
+@app.post("/api/v1/tenants/{tenant_id}/members", status_code=201)
+def add_tenant_member(
+    tenant_id: str,
+    req: MemberAddRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _require_tenant_action(ctx, tenant_id, "manage_members")
+    try:
+        member = container.auth_service().add_member(tenant_id, req.email, req.role)
+    except (MembershipNotFoundError, PermissionDeniedError, TenantNotFoundError, ValueError) as exc:
+        raise _auth_error(exc) from exc
+    return member.model_dump()
+
+
+@app.patch("/api/v1/tenants/{tenant_id}/members/{user_id}")
+def update_tenant_member(
+    tenant_id: str,
+    user_id: str,
+    req: MemberRoleRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _require_tenant_action(ctx, tenant_id, "manage_members")
+    try:
+        member = container.auth_service().update_member_role(tenant_id, user_id, req.role)
+    except (MembershipNotFoundError, PermissionDeniedError, TenantNotFoundError, ValueError) as exc:
+        raise _auth_error(exc) from exc
+    return member.model_dump()
+
+
+@app.delete("/api/v1/tenants/{tenant_id}/members/{user_id}")
+def remove_tenant_member(
+    tenant_id: str, user_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _require_tenant_action(ctx, tenant_id, "manage_members")
+    try:
+        container.auth_service().remove_member(tenant_id, user_id)
+    except (MembershipNotFoundError, PermissionDeniedError, TenantNotFoundError) as exc:
+        raise _auth_error(exc) from exc
+    return {"ok": True}
+
+
+class LessonLockRequest(BaseModel):
+    force: bool = False
+
+
+class LessonHeartbeatRequest(BaseModel):
+    token: str = Field(min_length=1)
+
+
+class QuotaUpdateRequest(BaseModel):
+    monthly_generations: int = Field(ge=0)
+    monthly_uploads: int = Field(ge=0)
+    storage_bytes: int = Field(ge=0)
+
+
+def _quota_payload(tenant_id: str) -> dict[str, Any]:
+    service = container.quota_service()
+    usage = service.usage(tenant_id)
+    return {
+        "tenant_id": tenant_id,
+        "period": usage.period,
+        "limits": service.limits(tenant_id).model_dump(),
+        "usage": usage.model_dump(),
+        "remaining": service.remaining(tenant_id),
+    }
+
+
+@app.get("/api/v1/quotas")
+def get_quota(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    return _quota_payload(_tenant_of(ctx))
+
+
+@app.put("/api/v1/quotas")
+def update_quota(
+    req: QuotaUpdateRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    ctx = _enforce(ctx, "manage_quota")
+    tenant_id = _tenant_of(ctx)
+    container.quota_service().set_limits(
+        tenant_id,
+        req.monthly_generations,
+        req.monthly_uploads,
+        req.storage_bytes,
+    )
+    return _quota_payload(tenant_id)
+
+
+@app.get("/api/v1/lessons/{lesson_id}/lock")
+def get_lesson_lock(
+    lesson_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_lesson(lesson_id, _tenant_of(ctx))
+    lock = container.lock_service().get(lesson_id)
+    return {"lock": lock.model_dump() if lock else None}
+
+
+@app.post("/api/v1/lessons/{lesson_id}/lock")
+def acquire_lesson_lock(
+    lesson_id: str,
+    req: LessonLockRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Any:
+    _enforce(ctx, "write")
+    _require_lesson(lesson_id, _tenant_of(ctx))
+    payload = req or LessonLockRequest()
+    if payload.force and not _is_privileged(ctx):
+        raise HTTPException(status_code=403, detail="仅管理员或所有者可强制接管编辑锁")
+    try:
+        lock = container.lock_service().acquire(
+            lesson_id,
+            _tenant_of(ctx),
+            ctx.user.id,
+            ctx.user.display_name or ctx.user.email,
+            force=payload.force,
+        )
+    except LessonLockedError as exc:
+        current = exc.lock
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": f"该讲正被 {exc.name} 编辑",
+                "lock": current.model_dump() if hasattr(current, "model_dump") else None,
+            },
+        )
+    return {"acquired": True, "lock": lock.model_dump()}
+
+
+@app.post("/api/v1/lessons/{lesson_id}/lock/heartbeat")
+def heartbeat_lesson_lock(
+    lesson_id: str,
+    req: LessonHeartbeatRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_lesson(lesson_id, _tenant_of(ctx))
+    try:
+        lock = container.lock_service().heartbeat(lesson_id, req.token)
+    except LessonLockLostError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"lock": lock.model_dump()}
+
+
+@app.delete("/api/v1/lessons/{lesson_id}/lock")
+def release_lesson_lock(
+    lesson_id: str,
+    token: str = Query(default=""),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_lesson(lesson_id, _tenant_of(ctx))
+    try:
+        container.lock_service().release(lesson_id, token)
+    except LockTokenMismatchError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {"ok": True}

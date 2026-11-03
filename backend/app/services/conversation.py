@@ -38,6 +38,7 @@ from app.services.errors import (
     LessonContentEmptyError,
     LessonNotFoundError,
     MessageNotFoundError,
+    VersionConflictError,
 )
 
 DRILLDOWN_NOTE = "drilldown"
@@ -106,8 +107,11 @@ class ConversationService:
         instruction: str,
         target: str | None = None,
         mode: str | None = None,
+        expected_version: int | None = None,
     ) -> AmendResult:
         lesson, course, citations = self._context(lesson_id)
+        if expected_version is not None and int(expected_version) != lesson.current_version:
+            raise VersionConflictError(int(expected_version), lesson.current_version)
         current_content = lesson.content.strip()
         if not current_content:
             raise LessonContentEmptyError(lesson_id)

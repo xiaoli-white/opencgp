@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Sequence
 
+from app.models.auth import DEFAULT_TENANT_ID
 from app.models.chunk import Chunk
 from app.models.citation import Citation
 from app.ports.embedding import EmbeddingProvider
@@ -22,7 +23,8 @@ _SCHEMA = (
         source_name TEXT NOT NULL,
         chunk_count INTEGER NOT NULL DEFAULT 0,
         char_count INTEGER NOT NULL DEFAULT 0,
-        created_at REAL NOT NULL
+        created_at REAL NOT NULL,
+        tenant_id TEXT NOT NULL DEFAULT ''
     )
     """,
     """
@@ -36,7 +38,8 @@ _SCHEMA = (
         end_offset INTEGER NOT NULL,
         meta TEXT NOT NULL DEFAULT '{}',
         embedding TEXT,
-        created_at REAL NOT NULL
+        created_at REAL NOT NULL,
+        tenant_id TEXT NOT NULL DEFAULT ''
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source_id)",
@@ -48,6 +51,12 @@ _SCHEMA = (
         tokenize='unicode61'
     )
     """,
+)
+
+
+_COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("sources", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
+    ("chunks", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -82,22 +91,36 @@ class SimpleVectorStore(VectorStore):
                 conn.execute("PRAGMA synchronous=NORMAL")
                 for statement in _SCHEMA:
                     conn.execute(statement)
+                for table, column, ddl in _COLUMN_MIGRATIONS:
+                    if not _has_column(conn, table, column):
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_chunks_tenant ON chunks(tenant_id)"
+                )
                 conn.commit()
                 self._conn = conn
             return self._conn
 
-    async def add_chunks(self, source_id: str, chunks: Sequence[Chunk]) -> int:
+    async def add_chunks(
+        self,
+        source_id: str,
+        chunks: Sequence[Chunk],
+        tenant_id: str = "",
+    ) -> int:
         items = list(chunks)
         if not items:
             return 0
         embeddings = await self.embedder.embed([chunk.text for chunk in items]) if self.embedder else None
-        return await asyncio.to_thread(self._write_chunks, source_id, items, embeddings)
+        return await asyncio.to_thread(
+            self._write_chunks, source_id, items, embeddings, tenant_id
+        )
 
     async def search(
         self,
         query: str,
         top_k: int = 5,
         source_ids: Sequence[str] | None = None,
+        tenant_id: str = "",
     ) -> list[Citation]:
         if not query or not query.strip() or top_k <= 0:
             return []
@@ -107,11 +130,16 @@ class SimpleVectorStore(VectorStore):
             vectors = await self.embedder.embed([query])
             query_vector = vectors[0] if vectors else None
         return await asyncio.to_thread(
-            self._search_sync, query.strip(), top_k, scope or None, query_vector
+            self._search_sync,
+            query.strip(),
+            top_k,
+            scope or None,
+            query_vector,
+            tenant_id,
         )
 
-    async def delete_by_source(self, source_id: str) -> int:
-        return await asyncio.to_thread(self._delete_sync, source_id)
+    async def delete_by_source(self, source_id: str, tenant_id: str = "") -> int:
+        return await asyncio.to_thread(self._delete_sync, source_id, tenant_id)
 
     def healthcheck(self) -> bool:
         try:
@@ -131,12 +159,14 @@ class SimpleVectorStore(VectorStore):
         source_id: str,
         chunks: list[Chunk],
         embeddings: list[list[float]] | None,
+        tenant_id: str = "",
     ) -> int:
         conn = self._connection()
         now = time.time()
         char_count = sum(len(chunk.text) for chunk in chunks)
+        scope = _tenant_scope(tenant_id)
         with self._lock, conn:
-            self._delete_locked(conn, source_id)
+            self._delete_locked(conn, source_id, scope)
             for position, chunk in enumerate(chunks):
                 chunk_id = chunk.chunk_id
                 vector = embeddings[position] if embeddings and position < len(embeddings) else None
@@ -144,8 +174,8 @@ class SimpleVectorStore(VectorStore):
                     """
                     INSERT OR REPLACE INTO chunks
                     (id, source_id, source_name, chunk_index, text, start_offset,
-                     end_offset, meta, embedding, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     end_offset, meta, embedding, created_at, tenant_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         chunk_id,
@@ -158,6 +188,7 @@ class SimpleVectorStore(VectorStore):
                         json.dumps(chunk.meta, ensure_ascii=False),
                         json.dumps(vector) if vector is not None else None,
                         now,
+                        scope,
                     ),
                 )
                 tokens = index_tokens(chunk.text)
@@ -169,26 +200,35 @@ class SimpleVectorStore(VectorStore):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO sources
-                (source_id, source_name, chunk_count, char_count, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                (source_id, source_name, chunk_count, char_count, created_at, tenant_id)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (source_id, chunks[0].source_name, len(chunks), char_count, now),
+                (source_id, chunks[0].source_name, len(chunks), char_count, now, scope),
             )
         return len(chunks)
 
-    def _delete_sync(self, source_id: str) -> int:
+    def _delete_sync(self, source_id: str, tenant_id: str = "") -> int:
         conn = self._connection()
+        scope = _tenant_scope(tenant_id)
         with self._lock, conn:
-            return self._delete_locked(conn, source_id)
+            return self._delete_locked(conn, source_id, scope)
 
-    def _delete_locked(self, conn: sqlite3.Connection, source_id: str) -> int:
+    def _delete_locked(
+        self, conn: sqlite3.Connection, source_id: str, tenant_id: str = ""
+    ) -> int:
+        clause, params = _tenant_filter(tenant_id)
         row = conn.execute(
-            "SELECT count(*) FROM chunks WHERE source_id = ?", (source_id,)
+            f"SELECT count(*) FROM chunks WHERE source_id = ?{clause}",
+            [source_id, *params],
         ).fetchone()
         removed = int(row[0]) if row else 0
         conn.execute("DELETE FROM chunks_fts WHERE source_id = ?", (source_id,))
-        conn.execute("DELETE FROM chunks WHERE source_id = ?", (source_id,))
-        conn.execute("DELETE FROM sources WHERE source_id = ?", (source_id,))
+        conn.execute(
+            f"DELETE FROM chunks WHERE source_id = ?{clause}", [source_id, *params]
+        )
+        conn.execute(
+            f"DELETE FROM sources WHERE source_id = ?{clause}", [source_id, *params]
+        )
         return removed
 
     def _search_sync(
@@ -197,6 +237,7 @@ class SimpleVectorStore(VectorStore):
         top_k: int,
         source_ids: Sequence[str] | None,
         query_vector: Sequence[float] | None,
+        tenant_id: str = "",
     ) -> list[Citation]:
         conn = self._connection()
         terms = query_terms(query)
@@ -210,10 +251,29 @@ class SimpleVectorStore(VectorStore):
         else:
             vector_scores = self._vector_scores(conn, query_vector, limit, source_ids)
             scores = self._blend(keyword_norm, _normalize(vector_scores))
+        scores = self._scope_scores(conn, scores, tenant_id)
         ranked, covs = self._rank(conn, scores, terms)
         return self._build_citations(
             conn, self._select(ranked, covs, top_k), terms
         )
+
+    def _scope_scores(
+        self,
+        conn: sqlite3.Connection,
+        scores: dict[str, float],
+        tenant_id: str,
+    ) -> dict[str, float]:
+        if not scores:
+            return {}
+        clause, params = _tenant_filter(tenant_id)
+        ids = list(scores)
+        placeholders = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT id FROM chunks WHERE id IN ({placeholders}){clause}",
+            [*ids, *params],
+        ).fetchall()
+        allowed = {row["id"] for row in rows}
+        return {key: value for key, value in scores.items() if key in allowed}
 
     def _rank(
         self,
@@ -388,6 +448,26 @@ class SimpleVectorStore(VectorStore):
                 )
             )
         return citations
+
+
+def _tenant_scope(tenant_id: str) -> str:
+    value = (tenant_id or "").strip()
+    return value or DEFAULT_TENANT_ID
+
+
+def _tenant_filter(tenant_id: str) -> tuple[str, list[object]]:
+    scope = _tenant_scope(tenant_id)
+    if scope == DEFAULT_TENANT_ID:
+        return " AND (tenant_id = ? OR tenant_id = '')", [DEFAULT_TENANT_ID]
+    return " AND tenant_id = ?", [scope]
+
+
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    except sqlite3.Error:
+        return False
+    return any(row["name"] == column for row in rows)
 
 
 def _load_meta(value: str | None) -> dict:

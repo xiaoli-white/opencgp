@@ -25,6 +25,7 @@ from app.services.errors import (
     LessonContentEmptyError,
     LessonNotFoundError,
     NoEvidenceError,
+    VersionConflictError,
 )
 
 NO_EVIDENCE_MESSAGE = (
@@ -74,6 +75,7 @@ class BlueprintService:
         top_k: int | None = None,
         source_ids: Sequence[str] | None = None,
         focus: str = "",
+        tenant_id: str = "",
     ) -> CourseBlueprint:
         course = self.course_repository.get_course(course_id)
         if course is None:
@@ -84,6 +86,7 @@ class BlueprintService:
             self._build_query(course, focus),
             top_k=resolved_top_k,
             source_ids=source_ids,
+            tenant_id=tenant_id,
         )
         citations = citations[: self.max_evidence]
         evidence = [
@@ -108,7 +111,16 @@ class BlueprintService:
     def get_blueprint(self, course_id: str) -> CourseBlueprint | None:
         return self.repository.get_blueprint(course_id)
 
-    def save_blueprint(self, course_id: str, blueprint: CourseBlueprint) -> CourseBlueprint:
+    def save_blueprint(
+        self,
+        course_id: str,
+        blueprint: CourseBlueprint,
+        expected_version: int | None = None,
+    ) -> CourseBlueprint:
+        existing = self.repository.get_blueprint(course_id)
+        current = existing.version if existing else 0
+        if expected_version is not None and int(expected_version) != current:
+            raise VersionConflictError(int(expected_version), current)
         blueprint = blueprint.model_copy(update={"course_id": course_id})
         return self.repository.save_blueprint(blueprint)
 

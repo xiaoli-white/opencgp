@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from app.config import Settings, get_settings
+from app.ports.auth_repository import AuthRepository
 from app.ports.conversation_repository import ConversationRepository
 from app.ports.blueprint_repository import BlueprintRepository
 from app.ports.course_repository import CourseRepository
@@ -21,13 +22,18 @@ from app.ports.database import Database
 from app.ports.embedding import EmbeddingProvider
 from app.ports.exporter import Exporter
 from app.ports.llm import LLMProvider
+from app.ports.lock_repository import LockRepository
 from app.ports.parser import DocumentParser
+from app.ports.quota_repository import QuotaRepository
 from app.ports.storage import StorageBackend
 from app.ports.vectorstore import VectorStore
+from app.services.auth import AuthService
 from app.services.conversation import ConversationService
 from app.services.blueprint import BlueprintService
 from app.services.generation import GenerationService
 from app.services.ingest import IngestService
+from app.services.locks import LockService
+from app.services.quota import QuotaService
 
 
 class Container:
@@ -190,6 +196,57 @@ class Container:
             )
 
         return self._get_or_build("blueprint", build)
+
+    def auth_repository(self) -> AuthRepository:
+        def build() -> AuthRepository:
+            from app.adapters.database.auth_repository import DatabaseAuthRepository
+
+            return DatabaseAuthRepository(database=self.database())
+
+        return self._get_or_build("auth_repository", build)
+
+    def auth_service(self) -> AuthService:
+        def build() -> AuthService:
+            settings = self.settings.auth
+            return AuthService(
+                repository=self.auth_repository(),
+                secret=settings.secret,
+                ttl_seconds=settings.token_ttl_hours * 3600,
+                mode=settings.mode,
+            )
+
+        return self._get_or_build("auth_service", build)
+
+    def quota_repository(self) -> QuotaRepository:
+        def build() -> QuotaRepository:
+            from app.adapters.database.quota_repository import DatabaseQuotaRepository
+
+            return DatabaseQuotaRepository(database=self.database())
+
+        return self._get_or_build("quota_repository", build)
+
+    def quota_service(self) -> QuotaService:
+        def build() -> QuotaService:
+            return QuotaService(repository=self.quota_repository())
+
+        return self._get_or_build("quota_service", build)
+
+    def lock_repository(self) -> LockRepository:
+        def build() -> LockRepository:
+            from app.adapters.database.quota_repository import DatabaseLockRepository
+
+            return DatabaseLockRepository(database=self.database())
+
+        return self._get_or_build("lock_repository", build)
+
+    def lock_service(self) -> LockService:
+        def build() -> LockService:
+            return LockService(
+                repository=self.lock_repository(),
+                ttl_seconds=self.settings.locks.ttl_seconds,
+            )
+
+        return self._get_or_build("lock_service", build)
 
     def conversation_repository(self) -> ConversationRepository:
         def build() -> ConversationRepository:

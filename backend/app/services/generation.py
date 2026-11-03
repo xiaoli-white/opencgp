@@ -27,7 +27,7 @@ from app.models.mode import GenerationMode, with_loose_notice
 from app.ports.course_repository import CourseRepository
 from app.ports.llm import LLMProvider
 from app.ports.vectorstore import VectorStore
-from app.services.errors import LessonNotFoundError
+from app.services.errors import LessonNotFoundError, VersionConflictError
 
 NO_EVIDENCE_NOTICE = (
     "资料不足：知识库中未检索到与本节主题相关的证据，暂不生成正文。\n\n"
@@ -63,10 +63,14 @@ class GenerationService:
         note: str = "",
         source_ids: Sequence[str] | None = None,
         mode: str | None = None,
+        expected_version: int | None = None,
+        tenant_id: str = "",
     ) -> GenerationResult:
         lesson = self.repository.get_lesson(lesson_id)
         if lesson is None:
             raise LessonNotFoundError(lesson_id)
+        if expected_version is not None and int(expected_version) != lesson.current_version:
+            raise VersionConflictError(int(expected_version), lesson.current_version)
         course = self.repository.get_course(lesson.course_id)
         resolved_mode = GenerationMode.normalize(mode or self.default_mode)
 
@@ -76,6 +80,7 @@ class GenerationService:
             self._build_query(resolved_topic, lesson),
             top_k=resolved_top_k,
             source_ids=source_ids,
+            tenant_id=tenant_id,
         )
         citations = citations[: self.max_evidence]
         evidence = [

@@ -22,7 +22,12 @@ from app.models.citation import Citation
 class VectorStore(Protocol):
     """通用检索端口。"""
 
-    async def add_chunks(self, source_id: str, chunks: Sequence[Chunk]) -> int:
+    async def add_chunks(
+        self,
+        source_id: str,
+        chunks: Sequence[Chunk],
+        tenant_id: str = "",
+    ) -> int:
         """写入某来源的全部分块，返回写入条数。"""
         ...
 
@@ -31,11 +36,12 @@ class VectorStore(Protocol):
         query: str,
         top_k: int = 5,
         source_ids: Sequence[str] | None = None,
+        tenant_id: str = "",
     ) -> list[Citation]:
         """按查询检索最相关的 top_k 分块，结果按相关度降序。"""
         ...
 
-    async def delete_by_source(self, source_id: str) -> int:
+    async def delete_by_source(self, source_id: str, tenant_id: str = "") -> int:
         """删除某来源的全部分块，返回删除条数。"""
         ...
 
