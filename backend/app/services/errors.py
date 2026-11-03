@@ -74,3 +74,15 @@ class LessonLockLostError(RuntimeError):
 
 class LockTokenMismatchError(PermissionDeniedError):
     pass
+
+
+class RoleNotFoundError(LookupError):
+    pass
+
+
+class RoleInUseError(RuntimeError):
+    pass
+
+
+class BuiltinRoleError(ValueError):
+    pass

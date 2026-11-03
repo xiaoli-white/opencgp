@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol, Sequence, runtime_checkable
 
-from app.models.auth import Membership, Tenant, User
+from app.models.auth import CourseGrant, Membership, Role, Tenant, User
 
 
 @runtime_checkable
@@ -69,4 +69,53 @@ class AuthRepository(Protocol):
         ...
 
     def count_owners(self, tenant_id: str) -> int:
+        ...
+
+    def create_role(
+        self,
+        tenant_id: str,
+        key: str,
+        name: str,
+        actions: Sequence[str],
+        scope: str = "all",
+        builtin: bool = False,
+    ) -> Role:
+        ...
+
+    def get_role(self, tenant_id: str, key: str) -> Role | None:
+        ...
+
+    def get_role_by_id(self, role_id: str) -> Role | None:
+        ...
+
+    def list_roles(self, tenant_id: str) -> list[Role]:
+        ...
+
+    def update_role(
+        self,
+        role_id: str,
+        name: str | None = None,
+        actions: Sequence[str] | None = None,
+        scope: str | None = None,
+    ) -> Role | None:
+        ...
+
+    def delete_role(self, role_id: str) -> bool:
+        ...
+
+    def count_role_members(self, tenant_id: str, key: str) -> int:
+        ...
+
+    def list_grants(self, course_id: str) -> list[CourseGrant]:
+        ...
+
+    def get_grant(self, course_id: str, user_id: str) -> CourseGrant | None:
+        ...
+
+    def list_user_grants(self, tenant_id: str, user_id: str) -> list[CourseGrant]:
+        ...
+
+    def replace_grants(
+        self, tenant_id: str, course_id: str, grants: Sequence[tuple[str, str]]
+    ) -> list[CourseGrant]:
         ...

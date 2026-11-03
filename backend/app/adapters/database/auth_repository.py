@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import time
 import uuid
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
-from app.models.auth import Membership, Tenant, User
+from app.models.auth import CourseGrant, Membership, Role, Tenant, User
 from app.ports.auth_repository import AuthRepository
 from app.ports.database import Database
 
@@ -40,6 +41,33 @@ SCHEMA: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_memberships_tenant ON memberships(tenant_id)",
+    """
+    CREATE TABLE IF NOT EXISTS tenant_roles (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        actions_json TEXT NOT NULL DEFAULT '[]',
+        scope TEXT NOT NULL DEFAULT 'all',
+        builtin INTEGER NOT NULL DEFAULT 0,
+        created_at REAL NOT NULL,
+        UNIQUE (tenant_id, key)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_tenant_roles_tenant ON tenant_roles(tenant_id)",
+    """
+    CREATE TABLE IF NOT EXISTS course_grants (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        course_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        level TEXT NOT NULL DEFAULT 'read',
+        created_at REAL NOT NULL,
+        UNIQUE (course_id, user_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_course_grants_course ON course_grants(course_id)",
+    "CREATE INDEX IF NOT EXISTS idx_course_grants_user ON course_grants(tenant_id, user_id)",
 )
 
 COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
@@ -235,9 +263,183 @@ class DatabaseAuthRepository(AuthRepository):
         )
         return int(row["n"]) if row else 0
 
+    def create_role(
+        self,
+        tenant_id: str,
+        key: str,
+        name: str,
+        actions: Sequence[str],
+        scope: str = "all",
+        builtin: bool = False,
+    ) -> Role:
+        self.ensure_schema()
+        record = Role(
+            id=_new_id("role"),
+            tenant_id=tenant_id,
+            key=key,
+            name=name or key,
+            actions=[str(item) for item in actions],
+            scope=scope,
+            builtin=builtin,
+            created_at=time.time(),
+        )
+        self.database.execute(
+            "INSERT INTO tenant_roles (id, tenant_id, key, name, actions_json, scope,"
+            " builtin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.id,
+                tenant_id,
+                record.key,
+                record.name,
+                json.dumps(record.actions),
+                record.scope,
+                1 if builtin else 0,
+                record.created_at,
+            ),
+        )
+        return record
+
+    def get_role(self, tenant_id: str, key: str) -> Role | None:
+        self.ensure_schema()
+        row = self.database.fetchone(
+            "SELECT * FROM tenant_roles WHERE tenant_id = ? AND key = ?",
+            (tenant_id, key),
+        )
+        return _to_role(row) if row else None
+
+    def get_role_by_id(self, role_id: str) -> Role | None:
+        self.ensure_schema()
+        row = self.database.fetchone(
+            "SELECT * FROM tenant_roles WHERE id = ?", (role_id,)
+        )
+        return _to_role(row) if row else None
+
+    def list_roles(self, tenant_id: str) -> list[Role]:
+        self.ensure_schema()
+        rows = self.database.fetchall(
+            "SELECT * FROM tenant_roles WHERE tenant_id = ? ORDER BY created_at ASC",
+            (tenant_id,),
+        )
+        return [_to_role(row) for row in rows]
+
+    def update_role(
+        self,
+        role_id: str,
+        name: str | None = None,
+        actions: Sequence[str] | None = None,
+        scope: str | None = None,
+    ) -> Role | None:
+        self.ensure_schema()
+        current = self.get_role_by_id(role_id)
+        if current is None:
+            return None
+        next_name = current.name if name is None else name
+        next_actions = current.actions if actions is None else [str(i) for i in actions]
+        next_scope = current.scope if scope is None else scope
+        self.database.execute(
+            "UPDATE tenant_roles SET name = ?, actions_json = ?, scope = ? WHERE id = ?",
+            (next_name, json.dumps(next_actions), next_scope, role_id),
+        )
+        return self.get_role_by_id(role_id)
+
+    def delete_role(self, role_id: str) -> bool:
+        self.ensure_schema()
+        current = self.get_role_by_id(role_id)
+        if current is None:
+            return False
+        self.database.execute("DELETE FROM tenant_roles WHERE id = ?", (role_id,))
+        return True
+
+    def count_role_members(self, tenant_id: str, key: str) -> int:
+        self.ensure_schema()
+        row = self.database.fetchone(
+            "SELECT COUNT(1) AS n FROM memberships WHERE tenant_id = ? AND role = ?",
+            (tenant_id, key),
+        )
+        return int(row["n"]) if row else 0
+
+    def list_grants(self, course_id: str) -> list[CourseGrant]:
+        self.ensure_schema()
+        rows = self.database.fetchall(
+            "SELECT g.*, u.email AS user_email, u.display_name AS user_display_name"
+            " FROM course_grants g LEFT JOIN users u ON u.id = g.user_id"
+            " WHERE g.course_id = ? ORDER BY g.created_at ASC",
+            (course_id,),
+        )
+        return [_to_grant(row) for row in rows]
+
+    def get_grant(self, course_id: str, user_id: str) -> CourseGrant | None:
+        self.ensure_schema()
+        row = self.database.fetchone(
+            "SELECT g.*, u.email AS user_email, u.display_name AS user_display_name"
+            " FROM course_grants g LEFT JOIN users u ON u.id = g.user_id"
+            " WHERE g.course_id = ? AND g.user_id = ?",
+            (course_id, user_id),
+        )
+        return _to_grant(row) if row else None
+
+    def list_user_grants(self, tenant_id: str, user_id: str) -> list[CourseGrant]:
+        self.ensure_schema()
+        rows = self.database.fetchall(
+            "SELECT * FROM course_grants WHERE tenant_id = ? AND user_id = ?",
+            (tenant_id, user_id),
+        )
+        return [_to_grant(row) for row in rows]
+
+    def replace_grants(
+        self, tenant_id: str, course_id: str, grants: Sequence[tuple[str, str]]
+    ) -> list[CourseGrant]:
+        self.ensure_schema()
+        self.database.execute(
+            "DELETE FROM course_grants WHERE course_id = ?", (course_id,)
+        )
+        now = time.time()
+        for user_id, level in grants:
+            self.database.execute(
+                "INSERT INTO course_grants (id, tenant_id, course_id, user_id, level,"
+                " created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (_new_id("grant"), tenant_id, course_id, user_id, level, now),
+            )
+        return self.list_grants(course_id)
+
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def _to_role(row: Mapping[str, Any]) -> Role:
+    try:
+        actions = json.loads(str(row["actions_json"] or "[]"))
+    except (ValueError, TypeError):
+        actions = []
+    if not isinstance(actions, list):
+        actions = []
+    return Role(
+        id=str(row["id"]),
+        tenant_id=str(row["tenant_id"]),
+        key=str(row["key"]),
+        name=str(row["name"] or ""),
+        actions=[str(item) for item in actions],
+        scope=str(row["scope"] or "all"),
+        builtin=bool(int(row["builtin"] or 0)),
+        created_at=float(row["created_at"] or 0.0),
+    )
+
+
+def _to_grant(row: Mapping[str, Any]) -> CourseGrant:
+    keys = set(row.keys())
+    return CourseGrant(
+        id=str(row["id"]),
+        tenant_id=str(row["tenant_id"]),
+        course_id=str(row["course_id"]),
+        user_id=str(row["user_id"]),
+        level=str(row["level"] or "read"),
+        created_at=float(row["created_at"] or 0.0),
+        user_email=str(row["user_email"] or "") if "user_email" in keys else "",
+        user_display_name=(
+            str(row["user_display_name"] or "") if "user_display_name" in keys else ""
+        ),
+    )
 
 
 def _to_user(row: Mapping[str, Any]) -> User:
