@@ -10,9 +10,12 @@ import {
   ListChecks,
   Loader2,
   RefreshCw,
+  Trash2,
   XCircle,
 } from "lucide-react";
 import clsx from "clsx";
+import { api } from "@/lib/api";
+import { ConfirmDialog } from "@/components/common/Dialogs";
 import {
   JOB_KIND_LABEL,
   JOB_STATUS_LABEL,
@@ -160,6 +163,24 @@ export default function JobsPage() {
       await load(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "取消失败");
+    } finally {
+      setCanceling(null);
+    }
+  };
+
+  const [removing, setRemoving] = useState<Job | null>(null);
+
+  const handleRemove = async () => {
+    if (!removing) return;
+    setCanceling(removing.id);
+    setError("");
+    try {
+      await api.deleteJob(removing.id);
+      setNotice("任务记录已删除");
+      setRemoving(null);
+      await load(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除失败");
     } finally {
       setCanceling(null);
     }
@@ -335,6 +356,17 @@ export default function JobsPage() {
                       取消
                     </button>
                   ) : null}
+                  {!running && isTerminal(job.status) ? (
+                    <button
+                      type="button"
+                      onClick={() => setRemoving(job)}
+                      className="btn-quiet px-2 py-1 text-[11px] text-rose-600 dark:text-rose-300"
+                      title="删除任务记录"
+                    >
+                      <Trash2 size={12} />
+                      删除
+                    </button>
+                  ) : null}
                 </div>
               </div>
 
@@ -391,6 +423,15 @@ export default function JobsPage() {
           );
         })}
       </div>
+
+      <ConfirmDialog
+        open={Boolean(removing)}
+        title="删除任务记录"
+        description={`将删除任务 ${removing?.id ?? ""} 的记录，不影响已生成的内容。`}
+        busy={Boolean(removing && canceling === removing.id)}
+        onConfirm={() => void handleRemove()}
+        onClose={() => setRemoving(null)}
+      />
     </div>
   );
 }

@@ -13,6 +13,7 @@ import {
   FlaskConical,
   HelpCircle,
   Loader2,
+  Pencil,
   Sparkles,
   Trash2,
   Wand2,
@@ -23,6 +24,7 @@ import { ApiError, api, type ResearchRun } from "@/lib/api";
 import { jobResultNumber, jobResultString, runJob } from "@/lib/jobs";
 import { formatDateTime } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
+import { PromptDialog } from "@/components/common/Dialogs";
 
 const DEPTH_OPTIONS = [
   { value: 1, label: "1 · 快速扫描" },
@@ -150,6 +152,9 @@ export default function ResearchPage() {
   const focusId = searchParams.get("id") ?? "";
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [renaming, setRenaming] = useState<ResearchRun | null>(null);
+  const [dialogBusy, setDialogBusy] = useState(false);
+  const [dialogError, setDialogError] = useState("");
 
   const [run, setRun] = useState<ResearchRun | null>(null);
   const [history, setHistory] = useState<ResearchRun[]>([]);
@@ -165,6 +170,25 @@ export default function ResearchPage() {
   const [blueprintResult, setBlueprintResult] = useState<{ courseId: string } | null>(
     null,
   );
+
+  const renameResearch = async (topic: string) => {
+    if (!renaming) return;
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      const updated = await api.updateResearch(renaming.id, topic);
+      setHistory((prev) =>
+        prev.map((item) => (item.id === updated.id ? { ...item, topic: updated.topic } : item)),
+      );
+      setRun((prev) => (prev && prev.id === updated.id ? { ...prev, topic: updated.topic } : prev));
+      setRenaming(null);
+      setNotice("研究主题已更新");
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : "重命名失败");
+    } finally {
+      setDialogBusy(false);
+    }
+  };
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -748,26 +772,51 @@ export default function ResearchPage() {
               </p>
             ) : (
               history.map((item) => (
-                <button
+                <div
                   key={item.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => selectRun(item)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") selectRun(item);
+                  }}
                   className={clsx(
-                    "w-full rounded-xl px-2.5 py-2 text-left transition",
+                    "w-full cursor-pointer rounded-xl px-2.5 py-2 text-left transition",
                     run?.id === item.id
                       ? "brand-gradient text-white shadow-brand"
                       : "hover:bg-white/55 dark:hover:bg-white/10",
                   )}
                 >
-                  <span
-                    className={clsx(
-                      "block truncate text-[12px] font-medium",
-                      run?.id === item.id
-                        ? "text-white"
-                        : "text-slate-700 dark:text-slate-200",
-                    )}
-                  >
-                    {item.topic}
+                  <span className="flex items-start gap-1">
+                    <span
+                      className={clsx(
+                        "block min-w-0 flex-1 truncate text-[12px] font-medium",
+                        run?.id === item.id
+                          ? "text-white"
+                          : "text-slate-700 dark:text-slate-200",
+                      )}
+                    >
+                      {item.topic}
+                    </span>
+                    {writable ? (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setDialogError("");
+                          setRenaming(item);
+                        }}
+                        className={clsx(
+                          "shrink-0 rounded p-0.5 transition",
+                          run?.id === item.id
+                            ? "text-white/70 hover:text-white"
+                            : "text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-300",
+                        )}
+                        aria-label="重命名研究"
+                      >
+                        <Pencil size={11} />
+                      </button>
+                    ) : null}
                   </span>
                   <span
                     className={clsx(
@@ -789,7 +838,7 @@ export default function ResearchPage() {
                   >
                     {formatDateTime(item.created_at)}
                   </span>
-                </button>
+                </div>
               ))
             )}
           </div>
@@ -887,6 +936,17 @@ export default function ResearchPage() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      <PromptDialog
+        open={Boolean(renaming)}
+        title="重命名研究"
+        label="研究主题"
+        initial={renaming?.topic ?? ""}
+        busy={dialogBusy}
+        error={dialogError}
+        onConfirm={(value) => void renameResearch(value)}
+        onClose={() => setRenaming(null)}
+      />
     </div>
   );
 }

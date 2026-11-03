@@ -3,7 +3,9 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   ChevronDown,
   Clock3,
   FileText,
@@ -11,10 +13,13 @@ import {
   Layers,
   Loader2,
   PenLine,
+  Pencil,
   Play,
+  Plus,
   RotateCcw,
   Share2,
   Sparkles,
+  Trash2,
   Wand2,
   X,
 } from "lucide-react";
@@ -31,6 +36,12 @@ import { contentLength, formatChars, formatDateTime } from "@/lib/format";
 import MarkdownReader from "@/components/reader/MarkdownReader";
 import { useSession } from "@/components/auth/SessionProvider";
 import SharePanel, { type ShareMember } from "@/components/sharing/SharePanel";
+import {
+  ConfirmDialog,
+  Modal,
+  PromptDialog,
+  RowMenu,
+} from "@/components/common/Dialogs";
 
 const GENRE_LABELS: Record<string, string> = {
   article: "文章",
@@ -89,6 +100,32 @@ export default function LongformEditorPage() {
   const [shareLoading, setShareLoading] = useState(false);
   const [shareSaving, setShareSaving] = useState(false);
   const [shareError, setShareError] = useState("");
+
+  const [titleEditOpen, setTitleEditOpen] = useState(false);
+  const [targetEditOpen, setTargetEditOpen] = useState(false);
+  const [sectionRename, setSectionRename] = useState<{ id: string; title: string } | null>(
+    null,
+  );
+  const [sectionForm, setSectionForm] = useState<{
+    id: string;
+    title: string;
+    summary: string;
+    targetWords: number;
+    content: string;
+  } | null>(null);
+  const [sectionCreate, setSectionCreate] = useState<{
+    afterId: string | null;
+    title: string;
+    summary: string;
+    targetWords: number;
+  } | null>(null);
+  const [sectionDelete, setSectionDelete] = useState<{ id: string; title: string } | null>(
+    null,
+  );
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualText, setManualText] = useState("");
+  const [dialogBusy, setDialogBusy] = useState(false);
+  const [dialogError, setDialogError] = useState("");
 
   const canShare = can("manage_members");
 
@@ -354,8 +391,230 @@ export default function LongformEditorPage() {
     setOutlineOpen(false);
   };
 
-  if (loading) {
-    return (
+  const openManual = () => {
+    if (!longform) return;
+    setDialogError("");
+    setManualText(longform.content ?? "");
+    setManualOpen(true);
+  };
+
+  const saveManual = async () => {
+    if (!longform) return;
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      const updated = await api.saveLongformContent(longform.id, {
+        content: manualText,
+        note: "手动编辑",
+        expected_version: longform.current_version,
+      });
+      setLongform(updated);
+      const versionData = await api.listLongformVersions(longform.id);
+      setVersions(versionData.versions);
+      setManualOpen(false);
+      setNotice(`已保存为 v${updated.current_version}`);
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : "保存失败");
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  const saveTitle = async (value: string) => {
+    if (!longform) return;
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      const updated = await api.updateLongform(longform.id, { title: value });
+      setLongform(updated);
+      setTitleEditOpen(false);
+      setNotice("标题已更新");
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : "更新失败");
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  const saveTargetWords = async (value: string) => {
+    if (!longform) return;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setDialogError("请输入大于 0 的目标字数");
+      return;
+    }
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      const updated = await api.updateLongform(longform.id, {
+        target_words: Math.round(parsed),
+      });
+      setLongform(updated);
+      setTargetEditOpen(false);
+      setNotice("目标字数已更新");
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : "更新失败");
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  const renameSection = async (value: string) => {
+    if (!longform || !sectionRename) return;
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      const updated = await api.updateLongformSection(longform.id, sectionRename.id, {
+        title: value,
+      });
+      setLongform(updated);
+      setSectionRename(null);
+      setNotice("章节已重命名");
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : "重命名失败");
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  const saveSectionForm = async () => {
+    if (!longform || !sectionForm) return;
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      const updated = await api.updateLongformSection(longform.id, sectionForm.id, {
+        title: sectionForm.title.trim(),
+        summary: sectionForm.summary,
+        target_words: Number(sectionForm.targetWords) || 0,
+        content: sectionForm.content,
+      });
+      setLongform(updated);
+      setSectionForm(null);
+      setNotice("章节内容已保存");
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : "保存失败");
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  const createSection = async () => {
+    if (!longform || !sectionCreate) return;
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      const result = await api.createLongformSection(longform.id, {
+        title: sectionCreate.title.trim(),
+        summary: sectionCreate.summary,
+        target_words: Number(sectionCreate.targetWords) || 0,
+        after_id: sectionCreate.afterId,
+      });
+      setLongform(result.longform);
+      setSectionCreate(null);
+      setNotice("已新增章节");
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : "新增失败");
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  const deleteSection = async () => {
+    if (!longform || !sectionDelete) return;
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      const updated = await api.deleteLongformSection(longform.id, sectionDelete.id);
+      setLongform(updated);
+      setSectionDelete(null);
+      setNotice("章节已删除");
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : "删除失败");
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  const moveSection = async (sectionId: string, direction: -1 | 1) => {
+    if (!longform) return;
+    const ids = longform.outline.map((section) => section.id);
+    const index = ids.indexOf(sectionId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= ids.length) return;
+    const next = [...ids];
+    next[index] = ids[target];
+    next[target] = ids[index];
+    try {
+      const updated = await api.reorderLongformSections(longform.id, next);
+      setLongform(updated);
+      setNotice("章节顺序已更新");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "排序失败");
+    }
+  };
+
+  const sectionMenuItems = (sectionId: string, sectionTitle: string, index: number) => [
+    {
+      label: "重命名",
+      icon: <Pencil size={11} />,
+      onClick: () => {
+        setDialogError("");
+        setSectionRename({ id: sectionId, title: sectionTitle });
+      },
+    },
+    {
+      label: "编辑目录信息 / 正文",
+      icon: <FileText size={11} />,
+      onClick: () => {
+        const target = longform?.outline.find((item) => item.id === sectionId);
+        if (!target) return;
+        setDialogError("");
+        setSectionForm({
+          id: target.id,
+          title: target.title,
+          summary: target.summary ?? "",
+          targetWords: target.target_words ?? 0,
+          content: target.content ?? "",
+        });
+      },
+    },
+    {
+      label: "在下方加一节",
+      icon: <Plus size={11} />,
+      onClick: () => {
+        setDialogError("");
+        setSectionCreate({
+          afterId: sectionId,
+          title: "",
+          summary: "",
+          targetWords: 400,
+        });
+      },
+    },
+    {
+      label: "上移",
+      icon: <ArrowUp size={11} />,
+      disabled: index === 0,
+      onClick: () => void moveSection(sectionId, -1),
+    },
+    {
+      label: "下移",
+      icon: <ArrowDown size={11} />,
+      disabled: index === (longform?.outline.length ?? 0) - 1,
+      onClick: () => void moveSection(sectionId, 1),
+    },
+    {
+      label: "删除本节",
+      icon: <Trash2 size={11} />,
+      danger: true,
+      onClick: () => {
+        setDialogError("");
+        setSectionDelete({ id: sectionId, title: sectionTitle });
+      },
+    },
+  ];
+
+  if (loading) {    return (
       <div className="glass grid place-items-center rounded-3xl p-16 shadow-glass">
         <Loader2 size={20} className="animate-spin text-indigo-500" />
       </div>
@@ -411,13 +670,38 @@ export default function LongformEditorPage() {
               <span className="chip-muted">v{longform.current_version}</span>
               <span className="chip-muted">{longform.outline.length} 节</span>
             </div>
-            <h1 className="mt-2 text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100 sm:text-xl">
-              {longform.title}
+            <h1 className="mt-2 flex items-center gap-1.5 text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100 sm:text-xl">
+              <span className="min-w-0 break-words">{longform.title}</span>
+              {writable ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDialogError("");
+                    setTitleEditOpen(true);
+                  }}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white/70 hover:text-indigo-600 dark:hover:bg-white/10 dark:hover:text-indigo-300"
+                  aria-label="编辑标题"
+                >
+                  <Pencil size={13} />
+                </button>
+              ) : null}
             </h1>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
               <span className="tabular-nums">
                 {formatChars(words)} / 目标 {formatChars(longform.target_words)}
               </span>
+              {writable ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDialogError("");
+                    setTargetEditOpen(true);
+                  }}
+                  className="rounded-full px-1.5 py-0.5 text-[10px] text-indigo-600 transition hover:bg-indigo-500/10 dark:text-indigo-300"
+                >
+                  改目标
+                </button>
+              ) : null}
               <span className="h-1.5 w-28 overflow-hidden rounded-full bg-slate-500/15 dark:bg-white/10">
                 <span
                   className="block h-full brand-gradient transition-all"
@@ -465,6 +749,16 @@ export default function LongformEditorPage() {
             >
               <Share2 size={13} />
               共享
+            </button>
+            <button
+              type="button"
+              onClick={openManual}
+              disabled={Boolean(busy) || !writable}
+              className="btn btn-quiet whitespace-nowrap"
+              title={!writable ? "当前角色只读" : "手动编辑整篇 Markdown"}
+            >
+              <PenLine size={13} />
+              手动编辑整篇
             </button>
             <button
               type="button"
@@ -589,25 +883,51 @@ export default function LongformEditorPage() {
                         <span>{section.content ? "已写" : "待写"}</span>
                       </span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => void generateOne(section.id)}
-                      disabled={Boolean(busy) || !writable}
-                      className="btn-quiet mt-1.5 w-full text-[11px]"
-                    >
-                      {busy === section.id ? (
-                        <Loader2 size={11} className="animate-spin" />
-                      ) : (
-                        <Sparkles size={11} />
-                      )}
-                      生成本节
-                    </button>
+                    <div className="mt-1.5 flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => void generateOne(section.id)}
+                        disabled={Boolean(busy) || !writable}
+                        className="btn-quiet flex-1 text-[11px]"
+                      >
+                        {busy === section.id ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          <Sparkles size={11} />
+                        )}
+                        生成本节
+                      </button>
+                      {writable ? (
+                        <RowMenu
+                          label={`章节 ${section.title} 操作`}
+                          items={sectionMenuItems(section.id, section.title, index)}
+                        />
+                      ) : null}
+                    </div>
                   </div>
                 ))}
               </div>
             </motion.div>
           ) : null}
         </AnimatePresence>
+        {writable ? (
+          <button
+            type="button"
+            onClick={() => {
+              setDialogError("");
+              setSectionCreate({
+                afterId: null,
+                title: "",
+                summary: "",
+                targetWords: 400,
+              });
+            }}
+            className="btn-quiet mt-2 w-full text-[11px]"
+          >
+            <Plus size={11} />
+            在末尾加一节
+          </button>
+        ) : null}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)_220px]">
@@ -650,24 +970,50 @@ export default function LongformEditorPage() {
                       </span>
                     </span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void generateOne(section.id)}
-                    disabled={Boolean(busy) || !writable}
-                    className="btn-quiet mt-1.5 w-full text-[11px]"
-                    title={!writable ? "当前角色只读" : undefined}
-                  >
-                    {busy === section.id ? (
-                      <Loader2 size={11} className="animate-spin" />
-                    ) : (
-                      <Sparkles size={11} />
-                    )}
-                    生成本节
-                  </button>
+                  <div className="mt-1.5 flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void generateOne(section.id)}
+                      disabled={Boolean(busy) || !writable}
+                      className="btn-quiet flex-1 text-[11px]"
+                      title={!writable ? "当前角色只读" : undefined}
+                    >
+                      {busy === section.id ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        <Sparkles size={11} />
+                      )}
+                      生成本节
+                    </button>
+                    {writable ? (
+                      <RowMenu
+                        label={`章节 ${section.title} 操作`}
+                        items={sectionMenuItems(section.id, section.title, index)}
+                      />
+                    ) : null}
+                  </div>
                 </div>
               ))
             )}
           </div>
+          {writable ? (
+            <button
+              type="button"
+              onClick={() => {
+                setDialogError("");
+                setSectionCreate({
+                  afterId: null,
+                  title: "",
+                  summary: "",
+                  targetWords: 400,
+                });
+              }}
+              className="btn-quiet mt-1.5 w-full text-[11px]"
+            >
+              <Plus size={11} />
+              在末尾加一节
+            </button>
+          ) : null}
         </aside>
 
         <section className="glass min-w-0 rounded-3xl p-4 shadow-glass sm:p-6">
@@ -889,6 +1235,249 @@ export default function LongformEditorPage() {
         }
         onSave={saveShare}
       />
+
+      <PromptDialog
+        open={titleEditOpen}
+        title="编辑标题"
+        label="长篇标题"
+        initial={longform?.title ?? ""}
+        busy={dialogBusy}
+        error={dialogError}
+        onConfirm={(value) => void saveTitle(value)}
+        onClose={() => setTitleEditOpen(false)}
+      />
+
+      <PromptDialog
+        open={targetEditOpen}
+        title="修改目标字数"
+        label="目标字数"
+        initial={String(longform?.target_words ?? 0)}
+        busy={dialogBusy}
+        error={dialogError}
+        onConfirm={(value) => void saveTargetWords(value)}
+        onClose={() => setTargetEditOpen(false)}
+      />
+
+      <PromptDialog
+        open={Boolean(sectionRename)}
+        title="重命名章节"
+        label="章节标题"
+        initial={sectionRename?.title ?? ""}
+        busy={dialogBusy}
+        error={dialogError}
+        onConfirm={(value) => void renameSection(value)}
+        onClose={() => setSectionRename(null)}
+      />
+
+      <Modal
+        open={Boolean(sectionForm)}
+        title="编辑章节"
+        subtitle="可修改目录信息与本节正文，保存后写回大纲。"
+        onClose={() => setSectionForm(null)}
+        wide
+      >
+        {sectionForm ? (
+          <div className="space-y-3">
+            <label className="block text-[11px] text-slate-500 dark:text-slate-400">
+              标题
+              <input
+                value={sectionForm.title}
+                onChange={(event) =>
+                  setSectionForm({ ...sectionForm, title: event.target.value })
+                }
+                className="input mt-1"
+              />
+            </label>
+            <div className="grid gap-3 sm:grid-cols-[1fr_130px]">
+              <label className="block text-[11px] text-slate-500 dark:text-slate-400">
+                目录摘要
+                <input
+                  value={sectionForm.summary}
+                  onChange={(event) =>
+                    setSectionForm({ ...sectionForm, summary: event.target.value })
+                  }
+                  className="input mt-1"
+                />
+              </label>
+              <label className="block text-[11px] text-slate-500 dark:text-slate-400">
+                目标字数
+                <input
+                  type="number"
+                  value={sectionForm.targetWords}
+                  onChange={(event) =>
+                    setSectionForm({
+                      ...sectionForm,
+                      targetWords: Number(event.target.value),
+                    })
+                  }
+                  className="input mt-1"
+                />
+              </label>
+            </div>
+            <label className="block text-[11px] text-slate-500 dark:text-slate-400">
+              本节正文（Markdown）
+              <textarea
+                value={sectionForm.content}
+                onChange={(event) =>
+                  setSectionForm({ ...sectionForm, content: event.target.value })
+                }
+                rows={10}
+                className="input mt-1 font-mono text-[12px] leading-relaxed"
+              />
+            </label>
+            {dialogError ? (
+              <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+                {dialogError}
+              </p>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSectionForm(null)}
+                className="btn btn-quiet"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveSectionForm()}
+                disabled={dialogBusy || !sectionForm.title.trim()}
+                className="btn btn-primary"
+              >
+                {dialogBusy ? <Loader2 size={13} className="animate-spin" /> : null}
+                保存章节
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={Boolean(sectionCreate)}
+        title="新增章节"
+        onClose={() => setSectionCreate(null)}
+      >
+        {sectionCreate ? (
+          <div className="space-y-3">
+            <label className="block text-[11px] text-slate-500 dark:text-slate-400">
+              章节标题
+              <input
+                autoFocus
+                value={sectionCreate.title}
+                onChange={(event) =>
+                  setSectionCreate({ ...sectionCreate, title: event.target.value })
+                }
+                className="input mt-1"
+                placeholder="例如：实战案例"
+              />
+            </label>
+            <div className="grid gap-3 sm:grid-cols-[1fr_130px]">
+              <label className="block text-[11px] text-slate-500 dark:text-slate-400">
+                目录摘要
+                <input
+                  value={sectionCreate.summary}
+                  onChange={(event) =>
+                    setSectionCreate({ ...sectionCreate, summary: event.target.value })
+                  }
+                  className="input mt-1"
+                />
+              </label>
+              <label className="block text-[11px] text-slate-500 dark:text-slate-400">
+                目标字数
+                <input
+                  type="number"
+                  value={sectionCreate.targetWords}
+                  onChange={(event) =>
+                    setSectionCreate({
+                      ...sectionCreate,
+                      targetWords: Number(event.target.value),
+                    })
+                  }
+                  className="input mt-1"
+                />
+              </label>
+            </div>
+            <p className="text-[10.5px] text-slate-400 dark:text-slate-500">
+              {sectionCreate.afterId ? "将插入到选中章节之后" : "将追加到大纲末尾"}
+            </p>
+            {dialogError ? (
+              <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+                {dialogError}
+              </p>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSectionCreate(null)}
+                className="btn btn-quiet"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void createSection()}
+                disabled={dialogBusy || !sectionCreate.title.trim()}
+                className="btn btn-primary"
+              >
+                {dialogBusy ? <Loader2 size={13} className="animate-spin" /> : null}
+                新增章节
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      <ConfirmDialog
+        open={Boolean(sectionDelete)}
+        title="删除章节"
+        description={`将删除「${sectionDelete?.title ?? ""}」及其正文，至少需保留 1 节。`}
+        busy={dialogBusy}
+        error={dialogError}
+        onConfirm={() => void deleteSection()}
+        onClose={() => setSectionDelete(null)}
+      />
+
+      <Modal
+        open={manualOpen}
+        title="手动编辑整篇"
+        subtitle={`将保存为新版本（当前 v${longform?.current_version ?? 0}）。`}
+        onClose={() => setManualOpen(false)}
+        wide
+      >
+        <div className="space-y-3">
+          <textarea
+            value={manualText}
+            onChange={(event) => setManualText(event.target.value)}
+            rows={16}
+            className="input w-full font-mono text-[12px] leading-relaxed"
+            placeholder="# 标题&#10;&#10;正文内容…"
+          />
+          <div className="flex items-center justify-between gap-2 text-[10.5px] text-slate-400 dark:text-slate-500">
+            <span>{manualText.length} 字符</span>
+            {dialogError ? (
+              <span className="text-rose-600 dark:text-rose-300">{dialogError}</span>
+            ) : null}
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setManualOpen(false)}
+              className="btn btn-quiet"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveManual()}
+              disabled={dialogBusy}
+              className="btn btn-primary"
+            >
+              {dialogBusy ? <Loader2 size={13} className="animate-spin" /> : null}
+              保存为新版本
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

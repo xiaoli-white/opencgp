@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
   ArrowLeft,
+  ArrowDown,
+  ArrowUp,
   BookOpen,
   Check,
   ChevronRight,
@@ -13,10 +15,12 @@ import {
   Lock,
   MessageSquare,
   Network,
+  Pencil,
   Plus,
   ScrollText,
   Sparkles,
   Target,
+  Trash2,
   X,
 } from "lucide-react";
 import clsx from "clsx";
@@ -51,6 +55,13 @@ import ReviewControls from "@/components/course/ReviewControls";
 import CourseGrantsPanel from "@/components/course/CourseGrantsPanel";
 import StatusBadge from "@/components/course/StatusBadge";
 import LessonLockBanner from "@/components/course/LessonLockBanner";
+import CourseEditDialog from "@/components/course/CourseEditDialog";
+import ThreadsPanel from "@/components/course/ThreadsPanel";
+import {
+  ConfirmDialog,
+  PromptDialog,
+  RowMenu,
+} from "@/components/common/Dialogs";
 import ConflictDialog, {
   type VersionConflict,
 } from "@/components/course/ConflictDialog";
@@ -100,6 +111,19 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   });
   const [conflict, setConflict] = useState<VersionConflict | null>(null);
   const [conflictBusy, setConflictBusy] = useState(false);
+  const [courseEditOpen, setCourseEditOpen] = useState(false);
+  const [courseDeleteOpen, setCourseDeleteOpen] = useState(false);
+  const [courseBusy, setCourseBusy] = useState(false);
+  const [courseDialogError, setCourseDialogError] = useState("");
+  const [lessonRename, setLessonRename] = useState<{ id: string; title: string } | null>(
+    null,
+  );
+  const [lessonDelete, setLessonDelete] = useState<{ id: string; title: string } | null>(
+    null,
+  );
+  const [lessonBusy, setLessonBusy] = useState(false);
+  const [lessonDialogError, setLessonDialogError] = useState("");
+  const navigate = useNavigate();
   const lockController = useRef<LessonLockController | null>(null);
 
   const lockBlocked =
@@ -410,6 +434,71 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     await refreshProgress();
   }, [activeId, loadCourse, refreshProgress]);
 
+  const handleCourseDelete = async () => {
+    setCourseBusy(true);
+    setCourseDialogError("");
+    try {
+      await api.deleteCourse(courseId);
+      window.dispatchEvent(new Event("course-studio:refresh"));
+      navigate("/");
+    } catch (err) {
+      setCourseDialogError(err instanceof Error ? err.message : "删除失败");
+    } finally {
+      setCourseBusy(false);
+    }
+  };
+
+  const handleLessonRename = async (title: string) => {
+    if (!lessonRename) return;
+    setLessonBusy(true);
+    setLessonDialogError("");
+    try {
+      await api.updateLesson(lessonRename.id, { title });
+      setLessonRename(null);
+      setNotice("讲次已重命名");
+      await handleLessonsChanged();
+    } catch (err) {
+      setLessonDialogError(err instanceof Error ? err.message : "重命名失败");
+    } finally {
+      setLessonBusy(false);
+    }
+  };
+
+  const handleLessonDelete = async () => {
+    if (!lessonDelete) return;
+    setLessonBusy(true);
+    setLessonDialogError("");
+    try {
+      await api.deleteLesson(lessonDelete.id);
+      setLessonDelete(null);
+      setNotice("讲次已删除");
+      if (activeId === lessonDelete.id) setActiveId(null);
+      await handleLessonsChanged();
+    } catch (err) {
+      setLessonDialogError(err instanceof Error ? err.message : "删除失败");
+    } finally {
+      setLessonBusy(false);
+    }
+  };
+
+  const moveLesson = async (lessonId: string, direction: -1 | 1) => {
+    if (!detail) return;
+    const ids = detail.lessons.map((lesson) => lesson.id);
+    const index = ids.indexOf(lessonId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= ids.length) return;
+    const next = [...ids];
+    next[index] = ids[target];
+    next[target] = ids[index];
+    try {
+      await api.reorderLessons(courseId, next);
+      setNotice("讲次顺序已更新");
+      await handleLessonsChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "排序失败");
+    }
+  };
+
   if (loading) {
     return (
       <div className="space-y-5">
@@ -484,6 +573,29 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
             </div>
           </div>
           <div className="no-scrollbar -mx-1 flex items-center gap-2 overflow-x-auto px-1">
+            {canWrite ? (
+              <button
+                type="button"
+                onClick={() => setCourseEditOpen(true)}
+                className="btn btn-ghost shrink-0"
+              >
+                <Pencil size={13} />
+                编辑
+              </button>
+            ) : null}
+            {canWrite ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setCourseDialogError("");
+                  setCourseDeleteOpen(true);
+                }}
+                className="btn btn-ghost shrink-0 text-rose-600 hover:text-rose-700 dark:text-rose-300"
+              >
+                <Trash2 size={13} />
+                删除课程
+              </button>
+            ) : null}
             {can("manage_members") ? (
               <button
                 type="button"
@@ -672,16 +784,24 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 还没有讲次，先添加一讲再生成正文。
               </p>
             ) : (
-              detail.lessons.map((lesson) => {
+              detail.lessons.map((lesson, lessonIndex) => {
                 const active = lesson.id === activeId;
                 return (
-                  <button
+                  <div
                     key={lesson.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => {
                       setActiveId(lesson.id);
                       setGenerateOpen(false);
                       setOutlineOpen(false);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        setActiveId(lesson.id);
+                        setGenerateOpen(false);
+                        setOutlineOpen(false);
+                      }
                     }}
                     className={clsx(
                       "group flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition",
@@ -716,16 +836,52 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                         {statusLabel(lesson.status)}
                       </span>
                     </span>
-                    <ChevronRight
-                      size={13}
-                      className={clsx(
-                        "shrink-0 transition",
-                        active
-                          ? "text-indigo-500 dark:text-indigo-300"
-                          : "text-slate-300 group-hover:text-indigo-400 dark:text-slate-600",
-                      )}
-                    />
-                  </button>
+                    {canWrite ? (
+                      <RowMenu
+                        items={[
+                          {
+                            label: "重命名",
+                            icon: <Pencil size={11} />,
+                            onClick: () => {
+                              setLessonDialogError("");
+                              setLessonRename({ id: lesson.id, title: lesson.title });
+                            },
+                          },
+                          {
+                            label: "上移",
+                            icon: <ArrowUp size={11} />,
+                            disabled: lessonIndex === 0,
+                            onClick: () => void moveLesson(lesson.id, -1),
+                          },
+                          {
+                            label: "下移",
+                            icon: <ArrowDown size={11} />,
+                            disabled: lessonIndex === detail.lessons.length - 1,
+                            onClick: () => void moveLesson(lesson.id, 1),
+                          },
+                          {
+                            label: "删除讲次",
+                            icon: <Trash2 size={11} />,
+                            danger: true,
+                            onClick: () => {
+                              setLessonDialogError("");
+                              setLessonDelete({ id: lesson.id, title: lesson.title });
+                            },
+                          },
+                        ]}
+                      />
+                    ) : (
+                      <ChevronRight
+                        size={13}
+                        className={clsx(
+                          "shrink-0 transition",
+                          active
+                            ? "text-indigo-500 dark:text-indigo-300"
+                            : "text-slate-300 group-hover:text-indigo-400 dark:text-slate-600",
+                        )}
+                      />
+                    )}
+                  </div>
                 );
               })
             )}
@@ -783,6 +939,55 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     <History size={14} />
                     版本
                   </button>
+                  {canWrite ? (
+                    <RowMenu
+                      label="讲次操作"
+                      items={[
+                        {
+                          label: "重命名讲次",
+                          icon: <Pencil size={11} />,
+                          onClick: () => {
+                            setLessonDialogError("");
+                            setLessonRename({
+                              id: activeLesson.id,
+                              title: activeLesson.title,
+                            });
+                          },
+                        },
+                        {
+                          label: "上移",
+                          icon: <ArrowUp size={11} />,
+                          disabled:
+                            detail.lessons.findIndex(
+                              (lesson) => lesson.id === activeLesson.id,
+                            ) <= 0,
+                          onClick: () => void moveLesson(activeLesson.id, -1),
+                        },
+                        {
+                          label: "下移",
+                          icon: <ArrowDown size={11} />,
+                          disabled:
+                            detail.lessons.findIndex(
+                              (lesson) => lesson.id === activeLesson.id,
+                            ) ===
+                            detail.lessons.length - 1,
+                          onClick: () => void moveLesson(activeLesson.id, 1),
+                        },
+                        {
+                          label: "删除讲次",
+                          icon: <Trash2 size={11} />,
+                          danger: true,
+                          onClick: () => {
+                            setLessonDialogError("");
+                            setLessonDelete({
+                              id: activeLesson.id,
+                              title: activeLesson.title,
+                            });
+                          },
+                        },
+                      ]}
+                    />
+                  ) : null}
                 </div>
               </div>
 
@@ -985,6 +1190,14 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               </button>
             </div>
           )}
+          <div className="mt-4">
+            <ThreadsPanel
+              courseId={courseId}
+              canWrite={canWrite}
+              onNotice={setNotice}
+              onError={setError}
+            />
+          </div>
         </div>
 
         <div className="hidden xl:block">
@@ -1117,6 +1330,48 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         courseId={courseId}
         open={grantsOpen}
         onClose={() => setGrantsOpen(false)}
+      />
+
+      <CourseEditDialog
+        open={courseEditOpen}
+        course={course}
+        onClose={() => setCourseEditOpen(false)}
+        onSaved={(updated) => {
+          setDetail((prev) => (prev ? { ...prev, course: updated } : prev));
+          setNotice("课程信息已更新");
+        }}
+      />
+
+      <ConfirmDialog
+        open={courseDeleteOpen}
+        title="删除课程"
+        description={`将删除「${course.title}」及其全部讲次、版本、对话线与蓝图，且不可恢复。`}
+        requireText={course.title}
+        busy={courseBusy}
+        error={courseDialogError}
+        onConfirm={() => void handleCourseDelete()}
+        onClose={() => setCourseDeleteOpen(false)}
+      />
+
+      <PromptDialog
+        open={Boolean(lessonRename)}
+        title="重命名讲次"
+        label="讲次标题"
+        initial={lessonRename?.title ?? ""}
+        busy={lessonBusy}
+        error={lessonDialogError}
+        onConfirm={(value) => void handleLessonRename(value)}
+        onClose={() => setLessonRename(null)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(lessonDelete)}
+        title="删除讲次"
+        description={`将删除「${lessonDelete?.title ?? ""}」及其全部版本与对话线，且不可恢复。`}
+        busy={lessonBusy}
+        error={lessonDialogError}
+        onConfirm={() => void handleLessonDelete()}
+        onClose={() => setLessonDelete(null)}
       />
     </motion.div>
   );

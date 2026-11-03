@@ -21,6 +21,8 @@ import {
   type StorageInfo,
 } from "@/lib/api";
 import { formatChars, sourceLabel } from "@/lib/format";
+import SourcesCard from "@/components/kb/SourcesCard";
+import { useSession } from "@/components/auth/SessionProvider";
 
 const SUGGESTIONS = ["向量检索的原理", "如何评估检索质量", "课程的写作流程"];
 
@@ -39,6 +41,10 @@ export default function KbPage() {
   const [searchError, setSearchError] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
   const [storage, setStorage] = useState<StorageInfo | null>(null);
+  const [sourcesTick, setSourcesTick] = useState(0);
+  const [notice, setNotice] = useState("");
+  const { can } = useSession();
+  const canWrite = can("write");
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +75,7 @@ export default function KbPage() {
       const result = await api.uploadKb(file, sourceName);
       setUploadResult(result);
       setSourceName("");
+      setSourcesTick((tick) => tick + 1);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "上传失败");
     } finally {
@@ -124,6 +131,20 @@ export default function KbPage() {
 
   return (
     <div className="space-y-5">
+      {notice ? (
+        <div className="flex items-center gap-2 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-2.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+          <Check size={13} />
+          <span className="flex-1">{notice}</span>
+          <button
+            type="button"
+            onClick={() => setNotice("")}
+            className="text-emerald-500 transition hover:text-emerald-700"
+            aria-label="关闭"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      ) : null}
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -277,12 +298,21 @@ export default function KbPage() {
           </AnimatePresence>
         </section>
 
+        <SourcesCard
+          refreshKey={sourcesTick}
+          canWrite={canWrite}
+          onNotice={(message) => {
+            setNotice(message);
+            setSearchError("");
+          }}
+          onError={(message) => setSearchError(message)}
+        />
+
         <section className="glass rounded-3xl p-5 shadow-glass">
           <div className="flex items-center gap-2">
             <span className="grid h-8 w-8 place-items-center rounded-xl bg-violet-500/12 text-violet-600 dark:text-violet-300">
               <Search size={15} />
-            </span>
-            <div>
+            </span>            <div>
               <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
                 检索测试
               </p>

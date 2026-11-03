@@ -3,9 +3,12 @@ import { motion } from "framer-motion";
 import {
   AlertCircle,
   CheckCircle2,
+  KeyRound,
   Loader2,
+  Pencil,
   RefreshCcw,
   ShieldCheck,
+  Trash2,
   UserCheck,
   UserX,
   X,
@@ -13,6 +16,18 @@ import {
 import clsx from "clsx";
 import { api, type AdminUser } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import {
+  ConfirmDialog,
+  PromptDialog,
+  RowMenu,
+} from "@/components/common/Dialogs";
+
+const ROLE_OPTIONS = [
+  { value: "viewer", label: "只读" },
+  { value: "editor", label: "编辑" },
+  { value: "admin", label: "管理员" },
+  { value: "owner", label: "所有者" },
+];
 
 type Tab = "pending" | "all";
 
@@ -31,6 +46,11 @@ export default function UserReviewCard({
   const [error, setError] = useState("");
   const [rejecting, setRejecting] = useState<string>("");
   const [reason, setReason] = useState("");
+  const [renameTarget, setRenameTarget] = useState<AdminUser | null>(null);
+  const [pwdTarget, setPwdTarget] = useState<AdminUser | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
+  const [dialogBusy, setDialogBusy] = useState(false);
+  const [dialogError, setDialogError] = useState("");
 
   const load = useCallback(
     async (target: Tab = tab) => {
@@ -99,6 +119,68 @@ export default function UserReviewCard({
     return status;
   };
 
+  const patchUser = async (payload: Record<string, string>) => {
+    if (!renameTarget) return;
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      await api.updateAdminUser(renameTarget.id, payload);
+      onNotice("用户信息已更新");
+      setRenameTarget(null);
+      await load(tab);
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : "更新失败");
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  const changeRole = async (user: AdminUser, role: string) => {
+    setError("");
+    try {
+      await api.updateAdminUser(user.id, { role });
+      onNotice(`已将 ${user.display_name || user.email} 设为 ${ROLE_OPTIONS.find((item) => item.value === role)?.label ?? role}`);
+      await load(tab);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "角色更新失败");
+    }
+  };
+
+  const resetPassword = async (value: string) => {
+    if (!pwdTarget) return;
+    if (value.length < 8) {
+      setDialogError("新密码至少 8 位");
+      return;
+    }
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      await api.resetAdminPassword(pwdTarget.id, value);
+      onNotice(`已重置 ${pwdTarget.display_name || pwdTarget.email} 的密码`);
+      setPwdTarget(null);
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : "重置失败");
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  const removeUser = async () => {
+    if (!deleteTarget) return;
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      await api.deleteAdminUser(deleteTarget.id);
+      onNotice("用户已删除");
+      setDeleteTarget(null);
+      await load(tab);
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : "删除失败");
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
   return (
     <motion.section
       initial={{ opacity: 0, y: 10 }}
@@ -108,7 +190,7 @@ export default function UserReviewCard({
       <div className="flex flex-wrap items-center gap-2">
         <ShieldCheck size={15} className="text-indigo-500 dark:text-indigo-300" />
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-          用户审核
+          用户管理
         </h2>
         <span
           className={clsx(
@@ -243,6 +325,48 @@ export default function UserReviewCard({
                     </button>
                   </>
                 ) : null}
+                <RowMenu
+                  label={`管理 ${user.display_name || user.email}`}
+                  items={[
+                    {
+                      label: "修改显示名",
+                      icon: <Pencil size={11} />,
+                      onClick: () => {
+                        setDialogError("");
+                        setRenameTarget(user);
+                      },
+                    },
+                    {
+                      label: "重置密码",
+                      icon: <KeyRound size={11} />,
+                      onClick: () => {
+                        setDialogError("");
+                        setPwdTarget(user);
+                      },
+                    },
+                    {
+                      label: "删除用户",
+                      icon: <Trash2 size={11} />,
+                      danger: true,
+                      onClick: () => {
+                        setDialogError("");
+                        setDeleteTarget(user);
+                      },
+                    },
+                  ]}
+                />
+                <select
+                  value={user.role ?? "viewer"}
+                  onChange={(event) => void changeRole(user, event.target.value)}
+                  className="select w-auto px-1.5 py-1 text-[10.5px]"
+                  title="修改系统角色"
+                >
+                  {ROLE_OPTIONS.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {rejecting === user.id ? (
@@ -282,6 +406,39 @@ export default function UserReviewCard({
           ))
         )}
       </div>
+
+      <PromptDialog
+        open={Boolean(renameTarget)}
+        title="修改显示名"
+        label="显示名"
+        initial={renameTarget?.display_name ?? ""}
+        busy={dialogBusy}
+        error={dialogError}
+        onConfirm={(value) => void patchUser({ display_name: value })}
+        onClose={() => setRenameTarget(null)}
+      />
+
+      <PromptDialog
+        open={Boolean(pwdTarget)}
+        title="重置密码"
+        label="新密码（至少 8 位）"
+        initial=""
+        confirmLabel="重置"
+        busy={dialogBusy}
+        error={dialogError}
+        onConfirm={(value) => void resetPassword(value)}
+        onClose={() => setPwdTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="删除用户"
+        description={`将删除 ${deleteTarget?.email ?? ""} 的账号，不可恢复。`}
+        busy={dialogBusy}
+        error={dialogError}
+        onConfirm={() => void removeUser()}
+        onClose={() => setDeleteTarget(null)}
+      />
     </motion.section>
   );
 }

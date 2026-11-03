@@ -749,6 +749,41 @@ export async function request<T>(
   return (await response.json()) as T;
 }
 
+export type CreationProfile = {
+  id: string;
+  name: string;
+  genre: string;
+  tone: string;
+  audience: string;
+  pov: string;
+  citation_policy: string;
+  target_words: number;
+  is_shared: boolean;
+  is_owner: boolean;
+  created_at?: number;
+  updated_at?: number;
+};
+
+export type KbSource = {
+  source_id: string;
+  source_name: string;
+  chunk_count: number;
+  char_count: number;
+  tenant_id?: string;
+  object_key?: string;
+  created_at: number;
+};
+
+export type ThreadSummary = {
+  id: string;
+  course_id?: string;
+  lesson_id?: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  message_count?: number;
+};
+
 export const api = {
   health: () => request<Health>("/health"),
 
@@ -1228,6 +1263,7 @@ export const api = {
     citation_policy?: CitationPolicy | string;
     target_words?: number;
     mode?: GenerationMode;
+    profile_id?: string;
   }) =>
     request<Longform>("/api/v1/longforms", {
       method: "POST",
@@ -1329,5 +1365,215 @@ export const api = {
     request<{ ok?: boolean }>(`/api/v1/admin/users/${userId}/reject`, {
       method: "POST",
       body: JSON.stringify({ reason: reason ?? "" }),
+    }),
+
+  updateCourse: (
+    courseId: string,
+    payload: {
+      title?: string;
+      subtitle?: string;
+      audience?: string;
+      difficulty?: string;
+      language?: string;
+    },
+  ) =>
+    request<Course>(`/api/v1/courses/${courseId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteCourse: (courseId: string) =>
+    request<{ course_id: string; deleted: Record<string, number> }>(
+      `/api/v1/courses/${courseId}`,
+      { method: "DELETE" },
+    ),
+
+  updateLesson: (
+    lessonId: string,
+    payload: {
+      title?: string;
+      learning_objectives?: string[];
+      prerequisites?: string[];
+      order_index?: number;
+      status?: string;
+    },
+  ) =>
+    request<Lesson>(`/api/v1/lessons/${lessonId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteLesson: (lessonId: string) =>
+    request<{ lesson_id: string; deleted_versions: number; deleted_threads: number }>(
+      `/api/v1/lessons/${lessonId}`,
+      { method: "DELETE" },
+    ),
+
+  reorderLessons: (courseId: string, lessonIds: string[]) =>
+    request<CourseDetail>(`/api/v1/courses/${courseId}/lessons/reorder`, {
+      method: "POST",
+      body: JSON.stringify({ lesson_ids: lessonIds }),
+    }),
+
+  updateLongform: (
+    longformId: string,
+    payload: {
+      title?: string;
+      profile?: Record<string, unknown>;
+      target_words?: number;
+    },
+  ) =>
+    request<Longform>(`/api/v1/longforms/${longformId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  saveLongformContent: (
+    longformId: string,
+    payload: { content: string; note?: string; expected_version?: number | null },
+  ) =>
+    request<Longform>(`/api/v1/longforms/${longformId}/content`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  createLongformSection: (
+    longformId: string,
+    payload: {
+      title: string;
+      summary?: string;
+      target_words?: number;
+      after_id?: string | null;
+    },
+  ) =>
+    request<{ section: LongformSection; longform: Longform }>(
+      `/api/v1/longforms/${longformId}/sections`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+
+  updateLongformSection: (
+    longformId: string,
+    sectionId: string,
+    payload: {
+      title?: string;
+      summary?: string;
+      target_words?: number;
+      content?: string;
+    },
+  ) =>
+    request<Longform>(`/api/v1/longforms/${longformId}/sections/${sectionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteLongformSection: (longformId: string, sectionId: string) =>
+    request<Longform>(`/api/v1/longforms/${longformId}/sections/${sectionId}`, {
+      method: "DELETE",
+    }),
+
+  reorderLongformSections: (longformId: string, sectionIds: string[]) =>
+    request<Longform>(`/api/v1/longforms/${longformId}/sections/reorder`, {
+      method: "POST",
+      body: JSON.stringify({ section_ids: sectionIds }),
+    }),
+
+  listCreationProfiles: () =>
+    request<{ count: number; profiles: CreationProfile[] }>(
+      "/api/v1/creation-profiles",
+    ),
+
+  createCreationProfile: (payload: {
+    name: string;
+    genre?: string;
+    tone?: string;
+    audience?: string;
+    pov?: string;
+    citation_policy?: string;
+    target_words?: number;
+    is_shared?: boolean;
+  }) =>
+    request<CreationProfile>("/api/v1/creation-profiles", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateCreationProfile: (
+    profileId: string,
+    payload: {
+      name?: string;
+      genre?: string;
+      tone?: string;
+      audience?: string;
+      pov?: string;
+      citation_policy?: string;
+      target_words?: number;
+      is_shared?: boolean;
+    },
+  ) =>
+    request<CreationProfile>(`/api/v1/creation-profiles/${profileId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteCreationProfile: (profileId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/creation-profiles/${profileId}`, {
+      method: "DELETE",
+    }),
+
+  updateAdminUser: (
+    userId: string,
+    payload: {
+      display_name?: string;
+      email?: string;
+      status?: string;
+      role?: string;
+    },
+  ) =>
+    request<AdminUser>(`/api/v1/admin/users/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteAdminUser: (userId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/admin/users/${userId}`, {
+      method: "DELETE",
+    }),
+
+  resetAdminPassword: (userId: string, newPassword: string) =>
+    request<{ ok?: boolean }>(`/api/v1/admin/users/${userId}/reset-password`, {
+      method: "POST",
+      body: JSON.stringify({ new_password: newPassword }),
+    }),
+
+  listKbSources: () =>
+    request<{ count: number; sources: KbSource[] }>("/api/v1/kb/sources"),
+
+  renameKbSource: (sourceId: string, sourceName: string) =>
+    request<{ source_id: string; source_name: string }>(
+      `/api/v1/kb/sources/${encodeURIComponent(sourceId)}`,
+      { method: "PATCH", body: JSON.stringify({ source_name: sourceName }) },
+    ),
+
+  listThreads: () =>
+    request<{ count: number; threads: ThreadSummary[] }>("/api/v1/threads"),
+
+  renameThread: (threadId: string, title: string) =>
+    request<{ ok?: boolean }>(`/api/v1/threads/${threadId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+
+  deleteThread: (threadId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/threads/${threadId}`, {
+      method: "DELETE",
+    }),
+
+  deleteJob: (jobId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/jobs/${jobId}`, { method: "DELETE" }),
+
+  updateResearch: (runId: string, topic: string) =>
+    request<ResearchRun>(`/api/v1/research/${runId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ topic }),
     }),
 };
