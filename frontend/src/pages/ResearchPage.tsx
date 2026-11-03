@@ -1,0 +1,832 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  AlertTriangle,
+  ArrowRight,
+  BookMarked,
+  BrainCircuit,
+  ChevronDown,
+  Clock3,
+  Compass,
+  FileText,
+  FlaskConical,
+  HelpCircle,
+  Loader2,
+  Sparkles,
+  Trash2,
+  Wand2,
+  X,
+} from "lucide-react";
+import clsx from "clsx";
+import { api, type ResearchRun } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
+import { useSession } from "@/components/auth/SessionProvider";
+
+const DEPTH_OPTIONS = [
+  { value: 1, label: "1 · 快速扫描" },
+  { value: 2, label: "2 · 标准深挖" },
+  { value: 3, label: "3 · 详尽论证" },
+];
+
+const TOPK_OPTIONS = [3, 5, 8];
+
+const STATUS_TEXT: Record<string, string> = {
+  queued: "排队中",
+  running: "研究中",
+  completed: "已完成",
+  failed: "失败",
+};
+
+function statusClass(status: string): string {
+  if (status === "completed") {
+    return "bg-emerald-500/12 text-emerald-700 ring-emerald-500/25 dark:bg-emerald-400/15 dark:text-emerald-300 dark:ring-emerald-300/25";
+  }
+  if (status === "failed") {
+    return "bg-rose-500/12 text-rose-700 ring-rose-500/25 dark:bg-rose-400/15 dark:text-rose-300 dark:ring-rose-300/25";
+  }
+  return "bg-indigo-500/12 text-indigo-600 ring-indigo-400/25 dark:bg-indigo-400/15 dark:text-indigo-300 dark:ring-indigo-300/25";
+}
+
+function briefExcerpt(run: ResearchRun, limit = 60): string {
+  const text = (run.brief?.summary || run.topic || "").replace(/\s+/g, " ").trim();
+  if (text.length <= limit) return text || "尚无摘要";
+  return `${text.slice(0, limit)}…`;
+}
+
+function useElapsed(active: boolean): number {
+  const [seconds, setSeconds] = useState(0);
+  const startedRef = useRef(0);
+
+  useEffect(() => {
+    if (!active) {
+      setSeconds(0);
+      return;
+    }
+    startedRef.current = Date.now();
+    setSeconds(0);
+    const timer = window.setInterval(() => {
+      setSeconds(Math.floor((Date.now() - startedRef.current) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+
+  return seconds;
+}
+
+function CollapsibleBlock({
+  title,
+  icon,
+  count,
+  children,
+  tone = "neutral",
+}: {
+  title: string;
+  icon: React.ReactNode;
+  count: number;
+  children: React.ReactNode;
+  tone?: "neutral" | "amber" | "rose" | "indigo";
+}) {
+  const [open, setOpen] = useState(false);
+  const border =
+    tone === "amber"
+      ? "border-amber-300/40 dark:border-amber-300/20"
+      : tone === "rose"
+        ? "border-rose-300/40 dark:border-rose-300/20"
+        : tone === "indigo"
+          ? "border-indigo-300/40 dark:border-indigo-300/20"
+          : "border-white/45 dark:border-white/10";
+
+  return (
+    <div className={clsx("rounded-2xl border bg-white/45 dark:bg-white/[0.04]", border)}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-xs font-semibold text-slate-600 dark:text-slate-300"
+      >
+        {icon}
+        <span>{title}</span>
+        <span className="rounded-full bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-white/10 dark:text-slate-400">
+          {count}
+        </span>
+        <ChevronDown
+          size={14}
+          className={clsx("ml-auto transition", open && "rotate-180")}
+        />
+      </button>
+      <AnimatePresence initial={false}>
+        {open ? (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="space-y-2 px-3.5 pb-3 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+              {children}
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+export default function ResearchPage() {
+  const { can, roleName } = useSession();
+  const writable = can("write");
+
+  const [topic, setTopic] = useState("");
+  const [depth, setDepth] = useState(2);
+  const [topK, setTopK] = useState(5);
+
+  const [running, setRunning] = useState(false);
+  const elapsed = useElapsed(running);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const [run, setRun] = useState<ResearchRun | null>(null);
+  const [history, setHistory] = useState<ResearchRun[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const [openEvidence, setOpenEvidence] = useState<string | null>(null);
+
+  const [blueprintOpen, setBlueprintOpen] = useState(false);
+  const [blueprintTitle, setBlueprintTitle] = useState("");
+  const [blueprintMode, setBlueprintMode] = useState<"loose" | "strict">("loose");
+  const [blueprintBusy, setBlueprintBusy] = useState(false);
+  const [blueprintResult, setBlueprintResult] = useState<{ courseId: string } | null>(
+    null,
+  );
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const data = await api.listResearch();
+      setHistory(data.runs);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "加载历史研究失败");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
+
+  const citationIndex = useMemo(() => {
+    const map = new Map<string, ResearchRun["citations"][number]>();
+    (run?.citations ?? []).forEach((item, index) => {
+      map.set(`E${index + 1}`, item);
+    });
+    return map;
+  }, [run]);
+
+  const startResearch = async () => {
+    const text = topic.trim();
+    if (!text || running) return;
+    if (!writable) {
+      setError("当前角色只读，无法发起研究");
+      return;
+    }
+    setRunning(true);
+    setError("");
+    setNotice("");
+    setBlueprintResult(null);
+    const startedAt = Date.now();
+    try {
+      const result = await api.runResearch({ topic: text, depth, top_k: topK });
+      setRun(result);
+      const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      setNotice(`研究完成 · 用时 ${seconds} 秒 · ${result.citations.length} 条证据`);
+      await loadHistory();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "研究失败");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const selectRun = (item: ResearchRun) => {
+    setRun(item);
+    setError("");
+    setNotice("");
+    setBlueprintResult(null);
+    setOpenEvidence(null);
+  };
+
+  const removeRun = async (target: ResearchRun) => {
+    if (!writable || deleting) return;
+    const confirmed = window.confirm(`删除研究「${target.topic}」？该操作不可撤销。`);
+    if (!confirmed) return;
+    setDeleting(target.id);
+    setError("");
+    try {
+      await api.deleteResearch(target.id);
+      setHistory((prev) => prev.filter((item) => item.id !== target.id));
+      setRun((prev) => (prev?.id === target.id ? null : prev));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除失败");
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const openBlueprintForm = () => {
+    if (!run) return;
+    setBlueprintTitle(run.topic);
+    setBlueprintOpen(true);
+    setBlueprintResult(null);
+  };
+
+  const submitBlueprint = async () => {
+    if (!run || blueprintBusy) return;
+    setBlueprintBusy(true);
+    setError("");
+    try {
+      const result = await api.researchToBlueprint(run.id, {
+        create_course: true,
+        course_title: blueprintTitle.trim() || run.topic,
+        mode: blueprintMode,
+      });
+      setBlueprintResult({ courseId: result.course_id });
+      setBlueprintOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "生成蓝图失败");
+    } finally {
+      setBlueprintBusy(false);
+    }
+  };
+
+  const brief = run?.brief;
+
+  return (
+    <div className="space-y-5">
+      {!writable ? (
+        <div className="rounded-2xl border border-amber-300/50 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-300">
+          你以 {roleName || "只读"} 身份访问，仅可查看研究结果
+        </div>
+      ) : null}
+
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35 }}
+        className="glass relative overflow-hidden rounded-[2rem] p-6 shadow-glass sm:p-8"
+      >
+        <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-gradient-to-br from-indigo-400/25 to-violet-400/20 blur-3xl" />
+        <div className="relative space-y-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="chip">
+              <BrainCircuit size={11} />
+              深度研究
+            </span>
+            <h1 className="text-xl font-semibold tracking-tight text-slate-800 dark:text-slate-100 sm:text-2xl">
+              把一个主题拆成可验证的证据链
+            </h1>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-end">
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                研究主题
+              </span>
+              <input
+                value={topic}
+                onChange={(event) => setTopic(event.target.value)}
+                placeholder="例如：向量索引调优"
+                className="input"
+                disabled={running}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                研究深度
+              </span>
+              <select
+                value={depth}
+                onChange={(event) => setDepth(Number(event.target.value))}
+                className="select"
+                disabled={running}
+              >
+                {DEPTH_OPTIONS.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                证据条数
+              </span>
+              <select
+                value={topK}
+                onChange={(event) => setTopK(Number(event.target.value))}
+                className="select"
+                disabled={running}
+              >
+                {TOPK_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value} 条
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={startResearch}
+              disabled={running || !topic.trim() || !writable}
+              className="btn btn-primary h-[42px] whitespace-nowrap"
+              title={!writable ? "当前角色只读" : undefined}
+            >
+              {running ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              {running ? "研究中…" : "开始研究"}
+            </button>
+          </div>
+
+          {running ? (
+            <div className="rounded-2xl border border-indigo-300/40 bg-indigo-50/60 px-4 py-3 text-xs text-indigo-700 dark:border-indigo-300/20 dark:bg-indigo-400/10 dark:text-indigo-200">
+              <div className="flex items-center gap-2 font-medium">
+                <Loader2 size={13} className="animate-spin" />
+                正在拆解子问题、检索证据…
+                <span className="ml-auto inline-flex items-center gap-1 tabular-nums">
+                  <Clock3 size={12} />
+                  已耗时 {elapsed}s
+                </span>
+              </div>
+              <p className="mt-1.5 leading-relaxed opacity-80">
+                同步请求，通常需要 5–30 秒，请不要刷新页面。
+              </p>
+            </div>
+          ) : null}
+
+          {error ? (
+            <div className="flex items-start gap-2 rounded-2xl border border-rose-300/50 bg-rose-50/70 px-4 py-2.5 text-xs text-rose-700 dark:border-rose-300/25 dark:bg-rose-400/10 dark:text-rose-300">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              <span className="break-words">{error}</span>
+            </div>
+          ) : null}
+
+          {notice ? (
+            <div className="rounded-2xl border border-emerald-300/50 bg-emerald-50/70 px-4 py-2.5 text-xs text-emerald-700 dark:border-emerald-300/25 dark:bg-emerald-400/10 dark:text-emerald-300">
+              {notice}
+            </div>
+          ) : null}
+
+          {blueprintResult ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-emerald-300/50 bg-emerald-50/70 px-4 py-2.5 text-xs text-emerald-700 dark:border-emerald-300/25 dark:bg-emerald-400/10 dark:text-emerald-300">
+              <BookMarked size={13} />
+              已生成课程蓝图
+              <Link
+                to={`/courses/${blueprintResult.courseId}`}
+                className="inline-flex items-center gap-1 font-semibold underline decoration-dotted"
+              >
+                前往课程
+                <ArrowRight size={12} />
+              </Link>
+            </div>
+          ) : null}
+        </div>
+      </motion.section>
+
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="space-y-4">
+          {run ? (
+            <motion.section
+              key={run.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+              className="glass space-y-4 rounded-3xl p-5 shadow-glass sm:p-6"
+            >
+              <header className="flex flex-wrap items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={clsx(
+                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1",
+                        statusClass(run.status),
+                      )}
+                    >
+                      {STATUS_TEXT[run.status] ?? run.status}
+                    </span>
+                    <span className="chip-muted">深度 {run.depth}</span>
+                    <span className="chip-muted">证据 {run.citations.length}</span>
+                    {run.provider ? <span className="chip-muted">{run.provider}</span> : null}
+                  </div>
+                  <h2 className="mt-2 text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100">
+                    {run.topic}
+                  </h2>
+                  <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                    {formatDateTime(run.created_at)}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={openBlueprintForm}
+                    disabled={!writable}
+                    className="btn btn-quiet"
+                    title={!writable ? "当前角色只读" : undefined}
+                  >
+                    <Wand2 size={13} />
+                    转成课程蓝图
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeRun(run)}
+                    disabled={!writable || deleting === run.id}
+                    className="btn btn-quiet text-rose-600 dark:text-rose-300"
+                    title={!writable ? "当前角色只读" : undefined}
+                  >
+                    {deleting === run.id ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Trash2 size={13} />
+                    )}
+                    删除
+                  </button>
+                </div>
+              </header>
+
+              {run.warning ? (
+                <div className="flex items-start gap-2 rounded-2xl border border-amber-300/50 bg-amber-50/70 px-3.5 py-2.5 text-xs text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-300">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                  <span className="break-words">{run.warning}</span>
+                </div>
+              ) : null}
+
+              {run.questions.length ? (
+                <div>
+                  <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500">
+                    <HelpCircle size={12} />
+                    子问题
+                  </h3>
+                  <ol className="flex flex-wrap gap-2">
+                    {run.questions.map((question, index) => (
+                      <li
+                        key={`${question}-${index}`}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-white/50 bg-white/55 px-2.5 py-1.5 text-[11px] text-slate-600 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-300"
+                      >
+                        <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full brand-gradient text-[9px] font-semibold text-white">
+                          {index + 1}
+                        </span>
+                        {question}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
+
+              {brief?.summary ? (
+                <div>
+                  <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500">
+                    <Compass size={12} />
+                    摘要
+                  </h3>
+                  <p className="whitespace-pre-wrap text-[13px] leading-[1.85] text-slate-700 dark:text-slate-200">
+                    {brief.summary}
+                  </p>
+                </div>
+              ) : null}
+
+              {brief?.findings?.length ? (
+                <div>
+                  <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500">
+                    <FlaskConical size={12} />
+                    关键发现
+                  </h3>
+                  <div className="space-y-2.5">
+                    {brief.findings.map((finding, index) => (
+                      <div
+                        key={`${finding.title}-${index}`}
+                        className="rounded-2xl border border-white/45 bg-white/45 p-3.5 transition hover:border-indigo-300/50 dark:border-white/10 dark:bg-white/[0.04]"
+                      >
+                        <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">
+                          {finding.title || `发现 ${index + 1}`}
+                        </p>
+                        <p className="mt-1 whitespace-pre-wrap text-[12.5px] leading-[1.8] text-slate-600 dark:text-slate-300">
+                          {finding.detail}
+                        </p>
+                        {finding.evidence.length ? (
+                          <div className="mt-2 space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {finding.evidence.map((marker) => {
+                                const key = `${index}-${marker}`;
+                                const active = openEvidence === key;
+                                return (
+                                  <button
+                                    key={key}
+                                    type="button"
+                                    onClick={() =>
+                                      setOpenEvidence(active ? null : key)
+                                    }
+                                    className={clsx(
+                                      "rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 transition",
+                                      active
+                                        ? "brand-gradient text-white ring-transparent"
+                                        : "bg-indigo-500/10 text-indigo-600 ring-indigo-400/25 hover:bg-indigo-500/15 dark:bg-indigo-400/15 dark:text-indigo-300 dark:ring-indigo-300/25",
+                                    )}
+                                  >
+                                    {marker}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {finding.evidence.map((marker) => {
+                              const key = `${index}-${marker}`;
+                              if (openEvidence !== key) return null;
+                              const citation = citationIndex.get(marker);
+                              return (
+                                <div
+                                  key={`${key}-panel`}
+                                  className="rounded-xl border border-indigo-300/40 bg-indigo-50/60 p-2.5 text-[11px] leading-relaxed text-slate-600 dark:border-indigo-300/20 dark:bg-indigo-400/10 dark:text-slate-300"
+                                >
+                                  <p className="mb-1 flex flex-wrap items-center gap-1 font-semibold text-indigo-700 dark:text-indigo-200">
+                                    <FileText size={11} />
+                                    {citation?.source_name || "证据"}
+                                    <span className="font-normal text-slate-400">
+                                      {citation ? `· 片段 #${citation.chunk_index}` : "· 未找到原文"}
+                                    </span>
+                                  </p>
+                                  <p className="max-h-40 overflow-y-auto whitespace-pre-wrap">
+                                    {citation?.snippet || citation?.text || "该标记没有匹配到引用原文。"}
+                                  </p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="space-y-2">
+                {brief?.contradictions?.length ? (
+                  <CollapsibleBlock
+                    title="矛盾点"
+                    icon={<AlertTriangle size={13} />}
+                    count={brief.contradictions.length}
+                    tone="rose"
+                  >
+                    {brief.contradictions.map((item, index) => (
+                      <div
+                        key={`${item.claim}-${index}`}
+                        className="rounded-xl bg-white/60 p-2.5 dark:bg-white/[0.05]"
+                      >
+                        <p className="font-medium text-slate-700 dark:text-slate-200">
+                          {item.claim}
+                        </p>
+                        <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                          证据：{item.evidence.join("、") || "无"}
+                        </p>
+                      </div>
+                    ))}
+                  </CollapsibleBlock>
+                ) : null}
+
+                {brief?.gaps?.length ? (
+                  <CollapsibleBlock
+                    title="资料缺口"
+                    icon={<Compass size={13} />}
+                    count={brief.gaps.length}
+                    tone="amber"
+                  >
+                    <ul className="list-disc space-y-1 pl-4">
+                      {brief.gaps.map((gap, index) => (
+                        <li key={`${gap}-${index}`}>{gap}</li>
+                      ))}
+                    </ul>
+                  </CollapsibleBlock>
+                ) : null}
+
+                {brief?.next_steps?.length ? (
+                  <CollapsibleBlock
+                    title="下一步"
+                    icon={<ArrowRight size={13} />}
+                    count={brief.next_steps.length}
+                    tone="indigo"
+                  >
+                    <ul className="list-disc space-y-1 pl-4">
+                      {brief.next_steps.map((step, index) => (
+                        <li key={`${step}-${index}`}>{step}</li>
+                      ))}
+                    </ul>
+                  </CollapsibleBlock>
+                ) : null}
+              </div>
+
+              {run.citations.length ? (
+                <div>
+                  <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500">
+                    <FileText size={12} />
+                    来源
+                  </h3>
+                  <ul className="space-y-1.5">
+                    {run.citations.map((citation, index) => (
+                      <li
+                        key={`${citation.chunk_id}-${index}`}
+                        className="flex flex-wrap items-center gap-2 rounded-xl border border-white/45 bg-white/40 px-3 py-2 text-[11px] text-slate-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300"
+                      >
+                        <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full brand-gradient text-[9px] font-semibold text-white">
+                          {index + 1}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate font-medium">
+                          {citation.source_name || "未知来源"}
+                        </span>
+                        <span className="chip-muted">片段 #{citation.chunk_index}</span>
+                        <span className="text-slate-400 dark:text-slate-500">
+                          {citation.score.toFixed(2)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </motion.section>
+          ) : (
+            <div className="glass rounded-3xl p-8 text-center shadow-glass">
+              <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl brand-gradient text-white shadow-brand">
+                <BrainCircuit size={20} />
+              </div>
+              <p className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">
+                还没有研究结果
+              </p>
+              <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                输入一个主题开始。先上传资料到知识库，研究质量会更好 —— 子问题、关键发现与矛盾点都建立在检索到的证据之上。
+              </p>
+              <Link to="/kb" className="btn btn-quiet mx-auto mt-4">
+                <FileText size={13} />
+                去知识库上传资料
+              </Link>
+            </div>
+          )}
+        </div>
+
+        <aside className="glass h-fit rounded-3xl p-4 shadow-glass">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
+              <Clock3 size={12} />
+              历史研究
+            </h2>
+            <span className="text-[10px] text-slate-400 dark:text-slate-500">
+              {history.length}
+            </span>
+          </div>
+          <div className="no-scrollbar mt-2.5 max-h-[560px] space-y-1.5 overflow-y-auto pr-1">
+            {historyLoading ? (
+              <p className="px-1 py-3 text-[11px] text-slate-400">加载中…</p>
+            ) : history.length === 0 ? (
+              <p className="px-1 py-3 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+                还没有历史记录。
+              </p>
+            ) : (
+              history.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => selectRun(item)}
+                  className={clsx(
+                    "w-full rounded-xl px-2.5 py-2 text-left transition",
+                    run?.id === item.id
+                      ? "brand-gradient text-white shadow-brand"
+                      : "hover:bg-white/55 dark:hover:bg-white/10",
+                  )}
+                >
+                  <span
+                    className={clsx(
+                      "block truncate text-[12px] font-medium",
+                      run?.id === item.id
+                        ? "text-white"
+                        : "text-slate-700 dark:text-slate-200",
+                    )}
+                  >
+                    {item.topic}
+                  </span>
+                  <span
+                    className={clsx(
+                      "mt-0.5 block text-[10px] leading-snug",
+                      run?.id === item.id
+                        ? "text-white/80"
+                        : "text-slate-400 dark:text-slate-500",
+                    )}
+                  >
+                    {briefExcerpt(item)}
+                  </span>
+                  <span
+                    className={clsx(
+                      "mt-1 block text-[10px]",
+                      run?.id === item.id
+                        ? "text-white/70"
+                        : "text-slate-400 dark:text-slate-500",
+                    )}
+                  >
+                    {formatDateTime(item.created_at)}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => void loadHistory()}
+            className="btn btn-quiet mt-3 w-full"
+          >
+            <Clock3 size={12} />
+            刷新列表
+          </button>
+        </aside>
+      </div>
+
+      <AnimatePresence>
+        {blueprintOpen ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 grid place-items-center bg-slate-900/30 p-4 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 12, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.98 }}
+              className="glass w-full max-w-md rounded-3xl p-5 shadow-glass"
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                    转成课程蓝图
+                  </h3>
+                  <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                    研究结论会作为焦点，生成一份新的课程蓝图与讲次大纲。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBlueprintOpen(false)}
+                  className="btn-quiet grid h-8 w-8 place-items-center rounded-full"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <label className="mt-4 block">
+                <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                  课程名称
+                </span>
+                <input
+                  value={blueprintTitle}
+                  onChange={(event) => setBlueprintTitle(event.target.value)}
+                  className="input"
+                  placeholder={run?.topic ?? ""}
+                />
+              </label>
+              <label className="mt-3 block">
+                <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                  生成模式
+                </span>
+                <select
+                  value={blueprintMode}
+                  onChange={(event) =>
+                    setBlueprintMode(event.target.value as "loose" | "strict")
+                  }
+                  className="select"
+                >
+                  <option value="loose">非严格 · 允许自由补全</option>
+                  <option value="strict">严格 · 必须有出处</option>
+                </select>
+              </label>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBlueprintOpen(false)}
+                  className="btn btn-quiet"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={submitBlueprint}
+                  disabled={blueprintBusy}
+                  className="btn btn-primary"
+                >
+                  {blueprintBusy ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <Wand2 size={13} />
+                  )}
+                  生成蓝图
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}

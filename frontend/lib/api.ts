@@ -493,6 +493,96 @@ export type VersionConflictPayload = {
   current_version?: number;
 };
 
+export type ResearchFinding = {
+  title: string;
+  detail: string;
+  evidence: string[];
+};
+
+export type ResearchContradiction = {
+  claim: string;
+  evidence: string[];
+};
+
+export type ResearchBrief = {
+  summary: string;
+  findings: ResearchFinding[];
+  contradictions: ResearchContradiction[];
+  gaps: string[];
+  next_steps: string[];
+};
+
+export type ResearchRun = {
+  id: string;
+  tenant_id?: string;
+  user_id?: string;
+  topic: string;
+  depth: number;
+  status: string;
+  brief: ResearchBrief;
+  citations: Citation[];
+  questions: string[];
+  provider: string;
+  warning: string;
+  web_used?: number;
+  created_at: number;
+  updated_at?: number;
+};
+
+export type ResearchBlueprintResult = {
+  research_id: string;
+  course_id: string;
+  blueprint: Blueprint;
+};
+
+export type LongformGenre = "article" | "report" | "essay" | "tutorial" | "custom";
+
+export type CitationPolicy = "required" | "optional" | "forbidden";
+
+export type LongformProfile = {
+  genre: string;
+  tone: string;
+  audience: string;
+  pov: string;
+  citation_policy: string;
+  unit_name?: string;
+};
+
+export type LongformSection = {
+  id: string;
+  title: string;
+  summary: string;
+  target_words: number;
+  content: string;
+  status: string;
+};
+
+export type Longform = {
+  id: string;
+  tenant_id?: string;
+  user_id?: string;
+  title: string;
+  profile: LongformProfile;
+  outline: LongformSection[];
+  content: string;
+  status: string;
+  current_version: number;
+  target_words: number;
+  last_mode: string;
+  citations: Citation[];
+  created_at: number;
+  updated_at: number;
+};
+
+export type LongformVersion = {
+  id: string;
+  version: number;
+  note: string;
+  mode: string;
+  created_at: number;
+  content_length: number;
+};
+
 export class ApiError extends Error {
   status: number;
   payload: Record<string, unknown> | null;
@@ -975,5 +1065,107 @@ export const api = {
     request<ProviderTestResult>(`/api/v1/settings/providers/${providerId}/test`, {
       method: "POST",
       body: JSON.stringify(payload ?? {}),
+    }),
+
+  runResearch: (payload: {
+    topic: string;
+    depth?: number;
+    top_k?: number;
+    source_ids?: string[];
+  }) =>
+    request<ResearchRun>("/api/v1/research", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  listResearch: () =>
+    request<{ count: number; runs: ResearchRun[] }>("/api/v1/research"),
+
+  getResearch: (runId: string) => request<ResearchRun>(`/api/v1/research/${runId}`),
+
+  deleteResearch: (runId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/research/${runId}`, { method: "DELETE" }),
+
+  researchToBlueprint: (
+    runId: string,
+    payload: {
+      create_course?: boolean;
+      course_id?: string;
+      course_title?: string;
+      mode?: GenerationMode;
+    },
+  ) =>
+    request<ResearchBlueprintResult>(`/api/v1/research/${runId}/blueprint`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  createLongform: (payload: {
+    title: string;
+    genre?: LongformGenre | string;
+    tone?: string;
+    audience?: string;
+    pov?: string;
+    citation_policy?: CitationPolicy | string;
+    target_words?: number;
+    mode?: GenerationMode;
+  }) =>
+    request<Longform>("/api/v1/longforms", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  listLongforms: () =>
+    request<{ count: number; longforms: Longform[] }>("/api/v1/longforms"),
+
+  getLongform: (longformId: string) =>
+    request<Longform>(`/api/v1/longforms/${longformId}`),
+
+  generateSection: (
+    longformId: string,
+    sectionId: string,
+    payload?: { mode?: GenerationMode; top_k?: number },
+  ) =>
+    request<{ section_id: string; content: string; longform: Longform }>(
+      `/api/v1/longforms/${longformId}/sections/${sectionId}/generate`,
+      { method: "POST", body: JSON.stringify(payload ?? {}) },
+    ),
+
+  generateLongform: (
+    longformId: string,
+    payload?: { mode?: GenerationMode; top_k?: number; expected_version?: number },
+  ) =>
+    request<Longform>(`/api/v1/longforms/${longformId}/generate`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    }),
+
+  rewriteLongform: (
+    longformId: string,
+    payload: {
+      instruction: string;
+      mode?: GenerationMode;
+      expected_version?: number;
+    },
+  ) =>
+    request<Longform>(`/api/v1/longforms/${longformId}/rewrite`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  listLongformVersions: (longformId: string) =>
+    request<{ count: number; versions: LongformVersion[] }>(
+      `/api/v1/longforms/${longformId}/versions`,
+    ),
+
+  revertLongform: (longformId: string, version: number) =>
+    request<Longform>(`/api/v1/longforms/${longformId}/revert`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+
+  deleteLongform: (longformId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/longforms/${longformId}`, {
+      method: "DELETE",
     }),
 };

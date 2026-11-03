@@ -4,11 +4,13 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
   BookOpen,
+  BrainCircuit,
   IdCard,
   LayoutGrid,
   Library,
   LogOut,
   Menu,
+  PenLine,
   Server,
   ShieldCheck,
   Sparkles,
@@ -34,6 +36,8 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "课程工作台", icon: LayoutGrid, exact: true },
   { href: "/kb", label: "知识库", icon: Library, exact: false },
+  { href: "/research", label: "深度研究", icon: BrainCircuit, exact: false },
+  { href: "/longforms", label: "长篇写作", icon: PenLine, exact: false },
   { href: "/settings", label: "个人设置", icon: IdCard, exact: true },
   { href: "/settings/workspace", label: "空间设置", icon: Users, exact: true },
   {
@@ -302,25 +306,33 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       ? "课程工作台"
       : pathname === "/kb"
         ? "知识库"
-        : pathname === "/settings"
-          ? "个人设置"
-          : pathname === "/settings/workspace"
-            ? "空间设置"
-            : pathname === "/settings/server"
-              ? "服务器设置"
-              : activeCourse?.title ?? "课程";
+        : pathname === "/research"
+          ? "深度研究"
+          : pathname.startsWith("/longforms")
+            ? "长篇写作"
+            : pathname === "/settings"
+              ? "个人设置"
+              : pathname === "/settings/workspace"
+                ? "空间设置"
+                : pathname === "/settings/server"
+                  ? "服务器设置"
+                  : activeCourse?.title ?? "课程";
   const subtitle =
     pathname === "/"
       ? "从主题到成体系课程，逐讲生成、随时追问"
       : pathname === "/kb"
         ? "上传资料，作为写作与追问的证据底座"
-        : pathname === "/settings"
-          ? "我的模型 · 我的通道 · 账号信息"
-          : pathname === "/settings/workspace"
-            ? "角色 · 空间成员 · 用量与配额"
-            : pathname === "/settings/server"
-              ? "服务器模型通道 · 运行概览（全局生效）"
-              : activeCourse?.subtitle || "大纲 · 阅读 · 追问 · 版本";
+        : pathname === "/research"
+          ? "拆解子问题 · 检索证据 · 转成课程蓝图"
+          : pathname.startsWith("/longforms")
+            ? "大纲 · 逐节生成 · 版本回滚"
+            : pathname === "/settings"
+              ? "我的模型 · 我的通道 · 账号信息"
+              : pathname === "/settings/workspace"
+                ? "角色 · 空间成员 · 用量与配额"
+                : pathname === "/settings/server"
+                  ? "服务器模型通道 · 运行概览（全局生效）"
+                  : activeCourse?.subtitle || "大纲 · 阅读 · 追问 · 版本";
 
   if (pathname === "/login") {
     return <main className="min-h-screen px-4 py-6">{children}</main>;
