@@ -257,3 +257,18 @@ class DatabaseUserProviderRepository(UserProviderRepository):
             "DELETE FROM user_provider_shares WHERE provider_id = ?", (provider_id,)
         )
         return True
+
+    def delete_all_for_user(self, user_id: str) -> int:
+        self.ensure_schema()
+        rows = self.database.fetchall(
+            "SELECT id FROM user_providers WHERE user_id = ?", (user_id,)
+        )
+        removed = len(rows)
+        self.database.execute(
+            "DELETE FROM user_provider_shares WHERE owner_user_id = ?", (user_id,)
+        )
+        self.database.execute(
+            "DELETE FROM user_provider_shares WHERE user_id = ?", (user_id,)
+        )
+        self.database.execute("DELETE FROM user_providers WHERE user_id = ?", (user_id,))
+        return removed

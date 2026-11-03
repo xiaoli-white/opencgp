@@ -307,7 +307,7 @@ class JobsConfig:
 class Settings:
     """应用总配置。"""
 
-    app_name: str = "AI 课程工作室"
+    app_name: str = "OpenCGP"
     env: str = "development"
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
@@ -328,7 +328,7 @@ class Settings:
     @classmethod
     def load(cls) -> "Settings":
         return cls(
-            app_name=_env("APP_NAME", "AI 课程工作室"),
+            app_name=_env("APP_NAME", "OpenCGP"),
             env=_env("ENV", "development"),
             database=DatabaseConfig.from_env(),
             storage=StorageConfig.from_env(),

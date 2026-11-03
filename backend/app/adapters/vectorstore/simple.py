@@ -57,6 +57,7 @@ _SCHEMA = (
 _COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("sources", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
     ("chunks", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
+    ("sources", "object_key", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -141,6 +142,16 @@ class SimpleVectorStore(VectorStore):
     async def delete_by_source(self, source_id: str, tenant_id: str = "") -> int:
         return await asyncio.to_thread(self._delete_sync, source_id, tenant_id)
 
+    async def list_sources(self, tenant_id: str = "") -> list[dict]:
+        return await asyncio.to_thread(self._list_sources_sync, tenant_id)
+
+    async def rename_source(
+        self, source_id: str, source_name: str, tenant_id: str = ""
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._rename_sync, source_id, source_name, tenant_id
+        )
+
     def healthcheck(self) -> bool:
         try:
             conn = self._connection()
@@ -200,10 +211,18 @@ class SimpleVectorStore(VectorStore):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO sources
-                (source_id, source_name, chunk_count, char_count, created_at, tenant_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (source_id, source_name, chunk_count, char_count, created_at, tenant_id, object_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (source_id, chunks[0].source_name, len(chunks), char_count, now, scope),
+                (
+                    source_id,
+                    chunks[0].source_name,
+                    len(chunks),
+                    char_count,
+                    now,
+                    scope,
+                    str(chunks[0].meta.get("object_key") or ""),
+                ),
             )
         return len(chunks)
 
@@ -212,6 +231,53 @@ class SimpleVectorStore(VectorStore):
         scope = _tenant_scope(tenant_id)
         with self._lock, conn:
             return self._delete_locked(conn, source_id, scope)
+
+    def _list_sources_sync(self, tenant_id: str = "") -> list[dict]:
+        conn = self._connection()
+        clause, params = _tenant_filter(tenant_id)
+        rows = conn.execute(
+            "SELECT source_id, source_name, chunk_count, char_count, tenant_id,"
+            f" created_at, object_key FROM sources WHERE 1 = 1{clause}"
+            " ORDER BY created_at DESC",
+            list(params),
+        ).fetchall()
+        return [
+            {
+                "source_id": str(row[0]),
+                "source_name": str(row[1] or ""),
+                "chunk_count": int(row[2] or 0),
+                "char_count": int(row[3] or 0),
+                "tenant_id": str(row[4] or ""),
+                "created_at": float(row[5] or 0.0),
+                "object_key": str(row[6] or ""),
+            }
+            for row in rows
+        ]
+
+    def _rename_sync(
+        self, source_id: str, source_name: str, tenant_id: str = ""
+    ) -> bool:
+        name = (source_name or "").strip()
+        if not name:
+            return False
+        conn = self._connection()
+        clause, params = _tenant_filter(tenant_id)
+        with self._lock, conn:
+            row = conn.execute(
+                f"SELECT source_id FROM sources WHERE source_id = ?{clause}",
+                [source_id, *params],
+            ).fetchone()
+            if row is None:
+                return False
+            conn.execute(
+                "UPDATE sources SET source_name = ? WHERE source_id = ?",
+                (name, source_id),
+            )
+            conn.execute(
+                "UPDATE chunks SET source_name = ? WHERE source_id = ?",
+                (name, source_id),
+            )
+        return True
 
     def _delete_locked(
         self, conn: sqlite3.Connection, source_id: str, tenant_id: str = ""

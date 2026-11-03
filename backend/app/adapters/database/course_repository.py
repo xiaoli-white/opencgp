@@ -158,6 +158,120 @@ class DatabaseCourseRepository(CourseRepository):
             )
         return [_to_course(row) for row in rows]
 
+    def update_course(
+        self,
+        course_id: str,
+        title: str | None = None,
+        subtitle: str | None = None,
+        audience: str | None = None,
+        difficulty: str | None = None,
+        language: str | None = None,
+    ) -> Course | None:
+        self.ensure_schema()
+        course = self.get_course(course_id)
+        if course is None:
+            return None
+        assignments: list[str] = []
+        params: list[Any] = []
+        for column, value in (
+            ("title", title),
+            ("subtitle", subtitle),
+            ("audience", audience),
+            ("difficulty", difficulty),
+            ("language", language),
+        ):
+            if value is not None:
+                assignments.append(f"{column} = ?")
+                params.append(value)
+        if not assignments:
+            return course
+        assignments.append("updated_at = ?")
+        params.append(time.time())
+        params.append(course_id)
+        self.database.execute(
+            f"UPDATE courses SET {', '.join(assignments)} WHERE id = ?", tuple(params)
+        )
+        return self.get_course(course_id)
+
+    def delete_course(
+        self, course_id: str, tenant_id: str | None = None
+    ) -> dict[str, Any] | None:
+        self.ensure_schema()
+        if self.get_course(course_id, tenant_id) is None:
+            return None
+        lesson_ids = [
+            str(row["id"])
+            for row in self.database.fetchall(
+                "SELECT id FROM lessons WHERE course_id = ?", (course_id,)
+            )
+        ]
+        versions = 0
+        for lesson_id in lesson_ids:
+            row = self.database.fetchone(
+                "SELECT COUNT(*) AS n FROM lesson_versions WHERE lesson_id = ?",
+                (lesson_id,),
+            )
+            versions += int(row["n"] or 0) if row else 0
+            self.database.execute(
+                "DELETE FROM lesson_versions WHERE lesson_id = ?", (lesson_id,)
+            )
+        threads = 0
+        if self._table_exists("threads"):
+            thread_ids: set[str] = set()
+            for row in self.database.fetchall(
+                "SELECT id FROM threads WHERE course_id = ?", (course_id,)
+            ):
+                thread_ids.add(str(row["id"]))
+            for lesson_id in lesson_ids:
+                for row in self.database.fetchall(
+                    "SELECT id FROM threads WHERE lesson_id = ?", (lesson_id,)
+                ):
+                    thread_ids.add(str(row["id"]))
+            for thread_id in thread_ids:
+                if self._table_exists("messages"):
+                    self.database.execute(
+                        "DELETE FROM messages WHERE thread_id = ?", (thread_id,)
+                    )
+                self.database.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
+            threads = len(thread_ids)
+        if self._table_exists("lesson_locks"):
+            for lesson_id in lesson_ids:
+                self.database.execute(
+                    "DELETE FROM lesson_locks WHERE lesson_id = ?", (lesson_id,)
+                )
+        blueprint = False
+        if self._table_exists("course_blueprints"):
+            row = self.database.fetchone(
+                "SELECT course_id FROM course_blueprints WHERE course_id = ?",
+                (course_id,),
+            )
+            blueprint = row is not None
+            self.database.execute(
+                "DELETE FROM course_blueprints WHERE course_id = ?", (course_id,)
+            )
+        if self._table_exists("course_grants"):
+            self.database.execute(
+                "DELETE FROM course_grants WHERE course_id = ?", (course_id,)
+            )
+        self.database.execute("DELETE FROM lessons WHERE course_id = ?", (course_id,))
+        self.database.execute("DELETE FROM courses WHERE id = ?", (course_id,))
+        return {
+            "lessons": len(lesson_ids),
+            "versions": versions,
+            "threads": threads,
+            "blueprint": blueprint,
+        }
+
+    def _table_exists(self, table: str) -> bool:
+        try:
+            row = self.database.fetchone(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table,),
+            )
+        except Exception:  # noqa: BLE001
+            return True
+        return row is not None
+
     def create_lesson(
         self,
         course_id: str,
@@ -224,6 +338,7 @@ class DatabaseCourseRepository(CourseRepository):
         learning_objectives: Sequence[str] | None = None,
         prerequisites: Sequence[str] | None = None,
         status: str | None = None,
+        order_index: int | None = None,
     ) -> Lesson | None:
         self.ensure_schema()
         lesson = self.get_lesson(lesson_id)
@@ -243,6 +358,9 @@ class DatabaseCourseRepository(CourseRepository):
         if status is not None:
             assignments.append("status = ?")
             params.append(status)
+        if order_index is not None:
+            assignments.append("order_index = ?")
+            params.append(int(order_index))
         if not assignments:
             return lesson
         assignments.append("updated_at = ?")
@@ -252,6 +370,60 @@ class DatabaseCourseRepository(CourseRepository):
             f"UPDATE lessons SET {', '.join(assignments)} WHERE id = ?", tuple(params)
         )
         return self.get_lesson(lesson_id)
+
+    def delete_lesson(self, lesson_id: str) -> dict[str, int] | None:
+        self.ensure_schema()
+        if self.get_lesson(lesson_id) is None:
+            return None
+        row = self.database.fetchone(
+            "SELECT COUNT(*) AS n FROM lesson_versions WHERE lesson_id = ?",
+            (lesson_id,),
+        )
+        deleted_versions = int(row["n"] or 0) if row else 0
+        self.database.execute(
+            "DELETE FROM lesson_versions WHERE lesson_id = ?", (lesson_id,)
+        )
+        thread_ids: set[str] = set()
+        if self._table_exists("threads"):
+            for row in self.database.fetchall(
+                "SELECT id FROM threads WHERE lesson_id = ?", (lesson_id,)
+            ):
+                thread_ids.add(str(row["id"]))
+            for thread_id in thread_ids:
+                if self._table_exists("messages"):
+                    self.database.execute(
+                        "DELETE FROM messages WHERE thread_id = ?", (thread_id,)
+                    )
+                self.database.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
+        if self._table_exists("lesson_locks"):
+            self.database.execute(
+                "DELETE FROM lesson_locks WHERE lesson_id = ?", (lesson_id,)
+            )
+        self.database.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,))
+        return {"deleted_versions": deleted_versions, "deleted_threads": len(thread_ids)}
+
+    def reorder_lessons(
+        self, course_id: str, lesson_ids: Sequence[str]
+    ) -> list[Lesson]:
+        self.ensure_schema()
+        existing = self.list_lessons(course_id)
+        by_id = {lesson.id: lesson for lesson in existing}
+        ordered: list[Lesson] = []
+        seen: set[str] = set()
+        for lesson_id in lesson_ids:
+            lesson = by_id.get(str(lesson_id))
+            if lesson is None or lesson.id in seen:
+                continue
+            seen.add(lesson.id)
+            ordered.append(lesson)
+        ordered.extend(lesson for lesson in existing if lesson.id not in seen)
+        now = time.time()
+        for index, lesson in enumerate(ordered, start=1):
+            self.database.execute(
+                "UPDATE lessons SET order_index = ?, updated_at = ? WHERE id = ?",
+                (index, now, lesson.id),
+            )
+        return self.list_lessons(course_id)
 
     def append_version(
         self,

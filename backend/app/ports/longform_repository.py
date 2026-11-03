@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, Sequence, runtime_checkable
 
 from app.models.citation import Citation
 from app.models.longform import Longform, LongformVersion, OutlineSection
@@ -28,6 +28,9 @@ class LongformRepository(Protocol):
         status: str | None = None,
         last_mode: str | None = None,
         citations: Sequence[Citation] | None = None,
+        title: str | None = None,
+        profile: dict[str, Any] | None = None,
+        target_words: int | None = None,
     ) -> Longform | None:
         ...
 

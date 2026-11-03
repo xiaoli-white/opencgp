@@ -51,3 +51,14 @@ class ConversationRepository(Protocol):
 
     def count_messages(self, thread_id: str) -> int:
         ...
+
+    def list_threads(
+        self, course_ids: Sequence[str] | None = None, limit: int = 200
+    ) -> list[Thread]:
+        ...
+
+    def update_thread_title(self, thread_id: str, title: str) -> Thread | None:
+        ...
+
+    def delete_thread(self, thread_id: str) -> int:
+        ...

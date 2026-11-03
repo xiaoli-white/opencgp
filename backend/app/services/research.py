@@ -19,7 +19,7 @@ from app.ports.llm import LLMProvider
 from app.ports.research_repository import ResearchRepository
 from app.ports.vectorstore import VectorStore
 from app.ports.web_search import WebSearchPort
-from app.services.errors import ResearchParseError
+from app.services.errors import ResearchNotFoundError, ResearchParseError
 
 QUESTION_PATTERNS = (
     "{topic} 的定义与边界",
@@ -117,6 +117,17 @@ class ResearchService:
 
     def delete(self, run_id: str, tenant_id: str | None = None) -> bool:
         return self.repository.delete(run_id, tenant_id)
+
+    def rename(self, run_id: str, topic: str, tenant_id: str | None = None) -> ResearchRun:
+        run = self.get(run_id, tenant_id)
+        if run is None:
+            raise ResearchNotFoundError(f"研究不存在: {run_id}")
+        label = (topic or "").strip()
+        if not label:
+            raise ValueError("主题不能为空")
+        run.topic = label
+        run.updated_at = time.time()
+        return self.repository.save(run)
 
     async def _plan(
         self, provider: LLMProvider, topic: str, depth: int

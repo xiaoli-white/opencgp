@@ -47,3 +47,6 @@ class UserProviderRepository(Protocol):
 
     def delete_shares(self, provider_id: str) -> bool:
         ...
+
+    def delete_all_for_user(self, user_id: str) -> int:
+        ...

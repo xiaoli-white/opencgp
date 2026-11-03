@@ -182,6 +182,48 @@ class DatabaseConversationRepository(ConversationRepository):
             return 0
         return int(row["total"])
 
+    def list_threads(
+        self, course_ids: Sequence[str] | None = None, limit: int = 200
+    ) -> list[Thread]:
+        self.ensure_schema()
+        clauses = ["1 = 1"]
+        params: list[Any] = []
+        if course_ids is not None:
+            scoped = [str(item) for item in course_ids if item]
+            if not scoped:
+                return []
+            placeholders = ", ".join("?" for _ in scoped)
+            clauses.append(f"course_id IN ({placeholders})")
+            params.extend(scoped)
+        params.append(max(1, int(limit)))
+        rows = self.database.fetchall(
+            f"SELECT * FROM threads WHERE {' AND '.join(clauses)}"
+            " ORDER BY updated_at DESC LIMIT ?",
+            tuple(params),
+        )
+        return [_to_thread(row) for row in rows]
+
+    def update_thread_title(self, thread_id: str, title: str) -> Thread | None:
+        self.ensure_schema()
+        current = self.get_thread(thread_id)
+        if current is None:
+            return None
+        self.database.execute(
+            "UPDATE threads SET title = ?, updated_at = ? WHERE id = ?",
+            ((title or "").strip(), time.time(), thread_id),
+        )
+        return self.get_thread(thread_id)
+
+    def delete_thread(self, thread_id: str) -> int:
+        self.ensure_schema()
+        row = self.database.fetchone(
+            "SELECT COUNT(*) AS total FROM messages WHERE thread_id = ?", (thread_id,)
+        )
+        removed = int(row["total"]) if row and row["total"] is not None else 0
+        self.database.execute("DELETE FROM messages WHERE thread_id = ?", (thread_id,))
+        self.database.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
+        return removed
+
     def _next_timestamp(self, thread_id: str) -> float:
         now = time.time()
         row = self.database.fetchone(

@@ -76,6 +76,11 @@ from app.services.errors import (
     TenantKindError,
     TenantSystemError,
     UnsupportedJobKindError,
+    JobNotTerminalError,
+    UserDeleteForbiddenError,
+    CreationProfileNotFoundError,
+    SourceNotFoundError,
+    ThreadNotFoundError,
 )
 
 settings = get_settings()
@@ -395,6 +400,32 @@ async def kb_search(
         "count": len(citations),
         "citations": [citation.model_dump() for citation in citations],
     }
+
+
+@app.get("/api/v1/kb/sources")
+async def kb_list_sources(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    items = await container.ingest().list_sources(_tenant_of(ctx))
+    return {"count": len(items), "sources": items}
+
+
+class SourceRenameRequest(BaseModel):
+    source_name: str = Field(min_length=1)
+
+
+@app.patch("/api/v1/kb/sources/{source_id}")
+async def kb_rename_source(
+    source_id: str,
+    req: SourceRenameRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    renamed = await container.ingest().rename_source(
+        source_id, req.source_name.strip(), _tenant_of(ctx)
+    )
+    if not renamed:
+        raise HTTPException(status_code=404, detail=f"来源不存在: {source_id}")
+    return {"source_id": source_id, "source_name": req.source_name.strip()}
 
 
 @app.delete("/api/v1/kb/sources/{source_id}")
@@ -789,6 +820,67 @@ def get_thread(
     }
 
 
+@app.get("/api/v1/threads")
+def list_threads(
+    limit: int = Query(default=100, ge=1, le=500),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    courses = container.course_repository().list_courses(_tenant_of(ctx))
+    visible = container.auth_service().visible_course_ids(ctx)
+    course_ids = [course.id for course in courses]
+    if visible is not None:
+        allowed = set(visible)
+        course_ids = [course_id for course_id in course_ids if course_id in allowed]
+    conversations = container.conversation_repository()
+    threads = conversations.list_threads(course_ids, limit)
+    payload = []
+    for thread in threads:
+        item = thread.model_dump()
+        item["message_count"] = conversations.count_messages(thread.id)
+        payload.append(item)
+    return {"count": len(payload), "threads": payload}
+
+
+class ThreadRenameRequest(BaseModel):
+    title: str = Field(min_length=1)
+
+
+def _require_thread(thread_id: str, ctx: AuthContext, level: str = "read"):
+    thread = container.conversation_repository().get_thread(thread_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail=f"对话线不存在: {thread_id}")
+    if thread.course_id:
+        _require_course(thread.course_id, ctx, level)
+    return thread
+
+
+@app.patch("/api/v1/threads/{thread_id}")
+def rename_thread(
+    thread_id: str,
+    req: ThreadRenameRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_thread(thread_id, ctx, "write")
+    updated = container.conversation_repository().update_thread_title(
+        thread_id, req.title
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"对话线不存在: {thread_id}")
+    return {"thread": updated.model_dump()}
+
+
+@app.delete("/api/v1/threads/{thread_id}")
+def delete_thread(
+    thread_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_thread(thread_id, ctx, "write")
+    removed = container.conversation_repository().delete_thread(thread_id)
+    return {"ok": True, "thread_id": thread_id, "deleted_messages": removed}
+
+
 class BlueprintGenerateRequest(BaseModel):
     mode: GenerationMode = GenerationMode.strict
     top_k: int | None = Field(default=None, ge=1, le=20)
@@ -1160,6 +1252,7 @@ def _admin_user_payload(user: Any) -> dict[str, Any]:
 @app.get("/api/v1/admin/users")
 def admin_list_users(
     status: str = Query(default=""),
+    q: str = Query(default=""),
     limit: int = Query(default=50, ge=1, le=200),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
@@ -1167,7 +1260,7 @@ def admin_list_users(
     wanted = (status or "").strip().lower()
     if wanted and wanted not in USER_STATUSES:
         raise HTTPException(status_code=400, detail=f"未知状态: {wanted}")
-    users = container.auth_service().list_users(wanted, limit)
+    users = container.auth_service().list_users(wanted, limit, q)
     payload = [_admin_user_payload(user) for user in users]
     return {"count": len(payload), "users": payload}
 
@@ -1207,6 +1300,71 @@ def admin_reject_user(
         "status": user.status,
         "reason": (req.reason if req is not None else ""),
     }
+
+
+class AdminUserUpdateRequest(BaseModel):
+    display_name: str | None = None
+    email: str | None = None
+    status: str | None = None
+    role: str | None = None
+
+
+class PasswordResetRequest(BaseModel):
+    new_password: str = Field(min_length=1)
+
+
+@app.patch("/api/v1/admin/users/{user_id}")
+def admin_update_user(
+    user_id: str,
+    req: AdminUserUpdateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "manage_server")
+    try:
+        user = container.account_admin().update_user(
+            user_id,
+            display_name=req.display_name,
+            email=req.email,
+            status=req.status,
+            role=req.role,
+        )
+    except EmailAlreadyRegisteredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AuthRequiredError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"user": _admin_user_payload(user)}
+
+
+@app.delete("/api/v1/admin/users/{user_id}")
+def admin_delete_user(
+    user_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "manage_server")
+    try:
+        result = container.account_admin().delete_user(ctx.user.id, user_id)
+    except UserDeleteForbiddenError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AuthRequiredError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, **result}
+
+
+@app.post("/api/v1/admin/users/{user_id}/reset-password")
+def admin_reset_password(
+    user_id: str,
+    req: PasswordResetRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "manage_server")
+    try:
+        container.account_admin().reset_password(user_id, req.new_password)
+    except AuthRequiredError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 @app.post("/api/v1/auth/logout")
@@ -2076,13 +2234,14 @@ class ResearchBlueprintRequest(BaseModel):
 
 class LongformCreateRequest(BaseModel):
     title: str = Field(min_length=1)
-    genre: str = "article"
-    tone: str = ""
-    audience: str = ""
-    pov: str = ""
-    citation_policy: str = "optional"
-    target_words: int = Field(default=3000, ge=200, le=50000)
+    genre: str | None = None
+    tone: str | None = None
+    audience: str | None = None
+    pov: str | None = None
+    citation_policy: str | None = None
+    target_words: int | None = Field(default=None, ge=200, le=50000)
     mode: str = "loose"
+    profile_id: str = ""
 
 
 class LongformSectionRequest(BaseModel):
@@ -2144,6 +2303,26 @@ def get_research(run_id: str, ctx: AuthContext = Depends(get_auth_context)) -> d
     run = container.research().get(run_id, _tenant_of(ctx))
     if run is None:
         raise HTTPException(status_code=404, detail=f"研究不存在: {run_id}")
+    return _research_payload(run)
+
+
+class ResearchRenameRequest(BaseModel):
+    topic: str = Field(min_length=1)
+
+
+@app.patch("/api/v1/research/{run_id}")
+def rename_research(
+    run_id: str,
+    req: ResearchRenameRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    try:
+        run = container.research().rename(run_id, req.topic, _tenant_of(ctx))
+    except ResearchNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _research_payload(run)
 
 
@@ -2225,24 +2404,46 @@ async def create_longform(
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
     _charge(ctx, "longform", 1, ref_id=req.title[:40])
+    template = None
+    if req.profile_id:
+        try:
+            template = container.creation_profiles().get(
+                req.profile_id, _tenant_of(ctx)
+            )
+        except CreationProfileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    genre = req.genre or (template.genre if template else "article")
+    citation_policy = req.citation_policy or (
+        template.citation_policy if template else "optional"
+    )
+    tone = req.tone if req.tone is not None else (template.tone if template else "")
+    audience = (
+        req.audience
+        if req.audience is not None
+        else (template.audience if template else "")
+    )
+    pov = req.pov if req.pov is not None else (template.pov if template else "")
+    target_words = req.target_words or (template.target_words if template else 3000)
     profile = LongformProfile(
-        genre=req.genre,
-        tone=req.tone,
-        audience=req.audience,
-        pov=req.pov,
-        citation_policy=req.citation_policy,
+        genre=genre,
+        tone=tone,
+        audience=audience,
+        pov=pov,
+        citation_policy=citation_policy,
         unit_name="节",
     )
     longform = await container.longform().create(
         req.title,
         profile=profile,
-        target_words=req.target_words,
+        target_words=target_words,
         mode=req.mode,
         tenant_id=_tenant_of(ctx),
         user_id=ctx.user.id,
         llm=container.llm_for(ctx.user.id),
     )
-    return longform.model_dump()
+    payload = longform.model_dump()
+    payload["profile_id"] = req.profile_id
+    return payload
 
 
 @app.get("/api/v1/longforms")
@@ -2528,6 +2729,17 @@ def cancel_job(job_id: str, ctx: AuthContext = Depends(require_write)) -> dict[s
     return _job_payload(job)
 
 
+@app.delete("/api/v1/jobs/{job_id}")
+def delete_job(job_id: str, ctx: AuthContext = Depends(require_write)) -> dict[str, Any]:
+    try:
+        job = container.job_service().delete(job_id, _tenant_of(ctx))
+    except JobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {exc}") from exc
+    except JobNotTerminalError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "job_id": job.id, "status": job.status}
+
+
 @app.get("/api/v1/jobs/{job_id}/events")
 async def job_events(
     job_id: str, request: Request, ctx: AuthContext = Depends(get_auth_context)
@@ -2669,3 +2881,375 @@ def storage_info(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]
         except Exception as exc:
             info["error"] = str(exc)
     return info
+
+
+class CourseUpdateRequest(BaseModel):
+    title: str | None = None
+    subtitle: str | None = None
+    audience: str | None = None
+    difficulty: str | None = None
+    language: str | None = None
+
+
+@app.patch("/api/v1/courses/{course_id}")
+def update_course(
+    course_id: str,
+    req: CourseUpdateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_course(course_id, ctx, "write")
+    course = container.course_repository().update_course(
+        course_id,
+        title=req.title,
+        subtitle=req.subtitle,
+        audience=req.audience,
+        difficulty=req.difficulty,
+        language=req.language,
+    )
+    if course is None:
+        raise HTTPException(status_code=404, detail=f"课程不存在: {course_id}")
+    return course.model_dump()
+
+
+@app.delete("/api/v1/courses/{course_id}")
+def delete_course(
+    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_course(course_id, ctx, "write")
+    deleted = container.course_repository().delete_course(course_id, _tenant_of(ctx))
+    if deleted is None:
+        raise HTTPException(status_code=404, detail=f"课程不存在: {course_id}")
+    return {"course_id": course_id, "deleted": deleted}
+
+
+class LessonUpdateRequest(BaseModel):
+    title: str | None = None
+    learning_objectives: list[str] | None = None
+    prerequisites: list[str] | None = None
+    order_index: int | None = None
+    status: str | None = None
+
+
+@app.patch("/api/v1/lessons/{lesson_id}")
+def update_lesson(
+    lesson_id: str,
+    req: LessonUpdateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_lesson(lesson_id, ctx, "write")
+    lesson = container.course_repository().update_lesson(
+        lesson_id,
+        title=req.title,
+        learning_objectives=req.learning_objectives,
+        prerequisites=req.prerequisites,
+        status=req.status,
+        order_index=req.order_index,
+    )
+    if lesson is None:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}")
+    return lesson.model_dump()
+
+
+@app.delete("/api/v1/lessons/{lesson_id}")
+def delete_lesson(
+    lesson_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_lesson(lesson_id, ctx, "write")
+    deleted = container.course_repository().delete_lesson(lesson_id)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}")
+    return {
+        "lesson_id": lesson_id,
+        "deleted_versions": deleted["deleted_versions"],
+        "deleted_threads": deleted["deleted_threads"],
+    }
+
+
+class LessonReorderRequest(BaseModel):
+    lesson_ids: list[str] = Field(default_factory=list)
+
+
+@app.post("/api/v1/courses/{course_id}/lessons/reorder")
+def reorder_lessons(
+    course_id: str,
+    req: LessonReorderRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_course(course_id, ctx, "write")
+    repository = container.course_repository()
+    known = {lesson.id for lesson in repository.list_lessons(course_id)}
+    unknown = [item for item in req.lesson_ids if item not in known]
+    if unknown:
+        raise HTTPException(
+            status_code=400, detail=f"讲次不属于该课程: {', '.join(unknown[:3])}"
+        )
+    lessons = repository.reorder_lessons(course_id, req.lesson_ids)
+    return {
+        "course_id": course_id,
+        "count": len(lessons),
+        "lessons": [lesson.model_dump() for lesson in lessons],
+    }
+
+
+class LongformUpdateRequest(BaseModel):
+    title: str | None = None
+    profile: dict[str, Any] | None = None
+    target_words: int | None = Field(default=None, ge=200, le=50000)
+
+
+@app.patch("/api/v1/longforms/{longform_id}")
+def update_longform(
+    longform_id: str,
+    req: LongformUpdateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_longform(longform_id, ctx, "write")
+    try:
+        updated = container.longform().update_meta(
+            longform_id,
+            title=req.title,
+            profile=req.profile,
+            target_words=req.target_words,
+        )
+    except LongformNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return updated.model_dump()
+
+
+class LongformContentRequest(BaseModel):
+    content: str = ""
+    note: str | None = None
+    expected_version: int | None = None
+
+
+@app.post("/api/v1/longforms/{longform_id}/content")
+def save_longform_content(
+    longform_id: str,
+    req: LongformContentRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_longform(longform_id, ctx, "write")
+    try:
+        longform, version = container.longform().save_content(
+            longform_id,
+            req.content,
+            note=req.note,
+            expected_version=req.expected_version,
+        )
+    except VersionConflictError as exc:
+        return _conflict(exc)
+    except LongformNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "longform": longform.model_dump(),
+        "version": version.version,
+        "note": version.note,
+        "mode": version.mode,
+    }
+
+
+class LongformSectionCreateRequest(BaseModel):
+    title: str = Field(min_length=1)
+    summary: str = ""
+    target_words: int = Field(default=0, ge=0, le=1200)
+    after_id: str | None = None
+
+
+class LongformSectionUpdateRequest(BaseModel):
+    title: str | None = None
+    summary: str | None = None
+    target_words: int | None = Field(default=None, ge=0, le=1200)
+    content: str | None = None
+
+
+class LongformSectionReorderRequest(BaseModel):
+    section_ids: list[str] = Field(default_factory=list)
+
+
+@app.post("/api/v1/longforms/{longform_id}/sections/reorder")
+def reorder_longform_sections(
+    longform_id: str,
+    req: LongformSectionReorderRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_longform(longform_id, ctx, "write")
+    try:
+        updated = container.longform().reorder_sections(longform_id, req.section_ids)
+    except LongformNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return updated.model_dump()
+
+
+@app.post("/api/v1/longforms/{longform_id}/sections", status_code=201)
+def add_longform_section(
+    longform_id: str,
+    req: LongformSectionCreateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_longform(longform_id, ctx, "write")
+    try:
+        section, longform = container.longform().add_section(
+            longform_id,
+            req.title,
+            summary=req.summary,
+            target_words=req.target_words,
+            after_id=req.after_id,
+        )
+    except LongformSectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
+    except LongformNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"section": section.model_dump(), "longform": longform.model_dump()}
+
+
+@app.patch("/api/v1/longforms/{longform_id}/sections/{section_id}")
+def update_longform_section(
+    longform_id: str,
+    section_id: str,
+    req: LongformSectionUpdateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_longform(longform_id, ctx, "write")
+    try:
+        updated = container.longform().update_section(
+            longform_id,
+            section_id,
+            title=req.title,
+            summary=req.summary,
+            target_words=req.target_words,
+            content=req.content,
+        )
+    except LongformSectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
+    except LongformNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return updated.model_dump()
+
+
+@app.delete("/api/v1/longforms/{longform_id}/sections/{section_id}")
+def delete_longform_section(
+    longform_id: str,
+    section_id: str,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_longform(longform_id, ctx, "write")
+    try:
+        updated = container.longform().delete_section(longform_id, section_id)
+    except LongformSectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
+    except LongformNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return updated.model_dump()
+
+
+class CreationProfileCreateRequest(BaseModel):
+    name: str = Field(min_length=1)
+    genre: str = "article"
+    tone: str = ""
+    audience: str = ""
+    pov: str = ""
+    citation_policy: str = "optional"
+    target_words: int = Field(default=3000, ge=200, le=50000)
+    is_shared: bool = False
+
+
+class CreationProfileUpdateRequest(BaseModel):
+    name: str | None = None
+    genre: str | None = None
+    tone: str | None = None
+    audience: str | None = None
+    pov: str | None = None
+    citation_policy: str | None = None
+    target_words: int | None = Field(default=None, ge=200, le=50000)
+    is_shared: bool | None = None
+
+
+@app.get("/api/v1/creation-profiles")
+def list_creation_profiles(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    items = container.creation_profiles().list(_tenant_of(ctx), ctx.user.id)
+    return {"count": len(items), "profiles": items}
+
+
+@app.post("/api/v1/creation-profiles", status_code=201)
+def create_creation_profile(
+    req: CreationProfileCreateRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    try:
+        item = container.creation_profiles().create(
+            _tenant_of(ctx),
+            ctx.user.id,
+            name=req.name,
+            genre=req.genre,
+            tone=req.tone,
+            audience=req.audience,
+            pov=req.pov,
+            citation_policy=req.citation_policy,
+            target_words=req.target_words,
+            is_shared=req.is_shared,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return container.creation_profiles().payload(item, ctx.user.id)
+
+
+@app.patch("/api/v1/creation-profiles/{profile_id}")
+def update_creation_profile(
+    profile_id: str,
+    req: CreationProfileUpdateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    try:
+        item = container.creation_profiles().update(
+            profile_id,
+            _tenant_of(ctx),
+            ctx.user.id,
+            name=req.name,
+            genre=req.genre,
+            tone=req.tone,
+            audience=req.audience,
+            pov=req.pov,
+            citation_policy=req.citation_policy,
+            target_words=req.target_words,
+            is_shared=req.is_shared,
+        )
+    except CreationProfileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return container.creation_profiles().payload(item, ctx.user.id)
+
+
+@app.delete("/api/v1/creation-profiles/{profile_id}")
+def delete_creation_profile(
+    profile_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    try:
+        removed = container.creation_profiles().delete(
+            profile_id, _tenant_of(ctx), ctx.user.id
+        )
+    except CreationProfileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {"ok": bool(removed), "profile_id": profile_id}

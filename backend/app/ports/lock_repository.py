@@ -18,3 +18,6 @@ class LockRepository(Protocol):
 
     def delete_lock(self, lesson_id: str) -> None:
         ...
+
+    def delete_by_user(self, user_id: str) -> int:
+        ...

@@ -146,3 +146,23 @@ class TenantKindError(ValueError):
 
 class TenantSystemError(ValueError):
     pass
+
+
+class JobNotTerminalError(RuntimeError):
+    pass
+
+
+class UserDeleteForbiddenError(ValueError):
+    pass
+
+
+class CreationProfileNotFoundError(LookupError):
+    pass
+
+
+class SourceNotFoundError(LookupError):
+    pass
+
+
+class ThreadNotFoundError(LookupError):
+    pass

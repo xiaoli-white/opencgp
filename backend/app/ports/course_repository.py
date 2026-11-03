@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, Sequence, runtime_checkable
 
 from app.models.citation import Citation
 from app.models.course import Course, Lesson, LessonVersion
@@ -37,6 +37,22 @@ class CourseRepository(Protocol):
         ...
 
     def list_courses(self, tenant_id: str | None = None) -> list[Course]:
+        ...
+
+    def update_course(
+        self,
+        course_id: str,
+        title: str | None = None,
+        subtitle: str | None = None,
+        audience: str | None = None,
+        difficulty: str | None = None,
+        language: str | None = None,
+    ) -> Course | None:
+        ...
+
+    def delete_course(
+        self, course_id: str, tenant_id: str | None = None
+    ) -> dict[str, Any] | None:
         ...
 
     def create_lesson(
@@ -64,7 +80,16 @@ class CourseRepository(Protocol):
         learning_objectives: Sequence[str] | None = None,
         prerequisites: Sequence[str] | None = None,
         status: str | None = None,
+        order_index: int | None = None,
     ) -> Lesson | None:
+        ...
+
+    def delete_lesson(self, lesson_id: str) -> dict[str, int] | None:
+        ...
+
+    def reorder_lessons(
+        self, course_id: str, lesson_ids: Sequence[str]
+    ) -> list[Lesson]:
         ...
 
     def append_version(

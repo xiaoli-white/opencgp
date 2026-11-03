@@ -11,6 +11,7 @@ from app.models.generation import Evidence
 from app.models.longform import (
     MAX_SECTION_WORDS,
     SECTION_GENERATED,
+    SECTION_PLANNED,
     STATUS_COMPLETED,
     STATUS_DRAFT,
     Longform,
@@ -108,6 +109,173 @@ class LongformService:
 
     def delete(self, longform_id: str, tenant_id: str | None = None) -> bool:
         return self.repository.delete(longform_id, tenant_id)
+
+    def update_meta(
+        self,
+        longform_id: str,
+        title: str | None = None,
+        profile: Mapping[str, Any] | None = None,
+        target_words: int | None = None,
+    ) -> Longform:
+        longform = self._require(longform_id)
+        merged_profile: LongformProfile | None = None
+        if profile:
+            data = longform.profile.model_dump()
+            for key, value in dict(profile).items():
+                if value is not None:
+                    data[key] = value
+            merged_profile = LongformProfile(**data)
+        resolved_title = title.strip() if isinstance(title, str) and title.strip() else None
+        resolved_words = (
+            max(200, min(int(target_words), 50000)) if target_words is not None else None
+        )
+        updated = self.repository.update(
+            longform_id,
+            title=resolved_title,
+            profile=merged_profile.model_dump() if merged_profile else None,
+            target_words=resolved_words,
+        )
+        if updated is None:
+            raise LongformNotFoundError(longform_id)
+        return updated
+
+    def save_content(
+        self,
+        longform_id: str,
+        content: str,
+        note: str | None = None,
+        expected_version: int | None = None,
+    ) -> tuple[Longform, LongformVersion]:
+        longform = self._require(longform_id)
+        if expected_version is not None and int(expected_version) != longform.current_version:
+            raise VersionConflictError(int(expected_version), longform.current_version)
+        applied = self.repository.append_version(
+            longform_id,
+            content=content,
+            outline=longform.outline,
+            citations=longform.citations,
+            note=(note or "").strip() or "manual edit",
+            mode="manual",
+        )
+        if applied is None:
+            raise LongformNotFoundError(longform_id)
+        return applied
+
+    def add_section(
+        self,
+        longform_id: str,
+        title: str,
+        summary: str = "",
+        target_words: int = 0,
+        after_id: str | None = None,
+    ) -> tuple[OutlineSection, Longform]:
+        longform = self._require(longform_id)
+        resolved_title = (title or "").strip()
+        if not resolved_title:
+            raise ValueError("章节标题不能为空")
+        sections = list(longform.outline)
+        section = OutlineSection(
+            id=self._new_section_id(sections),
+            title=resolved_title,
+            summary=(summary or "").strip(),
+            target_words=max(0, min(int(target_words or 0), MAX_SECTION_WORDS)),
+        )
+        index = len(sections)
+        if after_id:
+            position = next(
+                (i for i, item in enumerate(sections) if item.id == after_id), None
+            )
+            if position is None:
+                raise LongformSectionNotFoundError(after_id)
+            index = position + 1
+        sections.insert(index, section)
+        updated = self._apply_sections(longform, sections, "section:add")
+        return section, updated
+
+    def update_section(
+        self,
+        longform_id: str,
+        section_id: str,
+        title: str | None = None,
+        summary: str | None = None,
+        target_words: int | None = None,
+        content: str | None = None,
+    ) -> Longform:
+        longform = self._require(longform_id)
+        sections: list[OutlineSection] = []
+        found = False
+        for item in longform.outline:
+            if item.id != section_id:
+                sections.append(item)
+                continue
+            found = True
+            updates: dict[str, Any] = {}
+            if isinstance(title, str) and title.strip():
+                updates["title"] = title.strip()
+            if summary is not None:
+                updates["summary"] = summary
+            if target_words is not None:
+                updates["target_words"] = max(
+                    0, min(int(target_words), MAX_SECTION_WORDS)
+                )
+            if content is not None:
+                updates["content"] = content
+                updates["status"] = SECTION_GENERATED if content.strip() else SECTION_PLANNED
+            sections.append(item.model_copy(update=updates) if updates else item)
+        if not found:
+            raise LongformSectionNotFoundError(section_id)
+        return self._apply_sections(longform, sections, "section:edit")
+
+    def delete_section(self, longform_id: str, section_id: str) -> Longform:
+        longform = self._require(longform_id)
+        if len(longform.outline) <= 1:
+            raise ValueError("至少保留一个章节")
+        sections = [item for item in longform.outline if item.id != section_id]
+        if len(sections) == len(longform.outline):
+            raise LongformSectionNotFoundError(section_id)
+        return self._apply_sections(longform, sections, "section:delete")
+
+    def reorder_sections(
+        self, longform_id: str, section_ids: Sequence[str]
+    ) -> Longform:
+        longform = self._require(longform_id)
+        by_id = {item.id: item for item in longform.outline}
+        ordered: list[OutlineSection] = []
+        seen: set[str] = set()
+        for section_id in section_ids:
+            item = by_id.get(str(section_id))
+            if item is None or item.id in seen:
+                continue
+            seen.add(item.id)
+            ordered.append(item)
+        ordered.extend(item for item in longform.outline if item.id not in seen)
+        return self._apply_sections(longform, ordered, "section:reorder")
+
+    def _apply_sections(
+        self,
+        longform: Longform,
+        sections: Sequence[OutlineSection],
+        note: str,
+    ) -> Longform:
+        applied = self.repository.append_version(
+            longform.id,
+            content=self._compose(longform, sections),
+            outline=sections,
+            citations=longform.citations,
+            note=note,
+            mode="manual",
+        )
+        if applied is None:
+            raise LongformNotFoundError(longform.id)
+        return applied[0]
+
+    @staticmethod
+    def _new_section_id(sections: Sequence[OutlineSection]) -> str:
+        known = {item.id for item in sections}
+        while True:
+            candidate = f"sec_{uuid.uuid4().hex[:8]}"
+            if candidate not in known:
+                return candidate
 
     async def generate_section(
         self,

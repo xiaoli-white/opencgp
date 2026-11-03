@@ -24,6 +24,7 @@ from app.models.auth import (
     USER_STATUS_ACTIVE,
     USER_STATUS_PENDING,
     USER_STATUS_REJECTED,
+    USER_STATUSES,
     AuthContext,
     CourseGrant,
     LongformGrant,
@@ -417,10 +418,67 @@ class AuthService:
         self.ensure_default()
         return self.repository.get_tenant(tenant_id)
 
-    def list_users(self, status: str = "", limit: int = 50) -> list[User]:
+    def list_users(self, status: str = "", limit: int = 50, q: str = "") -> list[User]:
         self.ensure_default()
         wanted = (status or "").strip().lower()
-        return self.repository.list_users(wanted, limit)
+        return self.repository.list_users(wanted, limit, q)
+
+    def admin_update_user(
+        self,
+        user_id: str,
+        display_name: str | None = None,
+        email: str | None = None,
+        status: str | None = None,
+        role: str | None = None,
+    ) -> User:
+        self.ensure_default()
+        current = self.repository.get_user(user_id)
+        if current is None:
+            raise AuthRequiredError("用户不存在")
+        next_email = None
+        if email is not None:
+            address = email.strip().lower()
+            if not EMAIL_PATTERN.match(address):
+                raise ValueError("邮箱格式不正确")
+            if address != current.email and self.repository.get_user_by_email(address):
+                raise EmailAlreadyRegisteredError("该邮箱已被占用")
+            next_email = address
+        next_status = None
+        if status is not None:
+            wanted = (status or "").strip().lower()
+            if wanted not in USER_STATUSES:
+                raise ValueError(f"未知状态: {wanted}")
+            next_status = wanted
+        next_name = None
+        if display_name is not None:
+            label = display_name.strip()
+            if not label:
+                raise ValueError("昵称不能为空")
+            next_name = label
+        updated = self.repository.update_user(
+            user_id,
+            display_name=next_name,
+            email=next_email,
+            status=next_status,
+        )
+        if updated is None:
+            raise AuthRequiredError("用户不存在")
+        if role is not None and role.strip():
+            key = self._validate_role_key(DEFAULT_TENANT_ID, role.strip())
+            existing = self.repository.get_membership(DEFAULT_TENANT_ID, user_id)
+            if existing is None:
+                self.repository.add_membership(DEFAULT_TENANT_ID, user_id, key)
+            else:
+                self.repository.update_membership_role(DEFAULT_TENANT_ID, user_id, key)
+        return updated
+
+    def set_password(self, user_id: str, new_password: str) -> None:
+        self.ensure_default()
+        if self.repository.get_user(user_id) is None:
+            raise AuthRequiredError("用户不存在")
+        if len(new_password or "") < 8:
+            raise ValueError("新密码至少 8 位")
+        self.repository.update_password_hash(user_id, hash_password(new_password))
 
     def approve_user(self, user_id: str) -> User:
         self.ensure_default()

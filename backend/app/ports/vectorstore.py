@@ -45,6 +45,16 @@ class VectorStore(Protocol):
         """删除某来源的全部分块，返回删除条数。"""
         ...
 
+    async def list_sources(self, tenant_id: str = "") -> list[dict]:
+        """列出某租户下的全部来源摘要。"""
+        ...
+
+    async def rename_source(
+        self, source_id: str, source_name: str, tenant_id: str = ""
+    ) -> bool:
+        """重命名来源（同时更新分块上的冗余名），返回是否命中。"""
+        ...
+
     def healthcheck(self) -> bool:
         """探活：能否对后端执行一次最小读写。"""
         ...

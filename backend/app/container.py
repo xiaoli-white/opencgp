@@ -36,6 +36,7 @@ from app.ports.research_repository import ResearchRepository
 from app.ports.longform_repository import LongformRepository
 from app.ports.job_repository import JobRepository
 from app.ports.job_queue import JobQueue
+from app.ports.creation_profile_repository import CreationProfileRepository
 from app.services.auth import AuthService
 from app.services.conversation import ConversationService
 from app.services.blueprint import BlueprintService
@@ -49,6 +50,8 @@ from app.services.user_providers import UserProviderService
 from app.services.research import ResearchService
 from app.services.longform import LongformService
 from app.services.jobs import JobService
+from app.services.creation_profiles import CreationProfileService
+from app.services.accounts import AccountAdminService
 
 PROVIDER_CACHE_SIZE = 64
 
@@ -493,6 +496,34 @@ class Container:
             )
 
         return self._get_or_build("job_service", build)
+
+    def creation_profile_repository(self) -> CreationProfileRepository:
+        def build() -> CreationProfileRepository:
+            from app.adapters.database.creation_profile_repository import (
+                DatabaseCreationProfileRepository,
+            )
+
+            return DatabaseCreationProfileRepository(database=self.database())
+
+        return self._get_or_build("creation_profile_repository", build)
+
+    def creation_profiles(self) -> CreationProfileService:
+        def build() -> CreationProfileService:
+            return CreationProfileService(repository=self.creation_profile_repository())
+
+        return self._get_or_build("creation_profiles", build)
+
+    def account_admin(self) -> AccountAdminService:
+        def build() -> AccountAdminService:
+            return AccountAdminService(
+                auth=self.auth_service(),
+                user_providers=self.user_provider_repository(),
+                provider_settings=self.provider_settings_repository(),
+                locks=self.lock_repository(),
+                conversations=self.conversation_repository(),
+            )
+
+        return self._get_or_build("account_admin", build)
 
     def conversation_repository(self) -> ConversationRepository:
         def build() -> ConversationRepository:

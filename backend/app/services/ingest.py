@@ -134,6 +134,14 @@ class IngestService:
     async def delete_source(self, source_id: str, tenant_id: str = "") -> int:
         return await self.vectorstore.delete_by_source(source_id, tenant_id=tenant_id)
 
+    async def list_sources(self, tenant_id: str = "") -> list[dict]:
+        return await self.vectorstore.list_sources(tenant_id)
+
+    async def rename_source(
+        self, source_id: str, source_name: str, tenant_id: str = ""
+    ) -> bool:
+        return await self.vectorstore.rename_source(source_id, source_name, tenant_id)
+
     def _build_chunks(
         self,
         text: str,
@@ -144,7 +152,7 @@ class IngestService:
         chunk_meta = {
             key: value
             for key, value in meta.items()
-            if key in {"filename", "parser", "pages", "sha256"}
+            if key in {"filename", "parser", "pages", "sha256", "object_key"}
         }
         chunks: list[Chunk] = []
         for index, (start, end, body) in enumerate(

@@ -208,13 +208,20 @@ class DatabaseAuthRepository(AuthRepository):
         )
         return True
 
-    def list_users(self, status: str = "", limit: int = 50) -> list[User]:
+    def list_users(
+        self, status: str = "", limit: int = 50, q: str = ""
+    ) -> list[User]:
         self.ensure_schema()
         clauses: list[str] = []
         params: list[Any] = []
         if status:
             clauses.append("status = ?")
             params.append(status)
+        keyword = (q or "").strip().lower()
+        if keyword:
+            clauses.append("(lower(email) LIKE ? OR lower(display_name) LIKE ?)")
+            like = f"%{keyword}%"
+            params.extend([like, like])
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(max(1, int(limit)))
         rows = self.database.fetchall(
@@ -222,6 +229,26 @@ class DatabaseAuthRepository(AuthRepository):
             tuple(params),
         )
         return [_to_user(row) for row in rows]
+
+    def delete_user(self, user_id: str) -> bool:
+        self.ensure_schema()
+        if self.get_user(user_id) is None:
+            return False
+        self.database.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        return True
+
+    def delete_memberships_by_user(self, user_id: str) -> int:
+        self.ensure_schema()
+        rows = self.database.fetchall(
+            "SELECT COUNT(*) AS total FROM memberships WHERE user_id = ?", (user_id,)
+        )
+        removed = int(rows[0]["total"]) if rows and rows[0]["total"] is not None else 0
+        self.database.execute("DELETE FROM memberships WHERE user_id = ?", (user_id,))
+        self.database.execute("DELETE FROM course_grants WHERE user_id = ?", (user_id,))
+        self.database.execute(
+            "DELETE FROM longform_grants WHERE user_id = ?", (user_id,)
+        )
+        return removed
 
     def count_users(self, exclude_ids: Sequence[str] = ()) -> int:
         self.ensure_schema()

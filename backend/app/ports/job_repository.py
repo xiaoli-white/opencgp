@@ -48,3 +48,6 @@ class JobRepository(Protocol):
 
     def counts(self, tenant_id: str | None = None) -> dict[str, int]:
         ...
+
+    def delete(self, job_id: str) -> bool:
+        ...

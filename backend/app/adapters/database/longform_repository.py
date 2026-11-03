@@ -124,6 +124,9 @@ class DatabaseLongformRepository(LongformRepository):
         status: str | None = None,
         last_mode: str | None = None,
         citations: Sequence[Citation] | None = None,
+        title: str | None = None,
+        profile: dict[str, Any] | None = None,
+        target_words: int | None = None,
     ) -> Longform | None:
         self.ensure_schema()
         current = self.get(longform_id)
@@ -146,6 +149,15 @@ class DatabaseLongformRepository(LongformRepository):
         if citations is not None:
             sets.append("citations_json = ?")
             params.append(_dump_citations(citations))
+        if title is not None:
+            sets.append("title = ?")
+            params.append(title)
+        if profile is not None:
+            sets.append("profile_json = ?")
+            params.append(json.dumps(dict(profile), ensure_ascii=False))
+        if target_words is not None:
+            sets.append("target_words = ?")
+            params.append(int(target_words))
         params.append(longform_id)
         self.database.execute(
             f"UPDATE longforms SET {', '.join(sets)} WHERE id = ?", tuple(params)

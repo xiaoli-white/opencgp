@@ -228,6 +228,14 @@ class DatabaseJobRepository:
             counts[str(row["status"])] = int(row["total"] or 0)
         return counts
 
+    def delete(self, job_id: str) -> bool:
+        self.ensure_schema()
+        row = self.database.fetchone("SELECT id FROM jobs WHERE id = ?", (job_id,))
+        if row is None:
+            return False
+        self.database.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+        return True
+
 
 def _job_from_row(row: Mapping[str, Any]) -> Job:
     payload_raw = str(row.get("payload_json") or "{}")

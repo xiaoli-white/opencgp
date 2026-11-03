@@ -33,13 +33,21 @@ class AuthRepository(Protocol):
     def update_password_hash(self, user_id: str, password_hash: str) -> bool:
         ...
 
-    def list_users(self, status: str = "", limit: int = 50) -> list[User]:
+    def list_users(
+        self, status: str = "", limit: int = 50, q: str = ""
+    ) -> list[User]:
         ...
 
     def count_users(self, exclude_ids: Sequence[str] = ()) -> int:
         ...
 
     def get_password_hash(self, user_id: str) -> str:
+        ...
+
+    def delete_user(self, user_id: str) -> bool:
+        ...
+
+    def delete_memberships_by_user(self, user_id: str) -> int:
         ...
 
     def get_user(self, user_id: str) -> User | None:

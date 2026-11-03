@@ -23,7 +23,11 @@ from app.models.job import (
     Job,
     is_terminal,
 )
-from app.services.errors import JobNotFoundError, UnsupportedJobKindError
+from app.services.errors import (
+    JobNotFoundError,
+    JobNotTerminalError,
+    UnsupportedJobKindError,
+)
 
 STAGE_START = 0.05
 STAGE_DONE = 0.95
@@ -137,6 +141,13 @@ class JobService:
 
     def counts(self, tenant_id: str | None = None) -> dict[str, int]:
         return self.repository.counts(tenant_id)
+
+    def delete(self, job_id: str, tenant_id: str | None = None) -> Job:
+        job = self.require(job_id, tenant_id)
+        if not is_terminal(job.status):
+            raise JobNotTerminalError("任务尚未结束，无法删除")
+        self.repository.delete(job.id)
+        return job
 
     def recover_stale(self) -> int:
         return int(self.repository.recover_stale())

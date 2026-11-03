@@ -201,6 +201,15 @@ class DatabaseLockRepository(LockRepository):
             "DELETE FROM lesson_locks WHERE lesson_id = ?", (lesson_id,)
         )
 
+    def delete_by_user(self, user_id: str) -> int:
+        self.ensure_schema()
+        row = self.database.fetchone(
+            "SELECT COUNT(*) AS total FROM lesson_locks WHERE user_id = ?", (user_id,)
+        )
+        removed = int(row["total"]) if row and row["total"] is not None else 0
+        self.database.execute("DELETE FROM lesson_locks WHERE user_id = ?", (user_id,))
+        return removed
+
 
 def _limits_from_row(row: Mapping[str, Any]) -> QuotaLimits:
     return QuotaLimits(
