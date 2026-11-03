@@ -28,6 +28,7 @@ import {
   type Lesson,
 } from "@/lib/api";
 import { formatRelative, modeLabel } from "@/lib/format";
+import { useSession } from "@/components/auth/SessionProvider";
 import ModePicker from "@/components/course/ModePicker";
 import LearningPathTimeline from "@/components/blueprint/LearningPathTimeline";
 import GlossaryGrid from "@/components/blueprint/GlossaryGrid";
@@ -53,6 +54,8 @@ export default function BlueprintBoard({
   onError,
   onProgressRefresh,
 }: BlueprintBoardProps) {
+  const { can } = useSession();
+  const readOnly = !can("write");
   const [blueprint, setBlueprint] = useState<Blueprint | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -198,7 +201,8 @@ export default function BlueprintBoard({
         <button
           type="button"
           onClick={() => void runGenerate()}
-          disabled={generating}
+          disabled={readOnly || generating}
+          title={readOnly ? "当前角色只读" : ""}
           className="btn btn-primary"
         >
           {generating ? (
@@ -406,7 +410,8 @@ export default function BlueprintBoard({
           <button
             type="button"
             onClick={() => void handleApply()}
-            disabled={applying}
+            disabled={readOnly || applying}
+            title={readOnly ? "当前角色只读" : ""}
             className="btn btn-primary"
           >
             {applying ? (
@@ -419,7 +424,8 @@ export default function BlueprintBoard({
           <button
             type="button"
             onClick={() => setRegenerateOpen((value) => !value)}
-            disabled={generating}
+            disabled={readOnly || generating}
+            title={readOnly ? "当前角色只读" : ""}
             className="btn btn-ghost"
           >
             {generating ? (
@@ -432,6 +438,8 @@ export default function BlueprintBoard({
           <button
             type="button"
             onClick={() => setEditingGlossary((value) => !value)}
+            disabled={readOnly}
+            title={readOnly ? "当前角色只读" : ""}
             className="btn btn-ghost"
           >
             <Pencil size={14} />

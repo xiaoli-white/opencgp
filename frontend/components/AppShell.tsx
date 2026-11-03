@@ -1,27 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
   BookOpen,
   LayoutGrid,
   Library,
+  LogOut,
   Menu,
   Plus,
+  ShieldCheck,
   Sparkles,
+  Users,
   X,
 } from "lucide-react";
 import clsx from "clsx";
 import { useCallback, useEffect, useState } from "react";
 import { api, type Course } from "@/lib/api";
 import { difficultyLabel } from "@/lib/format";
+import { ROLE_LABEL } from "@/lib/session";
 import ThemeToggle from "@/components/ThemeToggle";
+import { useSession } from "@/components/auth/SessionProvider";
 
 const NAV_ITEMS = [
   { href: "/", label: "课程工作台", icon: LayoutGrid },
   { href: "/kb", label: "知识库", icon: Library },
+  { href: "/settings", label: "成员与配额", icon: Users },
 ];
 
 type Status = "checking" | "online" | "degraded" | "offline";
@@ -34,6 +40,12 @@ type SidebarProps = {
 };
 
 function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
+  const { me, role, tenant, tenantName, tenants, switchTenant, logout } = useSession();
+
+  const displayName = me?.user.display_name || me?.user.email || "本地用户";
+  const initial = displayName.slice(0, 1).toUpperCase();
+  const roleText = role ? ROLE_LABEL[role] : "只读";
+
   const statusText =
     status === "online"
       ? "后端已连接"
@@ -152,7 +164,54 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
       </div>
 
       <div className="mt-3 rounded-2xl border border-white/50 bg-white/40 p-3 dark:border-white/10 dark:bg-white/[0.04]">
-        <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+        <div className="flex items-center gap-2.5">
+          <span className="brand-gradient grid h-8 w-8 shrink-0 place-items-center rounded-full text-[12px] font-semibold text-white">
+            {initial}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[12px] font-medium text-slate-800 dark:text-slate-100">
+              {displayName}
+            </span>
+            <span className="mt-0.5 flex items-center gap-1">
+              <span className="chip-muted">
+                <ShieldCheck size={10} />
+                {roleText}
+              </span>
+            </span>
+          </span>
+          {me ? (
+            <button
+              type="button"
+              onClick={() => void logout()}
+              aria-label="退出登录"
+              className="btn-quiet px-1.5"
+            >
+              <LogOut size={13} />
+            </button>
+          ) : null}
+        </div>
+
+        <label className="mt-2.5 block">
+          <span className="mb-1 block text-[10px] uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
+            空间
+          </span>
+          <select
+            value={tenant}
+            onChange={(event) => switchTenant(event.target.value)}
+            className="select w-full py-1.5 text-[11px]"
+          >
+            {(tenants.length > 0
+              ? tenants
+              : [{ id: tenant || "default", name: tenantName || "默认空间", role: role ?? "viewer" }]
+            ).map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name} · {ROLE_LABEL[item.role] ?? item.role}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="mt-2.5 flex items-center gap-2 border-t border-white/50 pt-2 text-[11px] text-slate-500 dark:border-white/10 dark:text-slate-400">
           <span className={clsx("h-1.5 w-1.5 rounded-full", statusColor)} />
           <Activity size={12} />
           <span>{statusText}</span>
@@ -167,6 +226,8 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { authMode } = useSession();
   const [courses, setCourses] = useState<Course[]>([]);
   const [status, setStatus] = useState<Status>("checking");
   const [drawer, setDrawer] = useState(false);
@@ -203,6 +264,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   useEffect(() => {
+    const handler = () => {
+      if (authMode === "required") router.push("/login");
+    };
+    window.addEventListener("course-studio:auth-required", handler);
+    return () =>
+      window.removeEventListener("course-studio:auth-required", handler);
+  }, [authMode, router]);
+
+
+  useEffect(() => {
     document.body.style.overflow = drawer ? "hidden" : "";
     return () => {
       document.body.style.overflow = "";
@@ -213,13 +284,26 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     (course) => pathname === `/courses/${course.id}`,
   );
 
-  const title = pathname === "/" ? "课程工作台" : pathname === "/kb" ? "知识库" : activeCourse?.title ?? "课程";
+  const title =
+    pathname === "/"
+      ? "课程工作台"
+      : pathname === "/kb"
+        ? "知识库"
+        : pathname === "/settings"
+          ? "成员与配额"
+          : activeCourse?.title ?? "课程";
   const subtitle =
     pathname === "/"
       ? "从主题到成体系课程，逐讲生成、随时追问"
       : pathname === "/kb"
         ? "上传资料，作为写作与追问的证据底座"
-        : activeCourse?.subtitle || "大纲 · 阅读 · 追问 · 版本";
+        : pathname === "/settings"
+          ? "空间成员角色与用量配额"
+          : activeCourse?.subtitle || "大纲 · 阅读 · 追问 · 版本";
+
+  if (pathname === "/login") {
+    return <main className="min-h-screen px-4 py-6">{children}</main>;
+  }
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-[1680px]">
@@ -248,9 +332,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 {subtitle}
               </p>
             </div>
-            <Link href="/" className="btn-quiet hidden sm:inline-flex">
-              <Plus size={14} />
-              新课程
+            <Link href="/settings" className="btn-quiet hidden lg:inline-flex">
+              <Users size={14} />
+              成员
             </Link>
             <Link href="/kb" className="btn-quiet hidden md:inline-flex">
               <Library size={14} />

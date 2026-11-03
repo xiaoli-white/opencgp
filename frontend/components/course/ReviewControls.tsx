@@ -19,6 +19,7 @@ import {
   type LessonReview,
 } from "@/lib/api";
 import { formatRelative } from "@/lib/format";
+import { useSession } from "@/components/auth/SessionProvider";
 
 type ReviewControlsProps = {
   lesson: Lesson;
@@ -35,6 +36,8 @@ export default function ReviewControls({
   onNotice,
   onError,
 }: ReviewControlsProps) {
+  const { can } = useSession();
+  const readOnly = !can("review");
   const [reviews, setReviews] = useState<LessonReview[]>([]);
   const [busy, setBusy] = useState<"approve" | "request_revision" | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -114,8 +117,8 @@ export default function ReviewControls({
           <button
             type="button"
             onClick={() => void submit("approve")}
-            disabled={!hasContent || busy !== null}
-            title={hasContent ? "通过本讲审核" : "先生成本讲正文再审核"}
+            disabled={readOnly || !hasContent || busy !== null}
+            title={readOnly ? "当前角色只读" : hasContent ? "通过本讲审核" : "先生成本讲正文再审核"}
             className={clsx(
               "inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[11.5px] font-medium ring-1 transition",
               hasContent
@@ -133,7 +136,8 @@ export default function ReviewControls({
           <button
             type="button"
             onClick={() => setNoteOpen((value) => !value)}
-            disabled={busy !== null}
+            disabled={readOnly || busy !== null}
+            title={readOnly ? "当前角色只读" : ""}
             className="inline-flex items-center gap-1 rounded-full bg-amber-400/18 px-3 py-1.5 text-[11.5px] font-medium text-amber-700 ring-1 ring-amber-500/30 transition hover:bg-amber-400/26 disabled:opacity-50 dark:bg-amber-300/14 dark:text-amber-300 dark:ring-amber-300/25 dark:hover:bg-amber-300/20"
           >
             <MessageSquareWarning size={12} />
@@ -181,7 +185,8 @@ export default function ReviewControls({
                 <button
                   type="button"
                   onClick={() => void submit("request_revision")}
-                  disabled={busy !== null}
+                  disabled={readOnly || busy !== null}
+                  title={readOnly ? "当前角色只读" : ""}
                   className="btn btn-primary !px-3 !py-1.5 text-[11px]"
                 >
                   {busy === "request_revision" ? (

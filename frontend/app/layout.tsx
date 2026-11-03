@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { Suspense } from "react";
 import AppShell from "@/components/AppShell";
+import { SessionProvider } from "@/components/auth/SessionProvider";
 
 export const metadata: Metadata = {
   title: "AI 课程工作室 · 对话即作者",
@@ -22,7 +24,11 @@ export default function RootLayout({
       </head>
       <body>
         <div className="app-backdrop" aria-hidden />
-        <AppShell>{children}</AppShell>
+        <SessionProvider>
+          <Suspense fallback={null}>
+            <AppShell>{children}</AppShell>
+          </Suspense>
+        </SessionProvider>
       </body>
     </html>
   );

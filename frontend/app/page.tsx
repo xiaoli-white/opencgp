@@ -15,10 +15,12 @@ import {
 } from "lucide-react";
 import { api, type Course } from "@/lib/api";
 import { difficultyLabel, formatRelative } from "@/lib/format";
+import { useSession } from "@/components/auth/SessionProvider";
 
 const FLOW = ["建课", "建讲", "检索取证", "逐讲生成", "追问 / 改版", "版本回滚"];
 
 export default function HomePage() {
+  const { can, role } = useSession();
   const router = useRouter();
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,6 +104,8 @@ export default function HomePage() {
             <button
               type="button"
               onClick={() => setFormOpen(true)}
+              disabled={!can("write")}
+              title={can("write") ? "" : "当前角色只读"}
               className="btn btn-primary"
             >
               <Plus size={15} />

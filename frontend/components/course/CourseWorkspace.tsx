@@ -42,6 +42,7 @@ import ModePicker from "@/components/course/ModePicker";
 import BlueprintBoard from "@/components/blueprint/BlueprintBoard";
 import ReviewControls from "@/components/course/ReviewControls";
 import StatusBadge from "@/components/course/StatusBadge";
+import { useSession } from "@/components/auth/SessionProvider";
 
 type WorkspaceView = "reader" | "blueprint" | "continuous";
 
@@ -52,6 +53,11 @@ const VIEWS: { value: WorkspaceView; label: string; icon: typeof BookOpen }[] = 
 ];
 
 export default function CourseWorkspace({ courseId }: { courseId: string }) {
+  const { can } = useSession();
+  const readOnly = !can("write");
+  const guard = readOnly
+    ? { disabled: true, title: "当前角色只读" }
+    : {};
   const [detail, setDetail] = useState<CourseDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -370,8 +376,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           </div>
           <button
             type="button"
+            {...guard}
             onClick={() => setChatOpen(true)}
-            disabled={!activeLesson}
+            disabled={readOnly || !activeLesson}
             className="btn btn-primary"
           >
             <MessageSquare size={14} />
@@ -379,6 +386,12 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           </button>
         </div>
       </div>
+
+      {readOnly ? (
+        <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+          你以 只读 身份访问该空间，可浏览与阅读，写入类操作已禁用。
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="inline-flex items-center gap-0.5 rounded-full border border-slate-200/70 bg-white/50 p-0.5 shadow-[0_10px_26px_-24px_rgba(99,102,241,0.9)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.05]">
@@ -592,8 +605,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
+                    {...guard}
                     onClick={() => setGenerateOpen((value) => !value)}
-                    disabled={generating}
+                    disabled={readOnly || generating}
                     className="btn btn-primary"
                   >
                     {generating ? (
@@ -632,7 +646,13 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     className="overflow-hidden"
                   >
                     <div className="mt-4 rounded-2xl border border-indigo-200/60 bg-indigo-500/5 p-4 dark:border-indigo-400/20 dark:bg-indigo-400/5">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
+                      {readOnly ? (
+        <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+          你以 只读 身份访问该空间，可浏览与阅读，写入类操作已禁用。
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-[11px] font-medium text-indigo-600 dark:text-indigo-300">
                           {generateMode === "loose"
                             ? "非严格模式：先检索证据，允许模型自由写作，正文标注由大模型编写"
@@ -667,8 +687,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                         </select>
                         <button
                           type="button"
+                          {...guard}
                           onClick={runGenerate}
-                          disabled={generating}
+                          disabled={readOnly || generating}
                           className="btn btn-primary"
                         >
                           {generating ? (
@@ -743,7 +764,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     <div className="mt-4 flex flex-wrap justify-center gap-2">
                       <button
                         type="button"
+                        {...guard}
                         onClick={() => setGenerateOpen(true)}
+                        disabled={readOnly}
                         className="btn btn-primary"
                       >
                         <Sparkles size={14} />

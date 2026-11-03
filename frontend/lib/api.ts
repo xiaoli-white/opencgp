@@ -1,6 +1,90 @@
+import {
+  AUTH_REQUIRED_EVENT,
+  getTenantId,
+  getToken,
+  type Role,
+} from "@/lib/session";
+
 export const API_BASE = (
   process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"
 ).replace(/\/+$/, "");
+
+export type AuthUser = {
+  id: string;
+  email: string;
+  display_name: string;
+  created_at: number;
+  is_active?: boolean;
+};
+
+export type TenantInfo = {
+  id: string;
+  name: string;
+  slug?: string;
+  plan?: string;
+};
+
+export type TenantRef = TenantInfo | string;
+
+export type AuthTenant = {
+  tenant: TenantRef;
+  role: Role;
+};
+
+export function tenantId(value: TenantRef | null | undefined): string {
+  if (!value) return "";
+  return typeof value === "string" ? value : value.id ?? "";
+}
+
+export function tenantName(value: TenantRef | null | undefined): string {
+  if (!value) return "";
+  return typeof value === "string" ? value : value.name || value.slug || value.id || "";
+}
+
+export type AuthMode = "disabled" | "required";
+
+export type MeResponse = {
+  user: AuthUser;
+  tenant: TenantRef;
+  role: Role;
+  tenants: AuthTenant[];
+  auth_mode: AuthMode;
+};
+
+export type AuthPayload = {
+  token: string;
+  user: AuthUser;
+  tenants: AuthTenant[];
+};
+
+export type TenantList = {
+  count: number;
+  tenants: AuthTenant[];
+};
+
+export type Member = {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  role: Role;
+  created_at: number;
+  user_email: string;
+  user_display_name: string;
+};
+
+export type QuotaUsage = {
+  monthly_generations: number;
+  monthly_uploads: number;
+  storage_bytes: number;
+};
+
+export type Quota = {
+  tenant_id: string;
+  period: string;
+  limits: QuotaUsage;
+  usage: QuotaUsage & { period?: string };
+  remaining: QuotaUsage;
+};
 
 export type Citation = {
   source_id: string;
@@ -243,12 +327,26 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+type RequestOptions = {
+  anonymous?: boolean;
+};
+
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  options: RequestOptions = {},
+): Promise<T> {
   const headers: Record<string, string> = {
     ...(init.headers as Record<string, string> | undefined),
   };
   if (init.body && !(init.body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
+  }
+  if (!options.anonymous) {
+    const token = getToken();
+    const tenantId = getTenantId();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (tenantId) headers["X-Tenant-Id"] = tenantId;
   }
   let response: Response;
   try {
@@ -278,6 +376,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       }
     } catch {
       message = `${message} ${response.statusText}`.trim();
+    }
+    if (response.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
     }
     throw new ApiError(message, response.status);
   }
@@ -470,4 +571,58 @@ export const api = {
       count: number;
       reviews: LessonReview[];
     }>(`/api/v1/lessons/${lessonId}/reviews`),
+
+  register: (payload: {
+    email: string;
+    password: string;
+    display_name: string;
+  }) =>
+    request<AuthPayload>(
+      "/api/v1/auth/register",
+      { method: "POST", body: JSON.stringify(payload) },
+      { anonymous: true },
+    ),
+
+  login: (payload: { email: string; password: string }) =>
+    request<AuthPayload>(
+      "/api/v1/auth/login",
+      { method: "POST", body: JSON.stringify(payload) },
+      { anonymous: true },
+    ),
+
+  logout: () => request<{ ok: boolean }>("/api/v1/auth/logout", { method: "POST" }),
+
+  getMe: () => request<MeResponse>("/api/v1/auth/me"),
+
+  listTenants: () => request<TenantList>("/api/v1/tenants"),
+
+  listMembers: (tenantId: string) =>
+    request<{ count: number; members: Member[] }>(
+      `/api/v1/tenants/${tenantId}/members`,
+    ),
+
+  addMember: (tenantId: string, payload: { email: string; role: Role }) =>
+    request<Member>(`/api/v1/tenants/${tenantId}/members`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateMemberRole: (tenantId: string, userId: string, role: Role) =>
+    request<Member>(`/api/v1/tenants/${tenantId}/members/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    }),
+
+  removeMember: (tenantId: string, userId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/tenants/${tenantId}/members/${userId}`, {
+      method: "DELETE",
+    }),
+
+  getQuota: () => request<Quota>("/api/v1/quotas"),
+
+  updateQuota: (payload: QuotaUsage) =>
+    request<Quota>("/api/v1/quotas", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
 };
