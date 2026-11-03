@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -36,6 +37,14 @@ app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="AI 课程工作室 · 以对话为中心、以课程为活文档的创作工作台",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
