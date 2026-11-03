@@ -5,7 +5,8 @@ export type RoleAction =
   | "write"
   | "review"
   | "manage_members"
-  | "manage_quota";
+  | "manage_quota"
+  | "manage_server";
 
 export const SESSION_EVENT = "course-studio:session";
 export const AUTH_REQUIRED_EVENT = "course-studio:auth-required";
@@ -26,6 +27,7 @@ const NEEDED: Record<RoleAction, number> = {
   review: 2,
   manage_members: 3,
   manage_quota: 3,
+  manage_server: 4,
 };
 
 export const ROLE_LABEL: Record<Role, string> = {

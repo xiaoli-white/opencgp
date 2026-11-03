@@ -24,6 +24,7 @@ import {
 } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
 import ProviderCard from "@/components/settings/ProviderCard";
+import ServerProvidersCard from "@/components/settings/ServerProvidersCard";
 import type { RoleAction } from "@/lib/session";
 
 const ACTIONS: { value: RoleAction; label: string }[] = [
@@ -32,6 +33,7 @@ const ACTIONS: { value: RoleAction; label: string }[] = [
   { value: "review", label: "审核" },
   { value: "manage_members", label: "成员管理" },
   { value: "manage_quota", label: "配额管理" },
+  { value: "manage_server", label: "服务器管理" },
 ];
 
 const ACTION_LABEL: Record<string, string> = {
@@ -40,6 +42,7 @@ const ACTION_LABEL: Record<string, string> = {
   review: "审核",
   manage_members: "成员管理",
   manage_quota: "配额管理",
+  manage_server: "服务器管理",
 };
 
 function formatBytes(value: number): string {
@@ -70,6 +73,7 @@ export default function SettingsPage() {
   const { tenant, role, roleName, can, refresh } = useSession();
   const canManage = can("manage_members");
   const canQuota = can("manage_quota");
+  const canServer = can("manage_server");
 
   const [members, setMembers] = useState<Member[]>([]);
   const [roles, setRoles] = useState<RoleRecord[]>([]);
@@ -291,7 +295,8 @@ export default function SettingsPage() {
       ) : null}
 
       <ProviderCard
-        canWrite={canManage}
+        canWrite={can("write")}
+        canManageServer={canServer}
         onNotice={(message) => {
           setError("");
           setNotice(message);
@@ -301,6 +306,20 @@ export default function SettingsPage() {
           setError(message);
         }}
       />
+
+      {canServer ? (
+        <ServerProvidersCard
+          canManage={canServer}
+          onNotice={(message) => {
+            setError("");
+            setNotice(message);
+          }}
+          onError={(message) => {
+            setNotice("");
+            setError(message);
+          }}
+        />
+      ) : null}
 
       <motion.section
         initial={{ opacity: 0, y: 10 }}

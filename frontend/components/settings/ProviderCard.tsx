@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertCircle,
+  ArrowDown,
   CheckCircle2,
   Cpu,
   Eye,
@@ -13,32 +14,26 @@ import {
   Zap,
 } from "lucide-react";
 import clsx from "clsx";
-import { api, type ProviderSettings } from "@/lib/api";
+import { api, type ProviderOption, type ProviderSettings } from "@/lib/api";
 
 type Props = {
   canWrite: boolean;
+  canManageServer: boolean;
   onNotice: (message: string) => void;
   onError: (message: string) => void;
 };
 
 type FormState = {
-  backend: string;
-  base_url: string;
+  provider_id: string;
   model: string;
   api_key: string;
   temperature: string;
   max_tokens: string;
 };
 
-const BACKENDS = [
-  { value: "openai_compat", label: "openai_compat" },
-  { value: "dummy", label: "dummy" },
-];
-
 function toForm(data: ProviderSettings): FormState {
   return {
-    backend: data.backend || "openai_compat",
-    base_url: data.base_url || "",
+    provider_id: data.provider_id || data.server?.provider_id || data.server?.id || "",
     model: data.model || "",
     api_key: "",
     temperature: String(data.temperature ?? 0.7),
@@ -46,7 +41,12 @@ function toForm(data: ProviderSettings): FormState {
   };
 }
 
-export default function ProviderCard({ canWrite, onNotice, onError }: Props) {
+export default function ProviderCard({
+  canWrite,
+  canManageServer,
+  onNotice,
+  onError,
+}: Props) {
   const [data, setData] = useState<ProviderSettings | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -62,7 +62,7 @@ export default function ProviderCard({ canWrite, onNotice, onError }: Props) {
       setData(next);
       setForm(toForm(next));
     } catch (err) {
-      onError(err instanceof Error ? err.message : "模型服务配置加载失败");
+      onError(err instanceof Error ? err.message : "模型配置加载失败");
     } finally {
       setLoading(false);
     }
@@ -72,8 +72,34 @@ export default function ProviderCard({ canWrite, onNotice, onError }: Props) {
     void load();
   }, [load]);
 
+  const providers: ProviderOption[] = useMemo(
+    () => data?.providers ?? [],
+    [data],
+  );
+
+  const activeProvider = useMemo(() => {
+    if (!providers.length) return null;
+    return (
+      providers.find((item) => item.id === form?.provider_id) ??
+      providers.find((item) => item.is_default) ??
+      providers[0]
+    );
+  }, [providers, form?.provider_id]);
+
+  const modelOptions = activeProvider?.models ?? [];
+  const useModelSelect = modelOptions.length > 0;
+
   const update = (patch: Partial<FormState>) =>
     setForm((prev) => (prev ? { ...prev, ...patch } : prev));
+
+  const pickProvider = (providerId: string) => {
+    const target = providers.find((item) => item.id === providerId);
+    const first = target?.models?.[0] ?? "";
+    update({
+      provider_id: providerId,
+      model: first || (form && target?.models?.length === 0 ? "" : form?.model ?? ""),
+    });
+  };
 
   const save = useCallback(async () => {
     if (!form) return null;
@@ -81,8 +107,7 @@ export default function ProviderCard({ canWrite, onNotice, onError }: Props) {
     setTest(null);
     try {
       const payload = {
-        backend: form.backend,
-        base_url: form.base_url.trim(),
+        provider_id: form.provider_id || undefined,
         model: form.model.trim(),
         api_key: form.api_key.trim(),
         temperature: Number(form.temperature) || 0,
@@ -91,7 +116,7 @@ export default function ProviderCard({ canWrite, onNotice, onError }: Props) {
       const next = await api.saveProviderSettings(payload);
       setData(next);
       setForm(toForm(next));
-      onNotice("模型服务配置已保存");
+      onNotice("模型配置已保存");
       return next;
     } catch (err) {
       onError(err instanceof Error ? err.message : "保存失败");
@@ -107,11 +132,11 @@ export default function ProviderCard({ canWrite, onNotice, onError }: Props) {
     try {
       const saved = await save();
       if (!saved) return;
-      const result = await api.testProvider();
+      const result = await api.testProvider({ model: saved.model || undefined });
       setTest({
         ok: result.ok,
         text: result.ok
-          ? `连接正常 · ${result.latency_ms}ms · ${result.model || saved.model}`
+          ? `连接正常 · ${result.latency_ms}ms · ${result.model || saved.model || "默认模型"}`
           : result.detail || "连接失败",
       });
     } catch (err) {
@@ -131,7 +156,7 @@ export default function ProviderCard({ canWrite, onNotice, onError }: Props) {
       const next = await api.resetProviderSettings();
       setData(next);
       setForm(toForm(next));
-      onNotice("已恢复服务器默认模型服务");
+      onNotice("已恢复服务器默认模型");
     } catch (err) {
       onError(err instanceof Error ? err.message : "恢复失败");
     } finally {
@@ -143,21 +168,30 @@ export default function ProviderCard({ canWrite, onNotice, onError }: Props) {
   const server = data?.server;
   const keyPlaceholder =
     data?.has_key && data.api_key_masked
-      ? `${data.api_key_masked}（留空沿用）`
-      : "sk-...";
+      ? `${data.api_key_masked}（留空沿用通道密钥）`
+      : activeProvider?.has_key
+        ? "留空沿用通道密钥，或填入个人密钥覆盖"
+        : "sk-...";
   const disabled = !canWrite || busy || loading || !form;
+  const summary = `${data?.provider_name || activeProvider?.name || "服务器默认"} · ${data?.model || "默认模型"}`;
+
+  const jumpToServer = () => {
+    const target = document.getElementById("server-providers");
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   return (
     <motion.section
+      id="my-model"
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.04 }}
-      className="glass rounded-3xl p-5 shadow-glass"
+      className="glass scroll-mt-24 rounded-3xl p-5 shadow-glass"
     >
       <div className="flex flex-wrap items-center gap-2">
         <Cpu size={15} className="text-indigo-500 dark:text-indigo-300" />
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-          模型服务
+          我的模型
         </h2>
         <span
           className={clsx(
@@ -169,18 +203,15 @@ export default function ProviderCard({ canWrite, onNotice, onError }: Props) {
         >
           {isUser ? "使用我的配置" : "服务器默认"}
         </span>
-        {server ? (
-          <span className="text-[10px] text-slate-400">
-            <Server size={10} className="mr-1 inline align-[-1px]" />
-            {server.backend} · {server.model || "未设置"} ·{" "}
-            {server.has_key ? "已配置密钥" : "无密钥"}
-          </span>
-        ) : null}
+        <span className="text-[10px] text-slate-400">
+          <Server size={10} className="mr-1 inline align-[-1px]" />
+          {summary} · {data?.has_key ? "已配置个人密钥" : "使用通道密钥"}
+        </span>
       </div>
 
       {!canWrite ? (
         <p className="mt-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[10.5px] text-amber-700 dark:text-amber-300">
-          当前角色只读，模型服务配置仅可查看。
+          当前角色只读，模型配置仅可查看。
         </p>
       ) : null}
 
@@ -191,48 +222,58 @@ export default function ProviderCard({ canWrite, onNotice, onError }: Props) {
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                接口协议
+                模型通道
               </span>
               <select
-                value={form.backend}
-                onChange={(event) => update({ backend: event.target.value })}
-                disabled={disabled}
+                value={form.provider_id}
+                onChange={(event) => pickProvider(event.target.value)}
+                disabled={disabled || providers.length === 0}
                 className="select"
               >
-                {BACKENDS.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
+                {providers.length === 0 ? (
+                  <option value="">暂无可用通道</option>
+                ) : null}
+                {providers.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}（{item.kind}）
+                    {item.is_default ? " · 默认" : ""}
                   </option>
                 ))}
               </select>
             </label>
             <label className="block">
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                模型名称
+                模型
               </span>
-              <input
-                value={form.model}
-                onChange={(event) => update({ model: event.target.value })}
-                placeholder={server?.model || "gpt-4o-mini"}
-                disabled={disabled}
-                className="input"
-              />
+              {useModelSelect ? (
+                <select
+                  value={form.model}
+                  onChange={(event) => update({ model: event.target.value })}
+                  disabled={disabled}
+                  className="select"
+                >
+                  {form.model && !modelOptions.includes(form.model) ? (
+                    <option value={form.model}>{form.model}（自定义）</option>
+                  ) : null}
+                  {modelOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={form.model}
+                  onChange={(event) => update({ model: event.target.value })}
+                  placeholder={server?.model || "该通道未登记模型，手动填写"}
+                  disabled={disabled}
+                  className="input"
+                />
+              )}
             </label>
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                接口地址 Base URL
-              </span>
-              <input
-                value={form.base_url}
-                onChange={(event) => update({ base_url: event.target.value })}
-                placeholder={server?.base_url || "https://api.openai.com/v1"}
-                disabled={disabled}
-                className="input"
-              />
-            </label>
-            <label className="block sm:col-span-2">
-              <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                API Key
+                个人 API Key（可选覆盖）
               </span>
               <span className="relative block">
                 <input
@@ -322,6 +363,16 @@ export default function ProviderCard({ canWrite, onNotice, onError }: Props) {
               <RotateCcw size={12} />
               恢复服务器默认
             </button>
+            {canManageServer ? (
+              <button
+                type="button"
+                onClick={jumpToServer}
+                className="text-[10.5px] text-indigo-500 underline-offset-2 transition hover:underline dark:text-indigo-300"
+              >
+                去管理服务器模型
+                <ArrowDown size={10} className="ml-1 inline align-[-1px]" />
+              </button>
+            ) : null}
             <span className="text-[10px] text-slate-400">
               测试连接会先保存当前表单再校验
             </span>

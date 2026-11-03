@@ -147,18 +147,52 @@ export type Quota = {
   unlimited?: QuotaUnlimited;
 };
 
-export type ProviderServerInfo = {
-  backend: string;
+export type ProviderKind = "openai_compat" | "dummy";
+
+export type ServerProvider = {
+  id: string;
+  name: string;
+  kind: string;
   base_url: string;
+  models: string[];
+  enabled: boolean;
+  is_default: boolean;
+  has_key: boolean;
+  api_key_masked: string;
+  updated_at?: number | null;
+};
+
+export type ProviderOption = {
+  id: string;
+  name: string;
+  kind: string;
+  models: string[];
+  has_key: boolean;
+  is_default: boolean;
+  enabled?: boolean;
+};
+
+export type ProviderServerInfo = {
+  id?: string;
+  provider_id?: string;
+  name?: string;
+  kind?: string;
+  backend?: string;
+  base_url?: string;
   model: string;
+  models?: string[];
   has_key: boolean;
 };
 
 export type ProviderSettings = {
   source: "user" | "server";
-  backend: string;
-  base_url: string;
+  provider_id?: string;
+  provider_name?: string;
+  backend?: string;
+  base_url?: string;
   model: string;
+  models?: string[];
+  providers?: ProviderOption[];
   temperature: number;
   max_tokens: number;
   has_key: boolean;
@@ -168,12 +202,23 @@ export type ProviderSettings = {
 };
 
 export type ProviderPayload = {
-  backend: string;
-  base_url: string;
-  model: string;
+  provider_id?: string;
+  model?: string;
   api_key?: string;
   temperature?: number;
   max_tokens?: number;
+  backend?: string;
+  base_url?: string;
+};
+
+export type ServerProviderPayload = {
+  name?: string;
+  kind?: string;
+  base_url?: string;
+  api_key?: string;
+  models?: string[];
+  enabled?: boolean;
+  is_default?: boolean;
 };
 
 export type ProviderTestResult = {
@@ -857,6 +902,35 @@ export const api = {
   resetProviderSettings: () =>
     request<ProviderSettings>("/api/v1/settings/provider", { method: "DELETE" }),
 
-  testProvider: () =>
-    request<ProviderTestResult>("/api/v1/settings/provider/test", { method: "POST" }),
+  testProvider: (payload?: { model?: string }) =>
+    request<ProviderTestResult>("/api/v1/settings/provider/test", {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    }),
+
+  listAdminProviders: () =>
+    request<{ count: number; providers: ServerProvider[] }>("/api/v1/admin/providers"),
+
+  createAdminProvider: (payload: ServerProviderPayload) =>
+    request<ServerProvider>("/api/v1/admin/providers", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateAdminProvider: (providerId: string, payload: ServerProviderPayload) =>
+    request<ServerProvider>(`/api/v1/admin/providers/${providerId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteAdminProvider: (providerId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/admin/providers/${providerId}`, {
+      method: "DELETE",
+    }),
+
+  testAdminProvider: (providerId: string, payload?: { model?: string }) =>
+    request<ProviderTestResult>(`/api/v1/admin/providers/${providerId}/test`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    }),
 };
