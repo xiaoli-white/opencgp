@@ -7,6 +7,7 @@ import {
   Loader2,
   MessageSquare,
   PenLine,
+  Quote,
   Send,
   Sparkles,
   X,
@@ -21,12 +22,16 @@ type ChatPanelProps = {
   lessonId: string | null;
   lessonTitle: string;
   currentVersion: number;
+  initialSelection?: string;
+  onSelectionConsumed?: () => void;
   onClose: () => void;
   onApplied: () => void | Promise<void>;
   onNotice: (text: string) => void;
 };
 
 type Tab = "ask" | "amend";
+
+type ChatMessage = Message & { quoted?: string };
 
 const AMEND_PRESETS = ["精简这段，去掉重复表述", "补一个真实案例", "改成更偏实战的写法", "拆成更清晰的小节"];
 
@@ -37,18 +42,35 @@ export default function ChatPanel({
   lessonId,
   lessonTitle,
   currentVersion,
+  initialSelection,
+  onSelectionConsumed,
   onClose,
   onApplied,
   onNotice,
 }: ChatPanelProps) {
   const [tab, setTab] = useState<Tab>("ask");
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [selection, setSelection] = useState("");
   const [amendInfo, setAmendInfo] = useState<AmendResult | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const trimmed = initialSelection?.trim();
+    if (trimmed) setSelection(trimmed);
+  }, [initialSelection]);
+
+  useEffect(() => {
+    setSelection("");
+    setInput("");
+  }, [lessonId]);
+
+  useEffect(() => {
+    if (!open) setSelection("");
+  }, [open]);
 
   useEffect(() => {
     if (!open || !lessonId) return;
@@ -94,19 +116,21 @@ export default function ChatPanel({
     setAmendInfo(null);
 
     if (tab === "ask") {
-      const localMessage: Message = {
+      const quoted = selection.trim() || undefined;
+      const localMessage: ChatMessage = {
         id: `local-${Date.now()}`,
         thread_id: "",
         role: "user",
         content: text,
         citations: [],
         created_at: Date.now() / 1000,
+        quoted,
       };
       setMessages((prev) => [...prev, localMessage]);
       setInput("");
       setBusy(true);
       try {
-        const result = await api.askLesson(lessonId, text);
+        const result = await api.askLesson(lessonId, text, quoted);
         setMessages((prev) => [
           ...prev,
           {
@@ -118,6 +142,10 @@ export default function ChatPanel({
             created_at: Date.now() / 1000,
           },
         ]);
+        if (quoted) {
+          setSelection("");
+          onSelectionConsumed?.();
+        }
         if (!result.grounded) {
           setError("本次回答未命中知识库证据，已按模型自身知识作答，请注意核对。");
         }
@@ -186,6 +214,41 @@ export default function ChatPanel({
               </button>
             </header>
 
+            <AnimatePresence initial={false}>
+              {selection ? (
+                <motion.div
+                  initial={{ opacity: 0, y: -6, height: 0 }}
+                  animate={{ opacity: 1, y: 0, height: "auto" }}
+                  exit={{ opacity: 0, y: -6, height: 0 }}
+                  transition={{ duration: 0.2, ease: "easeOut" }}
+                  className="overflow-hidden"
+                >
+                  <div className="mx-5 mt-4 flex items-start gap-2 rounded-2xl border border-indigo-300/45 bg-indigo-500/10 px-3 py-2 dark:border-indigo-400/25 dark:bg-indigo-400/10">
+                    <Quote size={13} className="mt-0.5 shrink-0 text-indigo-500 dark:text-indigo-300" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-indigo-500 dark:text-indigo-300">
+                        引用选中
+                      </p>
+                      <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+                        {selection}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelection("");
+                        onSelectionConsumed?.();
+                      }}
+                      className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
+                      aria-label="取消引用选中"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+
             <div className="flex gap-1 px-5 pt-4">
               <div className="flex w-full rounded-2xl border border-slate-200/70 bg-white/45 p-1 dark:border-white/10 dark:bg-white/[0.04]">
                 <button
@@ -251,7 +314,14 @@ export default function ChatPanel({
                           )}
                         >
                           {isUser ? (
-                            <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                            <div className="space-y-1.5">
+                              <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                              {message.quoted ? (
+                                <p className="rounded-xl border border-white/25 bg-white/15 px-2 py-1 text-[11px] leading-relaxed text-white/85 line-clamp-3">
+                                  引用：{message.quoted}
+                                </p>
+                              ) : null}
+                            </div>
                           ) : (
                             <MarkdownReader
                               content={message.content}

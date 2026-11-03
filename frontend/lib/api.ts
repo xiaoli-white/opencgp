@@ -269,10 +269,13 @@ export const api = {
       body: JSON.stringify({ version, note }),
     }),
 
-  askLesson: (lessonId: string, question: string) =>
+  askLesson: (lessonId: string, question: string, selection?: string) =>
     request<AskResult>(`/api/v1/lessons/${lessonId}/ask`, {
       method: "POST",
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({
+        question,
+        selection: selection?.trim() ? selection.trim() : null,
+      }),
     }),
 
   amendLesson: (lessonId: string, instruction: string, target?: string) =>

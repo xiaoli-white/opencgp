@@ -39,6 +39,7 @@ from app.services.errors import (
 
 DRILLDOWN_NOTE = "drilldown"
 DRILLDOWN_HEADING = "追问补充"
+SELECTION_CHAR_LIMIT = 1200
 
 
 class ConversationService:
@@ -60,11 +61,16 @@ class ConversationService:
         self.content_char_limit = content_char_limit
         self.evidence_char_limit = evidence_char_limit
 
-    async def ask(self, lesson_id: str, question: str) -> AskResult:
+    async def ask(
+        self, lesson_id: str, question: str, selection: str | None = None
+    ) -> AskResult:
         lesson, course, citations = self._context(lesson_id)
         thread = self._lesson_thread(lesson)
         history = self.conversations.list_messages(thread.id, limit=self.history_limit)
-        prompt = self._build_ask_prompt(course, lesson, citations, history, question)
+        selected = (selection or "").strip() or None
+        prompt = self._build_ask_prompt(
+            course, lesson, citations, history, question, selected
+        )
 
         provider = type(self.llm).__name__
         if getattr(self.llm, "is_placeholder", False):
@@ -219,6 +225,7 @@ class ConversationService:
         citations: Sequence[Citation],
         history: Sequence[Message],
         question: str,
+        selection: str | None = None,
     ) -> str:
         lines: list[str] = [
             "你是这门课程的助教，负责基于这一讲已写好的正文与引用证据回答读者追问。",
@@ -258,11 +265,21 @@ class ConversationService:
         else:
             lines.append("- （本轮为对话起点）")
 
+        lines.extend(["", "## 读者追问"])
+        if selection:
+            excerpt = self._clip(selection.strip(), SELECTION_CHAR_LIMIT)
+            lines.extend(
+                [
+                    "用户选中了正文中的以下片段：",
+                    f'"""{excerpt}"""',
+                    f"请针对这段选中内容回答：{question.strip()}",
+                ]
+            )
+        else:
+            lines.append(question.strip())
+
         lines.extend(
             [
-                "",
-                "## 读者追问",
-                question.strip(),
                 "",
                 "## 回答约束",
                 "1. 只能依据「当前正文」与「证据」作答；两者都未覆盖的内容，明确说明"

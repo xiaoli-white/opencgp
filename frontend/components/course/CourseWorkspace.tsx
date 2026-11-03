@@ -46,6 +46,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   const [topic, setTopic] = useState("");
   const [topK, setTopK] = useState(5);
   const [chatOpen, setChatOpen] = useState(false);
+  const [pendingSelection, setPendingSelection] = useState<string | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -122,6 +123,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     const timer = setTimeout(() => setNotice(""), 4200);
     return () => clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    setPendingSelection(null);
+  }, [activeId]);
 
   const activeLesson = useMemo(
     () => detail?.lessons.find((lesson) => lesson.id === activeId) ?? null,
@@ -207,6 +212,18 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     }
     setVersionTick((tick) => tick + 1);
   };
+
+  const handleAskSelection = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setPendingSelection(trimmed);
+    setChatOpen(true);
+  }, []);
+
+  const handleCloseChat = useCallback(() => {
+    setChatOpen(false);
+    setPendingSelection(null);
+  }, []);
 
   if (loading) {
     return (
@@ -570,6 +587,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                   <MarkdownReader
                     content={activeLesson.content}
                     citations={currentCitations}
+                    onAskSelection={handleAskSelection}
                   />
                 ) : (
                   <div className="rounded-2xl border border-dashed border-slate-300/70 px-6 py-10 text-center dark:border-white/15">
@@ -700,7 +718,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         lessonId={activeLesson?.id ?? null}
         lessonTitle={activeLesson?.title ?? ""}
         currentVersion={activeLesson?.current_version ?? 0}
-        onClose={() => setChatOpen(false)}
+        initialSelection={pendingSelection ?? undefined}
+        onSelectionConsumed={() => setPendingSelection(null)}
+        onClose={handleCloseChat}
         onApplied={handleChatApplied}
         onNotice={setNotice}
       />

@@ -174,6 +174,7 @@ class LessonRevertRequest(BaseModel):
 
 class LessonAskRequest(BaseModel):
     question: str = Field(min_length=1)
+    selection: str | None = None
 
 
 class LessonAmendRequest(BaseModel):
@@ -327,8 +328,11 @@ async def ask_lesson(lesson_id: str, req: LessonAskRequest) -> dict[str, Any]:
     question = req.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
+    selection = (req.selection or "").strip() or None
     try:
-        result = await container.conversation().ask(lesson_id, question)
+        result = await container.conversation().ask(
+            lesson_id, question, selection=selection
+        )
     except LessonNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
     except EmptyLLMResponseError as exc:
