@@ -23,7 +23,13 @@ from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.container import get_container
-from app.models.auth import ALL_ACTIONS, DEFAULT_TENANT_ID, AuthContext
+from app.models.auth import (
+    ALL_ACTIONS,
+    CREATABLE_TENANT_KINDS,
+    DEFAULT_TENANT_ID,
+    USER_STATUSES,
+    AuthContext,
+)
 from app.models.citation import Citation
 from app.models.blueprint import CourseBlueprint, GlossaryTerm
 from app.models.course import Course, Lesson
@@ -34,6 +40,8 @@ from app.models.research import ResearchRun
 from app.models.job import JOB_KINDS, JOB_STATUSES, Job
 from app.services.jobs import JobContext
 from app.services.errors import (
+    AccountNotActiveError,
+    AvatarInvalidError,
     AuthRequiredError,
     BlueprintNotFoundError,
     EmailAlreadyRegisteredError,
@@ -64,6 +72,9 @@ from app.services.errors import (
     LongformNotFoundError,
     LongformSectionNotFoundError,
     JobNotFoundError,
+    TenantInUseError,
+    TenantKindError,
+    TenantSystemError,
     UnsupportedJobKindError,
 )
 
@@ -118,6 +129,25 @@ class LoginRequest(BaseModel):
 
 class TenantCreateRequest(BaseModel):
     name: str = Field(min_length=1)
+    kind: str = "personal"
+
+
+class TenantRenameRequest(BaseModel):
+    name: str = Field(min_length=1)
+
+
+class ProfileUpdateRequest(BaseModel):
+    display_name: str | None = None
+    email: str | None = None
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=1)
+
+
+class UserReviewRequest(BaseModel):
+    reason: str = ""
 
 
 class MemberAddRequest(BaseModel):
@@ -146,6 +176,8 @@ def get_auth_context(
         return service.resolve(token, x_tenant_id)
     except AuthRequiredError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except AccountNotActiveError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except MembershipNotFoundError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except TenantNotFoundError as exc:
@@ -943,6 +975,8 @@ def list_lesson_reviews(
 
 
 def _auth_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, AccountNotActiveError):
+        return HTTPException(status_code=403, detail=str(exc))
     if isinstance(exc, EmailAlreadyRegisteredError):
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, InvalidCredentialsError):
@@ -953,6 +987,10 @@ def _auth_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=403, detail=str(exc))
     if isinstance(exc, MembershipNotFoundError):
         return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, TenantSystemError):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, TenantInUseError):
+        return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, TenantNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
     return HTTPException(status_code=400, detail=str(exc))
@@ -963,9 +1001,22 @@ def auth_register(req: RegisterRequest) -> dict[str, Any]:
     service = container.auth_service()
     try:
         user, token = service.register(req.email, req.password, req.display_name)
+    except AccountNotActiveError as exc:
+        raise _auth_error(exc) from exc
     except (EmailAlreadyRegisteredError, ValueError) as exc:
         raise _auth_error(exc) from exc
-    return {"token": token, "user": user.model_dump(), "tenants": service.tenants_payload(user)}
+    if not token:
+        return {
+            "pending": True,
+            "message": "注册已提交，等待管理员审核",
+            "user": service.user_payload(user, service.role_in_system(user.id)),
+        }
+    return {
+        "pending": False,
+        "token": token,
+        "user": service.user_payload(user, service.role_in_system(user.id)),
+        "tenants": service.tenants_payload(user),
+    }
 
 
 @app.post("/api/v1/auth/login")
@@ -973,25 +1024,188 @@ def auth_login(req: LoginRequest) -> dict[str, Any]:
     service = container.auth_service()
     try:
         user, token = service.login(req.email, req.password)
-    except InvalidCredentialsError as exc:
+    except (AccountNotActiveError, InvalidCredentialsError) as exc:
         raise _auth_error(exc) from exc
-    return {"token": token, "user": user.model_dump(), "tenants": service.tenants_payload(user)}
+    return {
+        "token": token,
+        "user": service.user_payload(user, service.role_in_system(user.id)),
+        "tenants": service.tenants_payload(user),
+    }
 
 
 @app.get("/api/v1/auth/me")
 def auth_me(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
     service = container.auth_service()
     return {
-        "user": ctx.user.model_dump(),
-        "tenant": ctx.tenant.model_dump(),
+        "user": service.user_payload(ctx.user, ctx.role_key or ctx.role),
+        "tenant": service.tenant_payload(ctx.tenant),
         "role": ctx.role_key or ctx.role,
         "role_key": ctx.role_key or ctx.role,
         "role_name": ctx.role_name,
         "actions": sorted(ctx.actions),
         "can": {action: service.can(ctx, action) for action in ALL_ACTIONS},
         "scope": ctx.scope,
+        "avatar_url": ctx.user.avatar_url(),
         "tenants": service.tenants_payload(ctx.user),
         "auth_mode": service.mode,
+        "require_approval": service.require_approval,
+    }
+
+
+@app.patch("/api/v1/auth/me")
+def auth_update_me(
+    req: ProfileUpdateRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    service = container.auth_service()
+    try:
+        user = service.update_profile(
+            ctx.user.id, display_name=req.display_name, email=req.email
+        )
+    except (EmailAlreadyRegisteredError, InvalidCredentialsError) as exc:
+        raise _auth_error(exc) from exc
+    except (AuthRequiredError, ValueError) as exc:
+        raise _auth_error(exc) from exc
+    return {
+        "user": service.user_payload(user, ctx.role_key or ctx.role),
+        "tenants": service.tenants_payload(user),
+    }
+
+
+@app.post("/api/v1/auth/password")
+def auth_change_password(
+    req: PasswordChangeRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    service = container.auth_service()
+    try:
+        service.change_password(ctx.user.id, req.current_password, req.new_password)
+    except (InvalidCredentialsError, ValueError) as exc:
+        raise _auth_error(exc) from exc
+    return {"ok": True}
+
+
+def _avatar_extension(filename: str, content_type: str) -> str:
+    allowed = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+    suffix = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
+    if suffix in allowed:
+        return suffix
+    mapping = {value: key for key, value in allowed.items()}
+    guess = mapping.get((content_type or "").split(";")[0].strip().lower(), "")
+    if not guess:
+        raise AvatarInvalidError("头像仅支持 png/jpg/jpeg/webp")
+    return guess
+
+
+AVATAR_MAX_BYTES = 2 * 1024 * 1024
+
+
+@app.put("/api/v1/auth/avatar")
+async def auth_upload_avatar(
+    file: UploadFile = File(...), ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="头像文件为空")
+    if len(data) > AVATAR_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="头像不能超过 2MB")
+    try:
+        ext = _avatar_extension(file.filename or "", file.content_type or "")
+    except AvatarInvalidError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    key = f"avatars/{ctx.user.id}.{ext}"
+    try:
+        container.storage().put(key, data, content_type=(file.content_type or ""))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"头像保存失败: {exc}") from exc
+    service = container.auth_service()
+    try:
+        service.set_avatar_key(ctx.user.id, key)
+    except AuthRequiredError as exc:
+        raise _auth_error(exc) from exc
+    return {"ok": True, "avatar_url": f"/api/v1/users/{ctx.user.id}/avatar"}
+
+
+AVATAR_CONTENT_TYPES = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+}
+
+
+@app.get("/api/v1/users/{user_id}/avatar")
+def get_user_avatar(user_id: str) -> Any:
+    service = container.auth_service()
+    user = service.get_user(user_id)
+    if user is None or not user.avatar_key:
+        raise HTTPException(status_code=404, detail="头像不存在")
+    try:
+        data = container.storage().get(user.avatar_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="头像不存在") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail=f"头像读取失败: {exc}") from exc
+    ext = user.avatar_key.rsplit(".", 1)[-1].lower()
+    return StreamingResponse(
+        iter([data]),
+        media_type=AVATAR_CONTENT_TYPES.get(ext, "application/octet-stream"),
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+def _admin_user_payload(user: Any) -> dict[str, Any]:
+    service = container.auth_service()
+    return service.user_payload(user, service.role_in_system(user.id))
+
+
+@app.get("/api/v1/admin/users")
+def admin_list_users(
+    status: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=200),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "manage_server")
+    wanted = (status or "").strip().lower()
+    if wanted and wanted not in USER_STATUSES:
+        raise HTTPException(status_code=400, detail=f"未知状态: {wanted}")
+    users = container.auth_service().list_users(wanted, limit)
+    payload = [_admin_user_payload(user) for user in users]
+    return {"count": len(payload), "users": payload}
+
+
+@app.post("/api/v1/admin/users/{user_id}/approve")
+def admin_approve_user(
+    user_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "manage_server")
+    service = container.auth_service()
+    try:
+        user = service.approve_user(user_id)
+    except AuthRequiredError as exc:
+        raise _auth_error(exc) from exc
+    membership = service.ensure_system_membership(user.id)
+    return {
+        "user": _admin_user_payload(user),
+        "status": user.status,
+        "system_membership": membership.model_dump() if membership else None,
+    }
+
+
+@app.post("/api/v1/admin/users/{user_id}/reject")
+def admin_reject_user(
+    user_id: str,
+    req: UserReviewRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "manage_server")
+    service = container.auth_service()
+    try:
+        user = service.reject_user(user_id)
+    except AuthRequiredError as exc:
+        raise _auth_error(exc) from exc
+    return {
+        "user": _admin_user_payload(user),
+        "status": user.status,
+        "reason": (req.reason if req is not None else ""),
     }
 
 
@@ -1012,10 +1226,90 @@ def create_tenant(
 ) -> dict[str, Any]:
     service = container.auth_service()
     try:
-        tenant, role = service.create_tenant(ctx.user, req.name)
+        tenant, role = service.create_tenant(ctx.user, req.name, req.kind)
+    except (ValueError, TenantKindError) as exc:
+        raise _auth_error(exc) from exc
+    return {"tenant": service.tenant_payload(tenant), "role": role}
+
+
+@app.patch("/api/v1/tenants/{tenant_id}")
+def rename_tenant(
+    tenant_id: str,
+    req: TenantRenameRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    service = container.auth_service()
+    try:
+        if service.mode == "required":
+            scoped = service.context_for_tenant(ctx.user, tenant_id)
+            if "owner" not in (scoped.role_key, scoped.role):
+                raise PermissionDeniedError("只有空间所有者可以修改空间")
+        tenant = service.rename_tenant(tenant_id, req.name)
+    except (PermissionDeniedError, MembershipNotFoundError, TenantNotFoundError) as exc:
+        raise _auth_error(exc) from exc
     except ValueError as exc:
         raise _auth_error(exc) from exc
-    return {"tenant": tenant.model_dump(), "role": role}
+    return service.tenant_payload(tenant)
+
+
+@app.delete("/api/v1/tenants/{tenant_id}")
+def delete_tenant(
+    tenant_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    service = container.auth_service()
+    try:
+        target = service.get_tenant(tenant_id)
+        if target is None:
+            raise TenantNotFoundError("租户不存在")
+        if target.kind == "system" or target.id == DEFAULT_TENANT_ID:
+            raise TenantSystemError("系统空间不可删除")
+        if service.mode == "required":
+            scoped = service.context_for_tenant(ctx.user, tenant_id)
+            if "owner" not in (scoped.role_key, scoped.role):
+                raise PermissionDeniedError("只有空间所有者可以删除空间")
+        courses = container.course_repository().list_courses(tenant_id)
+        if courses:
+            raise TenantInUseError("该空间下仍有课程，无法删除")
+        service.delete_tenant(tenant_id)
+    except (
+        PermissionDeniedError,
+        MembershipNotFoundError,
+        TenantNotFoundError,
+        TenantSystemError,
+        TenantInUseError,
+    ) as exc:
+        raise _auth_error(exc) from exc
+    return {"ok": True}
+
+
+class TenantTransferRequest(BaseModel):
+    user_id: str = Field(min_length=1)
+
+
+@app.post("/api/v1/tenants/{tenant_id}/transfer")
+def transfer_tenant(
+    tenant_id: str,
+    req: TenantTransferRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    service = container.auth_service()
+    try:
+        tenant = service.transfer_tenant(tenant_id, ctx.user.id, req.user_id)
+    except (
+        PermissionDeniedError,
+        MembershipNotFoundError,
+        TenantNotFoundError,
+        TenantSystemError,
+        ValueError,
+    ) as exc:
+        raise _auth_error(exc) from exc
+    members = service.list_members(tenant_id)
+    return {
+        "ok": True,
+        "tenant": service.tenant_payload(tenant),
+        "owner_user_id": tenant.owner_user_id,
+        "members": [member.model_dump() for member in members],
+    }
 
 
 def _require_tenant_action(ctx: AuthContext, tenant_id: str, action: str) -> str:
@@ -1590,6 +1884,64 @@ async def test_user_provider(
     }
 
 
+class ProviderShareItem(BaseModel):
+    user_id: str = Field(min_length=1)
+    level: Literal["use", "manage"] = "use"
+
+
+class ProviderShareReplaceRequest(BaseModel):
+    shares: list[ProviderShareItem] = Field(default_factory=list)
+
+
+def _provider_shares_payload(provider_id: str, shares) -> dict[str, Any]:
+    return {
+        "provider_id": provider_id,
+        "count": len(shares),
+        "shares": [
+            {
+                "user_id": share.user_id,
+                "user_email": share.user_email,
+                "user_display_name": share.user_display_name,
+                "level": share.level,
+            }
+            for share in shares
+        ],
+    }
+
+
+@app.get("/api/v1/settings/providers/{provider_id}/shares")
+def list_provider_shares(
+    provider_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    service = container.user_providers()
+    own = service.get(ctx.user.id, provider_id)
+    if own is None and not service.can_manage_shared(provider_id, ctx.user.id):
+        raise HTTPException(status_code=404, detail="个人通道不存在")
+    return _provider_shares_payload(provider_id, service.list_shares(provider_id))
+
+
+@app.put("/api/v1/settings/providers/{provider_id}/shares")
+def replace_provider_shares(
+    provider_id: str,
+    req: ProviderShareReplaceRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    service = container.user_providers()
+    try:
+        shares = service.replace_shares(
+            ctx.user.id,
+            provider_id,
+            [(item.user_id, item.level) for item in req.shares],
+        )
+    except ProviderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _provider_shares_payload(provider_id, shares)
+
+
 def _provider_error(exc: Exception) -> HTTPException:
     if isinstance(exc, ProviderNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
@@ -1855,10 +2207,15 @@ async def research_to_blueprint(
     }
 
 
-def _require_longform(longform_id: str, ctx: AuthContext):
+def _require_longform(longform_id: str, ctx: AuthContext, level: str = "read"):
     longform = container.longform().get(longform_id, _tenant_of(ctx))
-    if longform is None:
+    service = container.auth_service()
+    if longform is None or not service.can_access_longform(ctx, longform_id, "read"):
         raise HTTPException(status_code=404, detail=f"长篇不存在: {longform_id}")
+    if level == "write" and not service.can_access_longform(
+        ctx, longform_id, "write"
+    ):
+        raise HTTPException(status_code=403, detail="缺少该长篇的编辑授权")
     return longform
 
 
@@ -1892,6 +2249,12 @@ async def create_longform(
 def list_longforms(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
     _enforce(ctx, "read")
     items = container.longform().list(_tenant_of(ctx), 50)
+    visible = container.auth_service().visible_longform_ids(
+        ctx, [item.id for item in items]
+    )
+    if visible is not None:
+        allowed = set(visible)
+        items = [item for item in items if item.id in allowed]
     return {"count": len(items), "longforms": [item.model_dump() for item in items]}
 
 
@@ -1911,7 +2274,7 @@ async def generate_longform_section(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx)
+    _require_longform(longform_id, ctx, "write")
     payload = req or LongformSectionRequest()
     _charge(ctx, "longform", 1, ref_id=longform_id)
     try:
@@ -1941,7 +2304,7 @@ async def generate_longform(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    longform = _require_longform(longform_id, ctx)
+    longform = _require_longform(longform_id, ctx, "write")
     payload = req or LongformGenerateRequest()
     if payload.expected_version is not None and int(payload.expected_version) != longform.current_version:
         return _conflict(VersionConflictError(int(payload.expected_version), longform.current_version))
@@ -1963,7 +2326,7 @@ async def rewrite_longform(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx)
+    _require_longform(longform_id, ctx, "write")
     _charge(ctx, "longform", 1, ref_id=longform_id)
     try:
         updated = await container.longform().rewrite(
@@ -2012,7 +2375,7 @@ def revert_longform(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx)
+    _require_longform(longform_id, ctx, "write")
     try:
         longform, version = container.longform().revert(longform_id, req.version)
     except LongformNotFoundError as exc:
@@ -2020,11 +2383,69 @@ def revert_longform(
     return {"longform": longform.model_dump(), "version": version.version}
 
 
+def _longform_grants_payload(longform_id: str, grants) -> dict[str, Any]:
+    return {
+        "longform_id": longform_id,
+        "count": len(grants),
+        "grants": [
+            {
+                "user_id": grant.user_id,
+                "user_email": grant.user_email,
+                "user_display_name": grant.user_display_name,
+                "level": grant.level,
+            }
+            for grant in grants
+        ],
+    }
+
+
+class LongformGrantItem(BaseModel):
+    user_id: str = Field(min_length=1)
+    level: Literal["read", "write"] = "read"
+
+
+class LongformGrantReplaceRequest(BaseModel):
+    grants: list[LongformGrantItem] = Field(default_factory=list)
+
+
+@app.get("/api/v1/longforms/{longform_id}/grants")
+def list_longform_grants(
+    longform_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    service = container.auth_service()
+    manage = service.can(ctx, "manage_members")
+    if not manage:
+        _enforce(ctx, "write")
+    _require_longform(longform_id, ctx, "read" if manage else "write")
+    grants = service.list_longform_grants(_tenant_of(ctx), longform_id)
+    return _longform_grants_payload(longform_id, grants)
+
+
+@app.put("/api/v1/longforms/{longform_id}/grants")
+def replace_longform_grants(
+    longform_id: str,
+    req: LongformGrantReplaceRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "manage_members")
+    _require_longform(longform_id, ctx)
+    try:
+        grants = container.auth_service().replace_longform_grants(
+            _tenant_of(ctx),
+            longform_id,
+            [(item.user_id, item.level) for item in req.grants],
+        )
+    except (MembershipNotFoundError, ValueError) as exc:
+        raise _role_error(exc) from exc
+    return _longform_grants_payload(longform_id, grants)
+
+
 @app.delete("/api/v1/longforms/{longform_id}")
 def delete_longform(
     longform_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
+    _require_longform(longform_id, ctx, "write")
     if not container.longform().delete(longform_id, _tenant_of(ctx)):
         raise HTTPException(status_code=404, detail=f"长篇不存在: {longform_id}")
     return {"ok": True}

@@ -34,11 +34,11 @@ class InvalidCredentialsError(RuntimeError):
     pass
 
 
-class PermissionDeniedError(RuntimeError):
+class MembershipNotFoundError(RuntimeError):
     pass
 
 
-class MembershipNotFoundError(RuntimeError):
+class PermissionDeniedError(RuntimeError):
     pass
 
 
@@ -125,4 +125,24 @@ class JobNotFoundError(LookupError):
 
 
 class UnsupportedJobKindError(ValueError):
+    pass
+
+
+class AccountNotActiveError(PermissionDeniedError):
+    pass
+
+
+class AvatarInvalidError(ValueError):
+    pass
+
+
+class TenantInUseError(RuntimeError):
+    pass
+
+
+class TenantKindError(ValueError):
+    pass
+
+
+class TenantSystemError(ValueError):
     pass

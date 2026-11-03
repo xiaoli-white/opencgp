@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, Sequence, runtime_checkable
 
-from app.models.auth import CourseGrant, Membership, Role, Tenant, User
+from app.models.auth import CourseGrant, LongformGrant, Membership, Role, Tenant, User
 
 
 @runtime_checkable
@@ -16,7 +16,27 @@ class AuthRepository(Protocol):
         password_hash: str,
         display_name: str = "",
         user_id: str = "",
+        status: str = "active",
     ) -> User:
+        ...
+
+    def update_user(
+        self,
+        user_id: str,
+        display_name: str | None = None,
+        email: str | None = None,
+        avatar_key: str | None = None,
+        status: str | None = None,
+    ) -> User | None:
+        ...
+
+    def update_password_hash(self, user_id: str, password_hash: str) -> bool:
+        ...
+
+    def list_users(self, status: str = "", limit: int = 50) -> list[User]:
+        ...
+
+    def count_users(self, exclude_ids: Sequence[str] = ()) -> int:
         ...
 
     def get_password_hash(self, user_id: str) -> str:
@@ -32,8 +52,26 @@ class AuthRepository(Protocol):
         ...
 
     def create_tenant(
-        self, name: str, slug: str, plan: str = "free", tenant_id: str = ""
+        self,
+        name: str,
+        slug: str,
+        plan: str = "free",
+        tenant_id: str = "",
+        kind: str = "team",
+        owner_user_id: str = "",
     ) -> Tenant:
+        ...
+
+    def update_tenant(
+        self,
+        tenant_id: str,
+        name: str | None = None,
+        kind: str | None = None,
+        owner_user_id: str | None = None,
+    ) -> Tenant | None:
+        ...
+
+    def delete_tenant(self, tenant_id: str) -> bool:
         ...
 
     def get_tenant(self, tenant_id: str) -> Tenant | None:
@@ -118,4 +156,20 @@ class AuthRepository(Protocol):
     def replace_grants(
         self, tenant_id: str, course_id: str, grants: Sequence[tuple[str, str]]
     ) -> list[CourseGrant]:
+        ...
+
+    def list_longform_grants(self, longform_id: str) -> list[LongformGrant]:
+        ...
+
+    def get_longform_grant(self, longform_id: str, user_id: str) -> LongformGrant | None:
+        ...
+
+    def list_user_longform_grants(
+        self, tenant_id: str, user_id: str
+    ) -> list[LongformGrant]:
+        ...
+
+    def replace_longform_grants(
+        self, tenant_id: str, longform_id: str, grants: Sequence[tuple[str, str]]
+    ) -> list[LongformGrant]:
         ...

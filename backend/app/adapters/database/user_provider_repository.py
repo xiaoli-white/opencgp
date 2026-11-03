@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Mapping
+import uuid
+from typing import Any, Mapping, Sequence
 
-from app.models.user_provider import UserProvider
+from app.models.user_provider import ProviderShare, UserProvider
 from app.ports.database import Database
 from app.ports.user_provider_repository import UserProviderRepository
 
@@ -27,6 +28,21 @@ SCHEMA: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS idx_user_providers_user
         ON user_providers (user_id)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS user_provider_shares (
+        id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL,
+        owner_user_id TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL,
+        level TEXT NOT NULL DEFAULT 'use',
+        created_at REAL NOT NULL DEFAULT 0,
+        UNIQUE (provider_id, user_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_user_provider_shares_user
+        ON user_provider_shares (user_id)
     """,
 )
 
@@ -56,6 +72,22 @@ def _to_provider(row: Mapping[str, Any]) -> UserProvider:
         is_default=bool(row["is_default"]),
         created_at=float(row["created_at"] or 0.0),
         updated_at=float(row["updated_at"] or 0.0),
+    )
+
+
+def _to_share(row: Mapping[str, Any]) -> ProviderShare:
+    keys = set(row.keys())
+    return ProviderShare(
+        id=str(row["id"]),
+        provider_id=str(row["provider_id"]),
+        owner_user_id=str(row["owner_user_id"] or ""),
+        user_id=str(row["user_id"]),
+        level=str(row["level"] or "use"),
+        created_at=float(row["created_at"] or 0.0),
+        user_email=str(row["user_email"] or "") if "user_email" in keys else "",
+        user_display_name=(
+            str(row["user_display_name"] or "") if "user_display_name" in keys else ""
+        ),
     )
 
 
@@ -156,3 +188,72 @@ class DatabaseUserProviderRepository(UserProviderRepository):
             "SELECT COUNT(*) AS n FROM user_providers WHERE user_id = ?", (user_id,)
         )
         return int(row["n"]) if row is not None else 0
+
+    def get_provider_any(self, provider_id: str) -> UserProvider | None:
+        self.ensure_schema()
+        if not provider_id:
+            return None
+        row = self.database.fetchone(
+            "SELECT * FROM user_providers WHERE id = ?", (provider_id,)
+        )
+        return _to_provider(row) if row is not None else None
+
+    def list_shares(self, provider_id: str) -> list[ProviderShare]:
+        self.ensure_schema()
+        rows = self.database.fetchall(
+            "SELECT s.*, u.email AS user_email, u.display_name AS user_display_name"
+            " FROM user_provider_shares s LEFT JOIN users u ON u.id = s.user_id"
+            " WHERE s.provider_id = ? ORDER BY s.created_at ASC",
+            (provider_id,),
+        )
+        return [_to_share(row) for row in rows]
+
+    def get_share(self, provider_id: str, user_id: str) -> ProviderShare | None:
+        self.ensure_schema()
+        row = self.database.fetchone(
+            "SELECT s.*, u.email AS user_email, u.display_name AS user_display_name"
+            " FROM user_provider_shares s LEFT JOIN users u ON u.id = s.user_id"
+            " WHERE s.provider_id = ? AND s.user_id = ?",
+            (provider_id, user_id),
+        )
+        return _to_share(row) if row is not None else None
+
+    def list_shared_with(self, user_id: str) -> list[ProviderShare]:
+        self.ensure_schema()
+        rows = self.database.fetchall(
+            "SELECT s.*, u.email AS user_email, u.display_name AS user_display_name"
+            " FROM user_provider_shares s LEFT JOIN users u ON u.id = s.user_id"
+            " WHERE s.user_id = ? ORDER BY s.created_at ASC",
+            (user_id,),
+        )
+        return [_to_share(row) for row in rows]
+
+    def replace_shares(
+        self, provider_id: str, owner_user_id: str, shares: Sequence[tuple[str, str]]
+    ) -> list[ProviderShare]:
+        self.ensure_schema()
+        self.database.execute(
+            "DELETE FROM user_provider_shares WHERE provider_id = ?", (provider_id,)
+        )
+        now = time.time()
+        for user_id, level in shares:
+            self.database.execute(
+                "INSERT INTO user_provider_shares (id, provider_id, owner_user_id,"
+                " user_id, level, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    f"pshare_{uuid.uuid4().hex[:12]}",
+                    provider_id,
+                    owner_user_id,
+                    user_id,
+                    level,
+                    now,
+                ),
+            )
+        return self.list_shares(provider_id)
+
+    def delete_shares(self, provider_id: str) -> bool:
+        self.ensure_schema()
+        self.database.execute(
+            "DELETE FROM user_provider_shares WHERE provider_id = ?", (provider_id,)
+        )
+        return True

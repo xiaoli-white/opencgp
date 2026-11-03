@@ -5,7 +5,16 @@ import time
 import uuid
 from typing import Any, Mapping, Sequence
 
-from app.models.auth import CourseGrant, Membership, Role, Tenant, User
+from app.models.auth import (
+    DEFAULT_TENANT_ID,
+    CourseGrant,
+    LongformGrant,
+    Membership,
+    Role,
+    Tenant,
+    User,
+    avatar_url_for,
+)
 from app.ports.auth_repository import AuthRepository
 from app.ports.database import Database
 
@@ -16,6 +25,8 @@ SCHEMA: tuple[str, ...] = (
         name TEXT NOT NULL,
         slug TEXT NOT NULL UNIQUE,
         plan TEXT NOT NULL DEFAULT 'free',
+        kind TEXT NOT NULL DEFAULT 'team',
+        owner_user_id TEXT NOT NULL DEFAULT '',
         created_at REAL NOT NULL
     )
     """,
@@ -25,8 +36,11 @@ SCHEMA: tuple[str, ...] = (
         email TEXT NOT NULL UNIQUE,
         display_name TEXT NOT NULL DEFAULT '',
         password_hash TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        avatar_key TEXT NOT NULL DEFAULT '',
         created_at REAL NOT NULL,
-        last_login_at REAL NOT NULL DEFAULT 0
+        last_login_at REAL NOT NULL DEFAULT 0,
+        updated_at REAL NOT NULL DEFAULT 0
     )
     """,
     """
@@ -68,10 +82,28 @@ SCHEMA: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_course_grants_course ON course_grants(course_id)",
     "CREATE INDEX IF NOT EXISTS idx_course_grants_user ON course_grants(tenant_id, user_id)",
+    """
+    CREATE TABLE IF NOT EXISTS longform_grants (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        longform_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        level TEXT NOT NULL DEFAULT 'read',
+        created_at REAL NOT NULL,
+        UNIQUE (longform_id, user_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_longform_grants_lf ON longform_grants(longform_id)",
+    "CREATE INDEX IF NOT EXISTS idx_longform_grants_user ON longform_grants(tenant_id, user_id)",
 )
 
 COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("courses", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "status", "TEXT NOT NULL DEFAULT 'active'"),
+    ("users", "avatar_key", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "updated_at", "REAL NOT NULL DEFAULT 0"),
+    ("tenants", "kind", "TEXT NOT NULL DEFAULT 'team'"),
+    ("tenants", "owner_user_id", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -94,6 +126,13 @@ class DatabaseAuthRepository(AuthRepository):
                 continue
             if column not in columns:
                 self.database.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        self.database.execute(
+            "UPDATE tenants SET kind = 'system' WHERE id = ? AND kind != 'system'",
+            (DEFAULT_TENANT_ID,),
+        )
+        self.database.execute(
+            "UPDATE users SET updated_at = created_at WHERE updated_at = 0"
+        )
         self._schema_ready = True
 
     def create_user(
@@ -102,6 +141,7 @@ class DatabaseAuthRepository(AuthRepository):
         password_hash: str,
         display_name: str = "",
         user_id: str = "",
+        status: str = "active",
     ) -> User:
         self.ensure_schema()
         now = time.time()
@@ -109,15 +149,92 @@ class DatabaseAuthRepository(AuthRepository):
             id=user_id or _new_id("user"),
             email=email.strip().lower(),
             display_name=display_name or email.split("@")[0],
+            status=status or "active",
             created_at=now,
             last_login_at=0.0,
+            updated_at=now,
         )
         self.database.execute(
-            "INSERT INTO users (id, email, display_name, password_hash, created_at,"
-            " last_login_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (user.id, user.email, user.display_name, password_hash, now, 0.0),
+            "INSERT INTO users (id, email, display_name, password_hash, status,"
+            " avatar_key, created_at, last_login_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                user.id,
+                user.email,
+                user.display_name,
+                password_hash,
+                user.status,
+                "",
+                now,
+                0.0,
+                now,
+            ),
         )
         return user
+
+    def update_user(
+        self,
+        user_id: str,
+        display_name: str | None = None,
+        email: str | None = None,
+        avatar_key: str | None = None,
+        status: str | None = None,
+    ) -> User | None:
+        self.ensure_schema()
+        current = self.get_user(user_id)
+        if current is None:
+            return None
+        self.database.execute(
+            "UPDATE users SET display_name = ?, email = ?, avatar_key = ?, status = ?,"
+            " updated_at = ? WHERE id = ?",
+            (
+                current.display_name if display_name is None else display_name,
+                current.email if email is None else email.strip().lower(),
+                current.avatar_key if avatar_key is None else avatar_key,
+                current.status if status is None else status,
+                time.time(),
+                user_id,
+            ),
+        )
+        return self.get_user(user_id)
+
+    def update_password_hash(self, user_id: str, password_hash: str) -> bool:
+        self.ensure_schema()
+        if self.get_user(user_id) is None:
+            return False
+        self.database.execute(
+            "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+            (password_hash, time.time(), user_id),
+        )
+        return True
+
+    def list_users(self, status: str = "", limit: int = 50) -> list[User]:
+        self.ensure_schema()
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, int(limit)))
+        rows = self.database.fetchall(
+            f"SELECT * FROM users{where} ORDER BY created_at DESC LIMIT ?",
+            tuple(params),
+        )
+        return [_to_user(row) for row in rows]
+
+    def count_users(self, exclude_ids: Sequence[str] = ()) -> int:
+        self.ensure_schema()
+        excluded = [str(item) for item in exclude_ids if item]
+        if not excluded:
+            row = self.database.fetchone("SELECT COUNT(1) AS n FROM users")
+            return int(row["n"]) if row else 0
+        placeholders = ", ".join("?" for _ in excluded)
+        row = self.database.fetchone(
+            f"SELECT COUNT(1) AS n FROM users WHERE id NOT IN ({placeholders})",
+            tuple(excluded),
+        )
+        return int(row["n"]) if row else 0
 
     def get_user(self, user_id: str) -> User | None:
         self.ensure_schema()
@@ -145,7 +262,13 @@ class DatabaseAuthRepository(AuthRepository):
         )
 
     def create_tenant(
-        self, name: str, slug: str, plan: str = "free", tenant_id: str = ""
+        self,
+        name: str,
+        slug: str,
+        plan: str = "free",
+        tenant_id: str = "",
+        kind: str = "team",
+        owner_user_id: str = "",
     ) -> Tenant:
         self.ensure_schema()
         now = time.time()
@@ -154,13 +277,56 @@ class DatabaseAuthRepository(AuthRepository):
             name=name.strip(),
             slug=slug,
             plan=plan,
+            kind=kind or "team",
+            owner_user_id=owner_user_id,
             created_at=now,
         )
         self.database.execute(
-            "INSERT INTO tenants (id, name, slug, plan, created_at) VALUES (?, ?, ?, ?, ?)",
-            (tenant.id, tenant.name, tenant.slug, tenant.plan, now),
+            "INSERT INTO tenants (id, name, slug, plan, kind, owner_user_id, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                tenant.id,
+                tenant.name,
+                tenant.slug,
+                tenant.plan,
+                tenant.kind,
+                tenant.owner_user_id,
+                now,
+            ),
         )
         return tenant
+
+    def update_tenant(
+        self,
+        tenant_id: str,
+        name: str | None = None,
+        kind: str | None = None,
+        owner_user_id: str | None = None,
+    ) -> Tenant | None:
+        self.ensure_schema()
+        current = self.get_tenant(tenant_id)
+        if current is None:
+            return None
+        self.database.execute(
+            "UPDATE tenants SET name = ?, kind = ?, owner_user_id = ? WHERE id = ?",
+            (
+                current.name if name is None else name.strip(),
+                current.kind if kind is None else kind,
+                current.owner_user_id if owner_user_id is None else owner_user_id,
+                tenant_id,
+            ),
+        )
+        return self.get_tenant(tenant_id)
+
+    def delete_tenant(self, tenant_id: str) -> bool:
+        self.ensure_schema()
+        if self.get_tenant(tenant_id) is None:
+            return False
+        self.database.execute(
+            "DELETE FROM memberships WHERE tenant_id = ?", (tenant_id,)
+        )
+        self.database.execute("DELETE FROM tenants WHERE id = ?", (tenant_id,))
+        return True
 
     def get_tenant(self, tenant_id: str) -> Tenant | None:
         self.ensure_schema()
@@ -197,7 +363,7 @@ class DatabaseAuthRepository(AuthRepository):
     def get_membership(self, tenant_id: str, user_id: str) -> Membership | None:
         self.ensure_schema()
         row = self.database.fetchone(
-            "SELECT m.*, u.email AS user_email, u.display_name AS user_display_name"
+            "SELECT m.*, u.email AS user_email, u.display_name AS user_display_name, u.avatar_key AS user_avatar_key"
             " FROM memberships m LEFT JOIN users u ON u.id = m.user_id"
             " WHERE m.tenant_id = ? AND m.user_id = ?",
             (tenant_id, user_id),
@@ -207,7 +373,7 @@ class DatabaseAuthRepository(AuthRepository):
     def list_memberships(self, user_id: str) -> list[Membership]:
         self.ensure_schema()
         rows = self.database.fetchall(
-            "SELECT m.*, u.email AS user_email, u.display_name AS user_display_name"
+            "SELECT m.*, u.email AS user_email, u.display_name AS user_display_name, u.avatar_key AS user_avatar_key"
             " FROM memberships m LEFT JOIN users u ON u.id = m.user_id"
             " WHERE m.user_id = ? ORDER BY m.created_at ASC",
             (user_id,),
@@ -217,7 +383,7 @@ class DatabaseAuthRepository(AuthRepository):
     def list_members(self, tenant_id: str) -> list[Membership]:
         self.ensure_schema()
         rows = self.database.fetchall(
-            "SELECT m.*, u.email AS user_email, u.display_name AS user_display_name"
+            "SELECT m.*, u.email AS user_email, u.display_name AS user_display_name, u.avatar_key AS user_avatar_key"
             " FROM memberships m LEFT JOIN users u ON u.id = m.user_id"
             " WHERE m.tenant_id = ? ORDER BY m.created_at ASC",
             (tenant_id,),
@@ -361,7 +527,7 @@ class DatabaseAuthRepository(AuthRepository):
     def list_grants(self, course_id: str) -> list[CourseGrant]:
         self.ensure_schema()
         rows = self.database.fetchall(
-            "SELECT g.*, u.email AS user_email, u.display_name AS user_display_name"
+            "SELECT g.*, u.email AS user_email, u.display_name AS user_display_name, u.avatar_key AS user_avatar_key"
             " FROM course_grants g LEFT JOIN users u ON u.id = g.user_id"
             " WHERE g.course_id = ? ORDER BY g.created_at ASC",
             (course_id,),
@@ -371,7 +537,7 @@ class DatabaseAuthRepository(AuthRepository):
     def get_grant(self, course_id: str, user_id: str) -> CourseGrant | None:
         self.ensure_schema()
         row = self.database.fetchone(
-            "SELECT g.*, u.email AS user_email, u.display_name AS user_display_name"
+            "SELECT g.*, u.email AS user_email, u.display_name AS user_display_name, u.avatar_key AS user_avatar_key"
             " FROM course_grants g LEFT JOIN users u ON u.id = g.user_id"
             " WHERE g.course_id = ? AND g.user_id = ?",
             (course_id, user_id),
@@ -401,6 +567,61 @@ class DatabaseAuthRepository(AuthRepository):
                 (_new_id("grant"), tenant_id, course_id, user_id, level, now),
             )
         return self.list_grants(course_id)
+
+    def list_longform_grants(self, longform_id: str) -> list[LongformGrant]:
+        self.ensure_schema()
+        rows = self.database.fetchall(
+            "SELECT g.*, u.email AS user_email, u.display_name AS user_display_name"
+            " FROM longform_grants g LEFT JOIN users u ON u.id = g.user_id"
+            " WHERE g.longform_id = ? ORDER BY g.created_at ASC",
+            (longform_id,),
+        )
+        return [_to_longform_grant(row) for row in rows]
+
+    def get_longform_grant(
+        self, longform_id: str, user_id: str
+    ) -> LongformGrant | None:
+        self.ensure_schema()
+        row = self.database.fetchone(
+            "SELECT g.*, u.email AS user_email, u.display_name AS user_display_name"
+            " FROM longform_grants g LEFT JOIN users u ON u.id = g.user_id"
+            " WHERE g.longform_id = ? AND g.user_id = ?",
+            (longform_id, user_id),
+        )
+        return _to_longform_grant(row) if row else None
+
+    def list_user_longform_grants(
+        self, tenant_id: str, user_id: str
+    ) -> list[LongformGrant]:
+        self.ensure_schema()
+        rows = self.database.fetchall(
+            "SELECT * FROM longform_grants WHERE tenant_id = ? AND user_id = ?",
+            (tenant_id, user_id),
+        )
+        return [_to_longform_grant(row) for row in rows]
+
+    def replace_longform_grants(
+        self, tenant_id: str, longform_id: str, grants: Sequence[tuple[str, str]]
+    ) -> list[LongformGrant]:
+        self.ensure_schema()
+        self.database.execute(
+            "DELETE FROM longform_grants WHERE longform_id = ?", (longform_id,)
+        )
+        now = time.time()
+        for user_id, level in grants:
+            self.database.execute(
+                "INSERT INTO longform_grants (id, tenant_id, longform_id, user_id,"
+                " level, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    _new_id("lfgrant"),
+                    tenant_id,
+                    longform_id,
+                    user_id,
+                    level,
+                    now,
+                ),
+            )
+        return self.list_longform_grants(longform_id)
 
 
 def _new_id(prefix: str) -> str:
@@ -442,36 +663,64 @@ def _to_grant(row: Mapping[str, Any]) -> CourseGrant:
     )
 
 
+def _to_longform_grant(row: Mapping[str, Any]) -> LongformGrant:
+    keys = set(row.keys())
+    return LongformGrant(
+        id=str(row["id"]),
+        tenant_id=str(row["tenant_id"]),
+        longform_id=str(row["longform_id"]),
+        user_id=str(row["user_id"]),
+        level=str(row["level"] or "read"),
+        created_at=float(row["created_at"] or 0.0),
+        user_email=str(row["user_email"] or "") if "user_email" in keys else "",
+        user_display_name=(
+            str(row["user_display_name"] or "") if "user_display_name" in keys else ""
+        ),
+    )
+
+
 def _to_user(row: Mapping[str, Any]) -> User:
+    keys = set(row.keys())
     return User(
         id=str(row["id"]),
         email=str(row["email"]),
         display_name=str(row["display_name"] or ""),
+        status=str(row["status"] or "active") if "status" in keys else "active",
+        avatar_key=str(row["avatar_key"] or "") if "avatar_key" in keys else "",
         created_at=float(row["created_at"] or 0.0),
         last_login_at=float(row["last_login_at"] or 0.0),
+        updated_at=float(row["updated_at"] or 0.0) if "updated_at" in keys else 0.0,
     )
 
 
 def _to_tenant(row: Mapping[str, Any]) -> Tenant:
+    keys = set(row.keys())
     return Tenant(
         id=str(row["id"]),
         name=str(row["name"]),
         slug=str(row["slug"] or ""),
         plan=str(row["plan"] or "free"),
+        kind=str(row["kind"] or "team") if "kind" in keys else "team",
+        owner_user_id=(
+            str(row["owner_user_id"] or "") if "owner_user_id" in keys else ""
+        ),
         created_at=float(row["created_at"] or 0.0),
     )
 
 
 def _to_membership(row: Mapping[str, Any]) -> Membership:
     keys = set(row.keys())
+    avatar_key = str(row["user_avatar_key"] or "") if "user_avatar_key" in keys else ""
+    user_id = str(row["user_id"])
     return Membership(
         id=str(row["id"]),
         tenant_id=str(row["tenant_id"]),
-        user_id=str(row["user_id"]),
+        user_id=user_id,
         role=str(row["role"] or "viewer"),
         created_at=float(row["created_at"] or 0.0),
         user_email=str(row["user_email"] or "") if "user_email" in keys else "",
         user_display_name=(
             str(row["user_display_name"] or "") if "user_display_name" in keys else ""
         ),
+        avatar_url=avatar_url_for(user_id, avatar_key),
     )

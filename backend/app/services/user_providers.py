@@ -11,7 +11,16 @@ from app.models.provider_catalog import (
     SERVER_MAX_TOKENS,
     SERVER_TEMPERATURE,
 )
-from app.models.user_provider import USER_PROVIDER_PREFIX, UserProvider
+from app.models.user_provider import (
+    SCOPE_SHARED,
+    SCOPE_USER,
+    SHARE_LEVEL_MANAGE,
+    SHARE_LEVEL_USE,
+    SHARE_LEVELS,
+    USER_PROVIDER_PREFIX,
+    ProviderShare,
+    UserProvider,
+)
 from app.ports.llm import LLMProvider
 from app.ports.user_provider_repository import UserProviderRepository
 from app.services.crypto import decrypt_text, encrypt_text, mask_secret
@@ -79,6 +88,97 @@ class UserProviderService:
             if provider.is_default:
                 return provider
         return None
+
+    def get_any(self, provider_id: str) -> UserProvider | None:
+        if not provider_id:
+            return None
+        self.repository.ensure_schema()
+        return self.repository.get_provider_any(provider_id)
+
+    def share_level(self, provider_id: str, user_id: str) -> str:
+        if not provider_id or not user_id:
+            return ""
+        self.repository.ensure_schema()
+        share = self.repository.get_share(provider_id, user_id)
+        return share.level if share is not None else ""
+
+    def can_use_shared(self, provider_id: str, user_id: str) -> bool:
+        return self.share_level(provider_id, user_id) in SHARE_LEVELS
+
+    def can_manage_shared(self, provider_id: str, user_id: str) -> bool:
+        return self.share_level(provider_id, user_id) == SHARE_LEVEL_MANAGE
+
+    def share_for(self, provider_id: str, user_id: str) -> ProviderShare | None:
+        if not provider_id or not user_id:
+            return None
+        self.repository.ensure_schema()
+        return self.repository.get_share(provider_id, user_id)
+
+    def list_shares(self, provider_id: str) -> list[ProviderShare]:
+        self.repository.ensure_schema()
+        return self.repository.list_shares(provider_id)
+
+    def shared_with_me(self, user_id: str) -> list[tuple[UserProvider, ProviderShare]]:
+        self.repository.ensure_schema()
+        items: list[tuple[UserProvider, ProviderShare]] = []
+        for share in self.repository.list_shared_with(user_id):
+            provider = self.repository.get_provider_any(share.provider_id)
+            if provider is None or not provider.enabled:
+                continue
+            if provider.user_id == user_id:
+                continue
+            items.append((provider, share))
+        return items
+
+    def resolve_usable(
+        self, user_id: str, provider_id: str
+    ) -> tuple[UserProvider, str] | None:
+        own = self.get(user_id, provider_id)
+        if own is not None:
+            return own, SCOPE_USER
+        if not self.can_use_shared(provider_id, user_id):
+            return None
+        shared = self.get_any(provider_id)
+        if shared is None:
+            return None
+        return shared, SCOPE_SHARED
+
+    def replace_shares(
+        self, owner_user_id: str, provider_id: str, shares: list[tuple[str, str]]
+    ) -> list[ProviderShare]:
+        current = self.require(owner_user_id, provider_id)
+        cleaned: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for user_id, level in shares:
+            target = (user_id or "").strip()
+            if not target or target in seen or target == owner_user_id:
+                continue
+            seen.add(target)
+            cleaned.append(
+                (target, SHARE_LEVEL_MANAGE if level == SHARE_LEVEL_MANAGE else SHARE_LEVEL_USE)
+            )
+        return self.repository.replace_shares(
+            current.id, owner_user_id, cleaned
+        )
+
+    def shared_option(
+        self, provider: UserProvider, share: ProviderShare, owner_name: str = ""
+    ) -> dict[str, Any]:
+        key = self.api_key(provider)
+        return {
+            "id": provider.id,
+            "name": provider.name,
+            "kind": provider.kind,
+            "models": list(provider.models),
+            "has_key": bool(key),
+            "is_default": False,
+            "enabled": provider.enabled,
+            "scope": SCOPE_SHARED,
+            "shared_level": share.level,
+            "can_manage": share.level == SHARE_LEVEL_MANAGE,
+            "owner_user_id": provider.user_id,
+            "owner_name": owner_name,
+        }
 
     def payload(self, provider: UserProvider) -> dict[str, Any]:
         key = self.api_key(provider)
@@ -176,7 +276,12 @@ class UserProviderService:
         enabled: bool | None = None,
         is_default: bool | None = None,
     ) -> UserProvider:
-        current = self.require(user_id, provider_id)
+        current = self.get(user_id, provider_id)
+        if current is None:
+            shared = self.get_any(provider_id)
+            if shared is None or not self.can_manage_shared(provider_id, user_id):
+                raise ProviderNotFoundError("个人通道不存在")
+            current = shared
         cipher = current.api_key_cipher
         raw_key = (api_key or "").strip()
         if raw_key:
@@ -207,6 +312,7 @@ class UserProviderService:
         current = self.require(user_id, provider_id)
         if current.is_default:
             raise DefaultProviderError("个人默认通道不可删除，请先切换默认通道")
+        self.repository.delete_shares(current.id)
         self.repository.delete_provider(user_id, provider_id)
 
     def resolve_model(self, provider: UserProvider, model: str = "") -> str:
@@ -224,7 +330,10 @@ class UserProviderService:
         model: str = "",
         api_key: str = "",
     ) -> LLMProvider:
-        provider = self.require(user_id, provider_id)
+        resolved = self.resolve_usable(user_id, provider_id)
+        if resolved is None:
+            raise ProviderNotFoundError("个人通道不存在")
+        provider = resolved[0]
         if not provider.enabled:
             raise ProviderDisabledError("该个人通道已被禁用")
         if provider.kind == PROVIDER_KIND_DUMMY:

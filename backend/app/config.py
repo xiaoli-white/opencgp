@@ -235,6 +235,7 @@ class AuthConfig:
     mode: str = "disabled"
     secret: str = ""
     token_ttl_hours: int = 168
+    require_approval: bool = True
 
     @classmethod
     def from_env(cls) -> "AuthConfig":
@@ -242,6 +243,8 @@ class AuthConfig:
             mode=_env("AUTH_MODE", "disabled"),
             secret=_env("AUTH_SECRET", ""),
             token_ttl_hours=int(_env("AUTH_TOKEN_TTL_HOURS", "168") or 168),
+            require_approval=_env("REQUIRE_APPROVAL", "true").strip().lower()
+            not in ("0", "false", "no", "off"),
         )
 
 

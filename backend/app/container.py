@@ -247,6 +247,7 @@ class Container:
                 secret=settings.secret,
                 ttl_seconds=settings.token_ttl_hours * 3600,
                 mode=settings.mode,
+                require_approval=settings.require_approval,
             )
 
         return self._get_or_build("auth_service", build)
@@ -311,9 +312,16 @@ class Container:
                 default_provider=self.llm,
                 catalog=self.provider_catalog(),
                 user_providers=self.user_providers(),
+                user_names=self._lookup_user,
             )
 
         return self._get_or_build("provider_settings", build)
+
+    def _lookup_user(self, user_id: str):
+        try:
+            return self.auth_service().get_user(user_id)
+        except Exception:
+            return None
 
     def llm_for(self, user_id: str) -> LLMProvider:
         service = self.provider_settings()

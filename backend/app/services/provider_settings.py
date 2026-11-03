@@ -18,7 +18,13 @@ from app.models.provider_setting import (
     SETTING_SOURCE_USER,
     ProviderSetting,
 )
-from app.models.user_provider import SCOPE_SERVER, SCOPE_USER, UserProvider
+from app.models.user_provider import (
+    SCOPE_SERVER,
+    SCOPE_SHARED,
+    SCOPE_USER,
+    ProviderShare,
+    UserProvider,
+)
 from app.ports.llm import LLMProvider
 from app.ports.provider_settings_repository import ProviderSettingsRepository
 from app.services.crypto import decrypt_text, encrypt_text, mask_secret
@@ -59,12 +65,14 @@ class ProviderSettingsService:
         default_provider: Callable[[], LLMProvider] | None = None,
         catalog: ProviderCatalogService | None = None,
         user_providers: UserProviderService | None = None,
+        user_names: Callable[[str], Any] | None = None,
     ) -> None:
         self.repository = repository
         self.server = server
         self.secret = secret or ""
         self._provider_factory = provider_factory
         self._default_provider = default_provider
+        self._user_names = user_names
         self.catalog = catalog or ProviderCatalogService(
             repository=None,
             server=server,
@@ -110,6 +118,60 @@ class ProviderSettingsService:
             return self.user_providers.get(user_id, provider_id)
         except ProviderNotFoundError:
             return None
+
+    def _shared(
+        self, user_id: str, provider_id: str
+    ) -> tuple[UserProvider, ProviderShare] | None:
+        share = self.user_providers.share_for(provider_id, user_id)
+        if share is None:
+            return None
+        provider = self.user_providers.get_any(provider_id)
+        if provider is None or provider.user_id == user_id:
+            return None
+        return provider, share
+
+    def _owner_name(self, owner_user_id: str) -> str:
+        if not owner_user_id:
+            return ""
+        if self._user_names is None:
+            return owner_user_id
+        try:
+            user = self._user_names(owner_user_id)
+        except Exception:
+            return owner_user_id
+        if user is None:
+            return owner_user_id
+        return getattr(user, "display_name", "") or getattr(user, "email", "")
+
+    def _from_shared(
+        self,
+        provider: UserProvider,
+        share: ProviderShare,
+        setting: ProviderSetting | None,
+        user_key: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> ResolvedProvider:
+        models = list(provider.models)
+        model = (setting.model if setting else "") or (
+            models[0] if models else self.server.model
+        )
+        return ResolvedProvider(
+            source=SETTING_SOURCE_USER,
+            scope=SCOPE_SHARED,
+            provider_id=provider.id,
+            provider_name=provider.name,
+            kind=provider.kind,
+            base_url=provider.base_url or self.server.base_url,
+            model=model,
+            api_key=user_key or self.user_providers.api_key(provider),
+            temperature=temperature,
+            max_tokens=max_tokens,
+            models=models,
+            updated_at=max(
+                provider.updated_at, setting.updated_at if setting else 0.0
+            ),
+        )
 
     def _from_personal(
         self,
@@ -181,6 +243,11 @@ class ProviderSettingsService:
                 return self._from_personal(
                     personal, setting, user_key, temperature, max_tokens
                 )
+            shared = self._shared(user_id, provider_id)
+            if shared is not None and shared[0].enabled:
+                return self._from_shared(
+                    shared[0], shared[1], setting, user_key, temperature, max_tokens
+                )
             server_provider = self.catalog.get(provider_id)
             if server_provider is not None and server_provider.enabled:
                 return self._from_server(
@@ -247,6 +314,12 @@ class ProviderSettingsService:
             if not provider.enabled:
                 continue
             items.append(self.user_providers.option(provider))
+        for provider, share in self.user_providers.shared_with_me(user_id):
+            items.append(
+                self.user_providers.shared_option(
+                    provider, share, self._owner_name(provider.user_id)
+                )
+            )
         for provider in self.catalog.list():
             if not provider.enabled:
                 continue
@@ -304,6 +377,15 @@ class ProviderSettingsService:
                 if not personal.enabled:
                     raise ProviderDisabledError("指定的通道已被禁用")
                 next_provider_id = personal.id
+                next_backend = ""
+                next_base_url = ""
+            elif self.user_providers.can_use_shared(target, user_id):
+                shared = self.user_providers.get_any(target)
+                if shared is None:
+                    raise ProviderNotFoundError("指定的 provider 不存在")
+                if not shared.enabled:
+                    raise ProviderDisabledError("指定的通道已被禁用")
+                next_provider_id = shared.id
                 next_backend = ""
                 next_base_url = ""
             else:
