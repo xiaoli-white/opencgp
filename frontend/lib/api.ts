@@ -162,6 +162,19 @@ export type ServerProvider = {
   updated_at?: number | null;
 };
 
+export type UserProvider = {
+  id: string;
+  name: string;
+  kind: string;
+  base_url: string;
+  models: string[];
+  enabled: boolean;
+  is_default: boolean;
+  has_key: boolean;
+  api_key_masked: string;
+  updated_at?: number | null;
+};
+
 export type ProviderOption = {
   id: string;
   name: string;
@@ -170,6 +183,7 @@ export type ProviderOption = {
   has_key: boolean;
   is_default: boolean;
   enabled?: boolean;
+  scope?: "user" | "server";
 };
 
 export type ProviderServerInfo = {
@@ -188,6 +202,9 @@ export type ProviderSettings = {
   source: "user" | "server";
   provider_id?: string;
   provider_name?: string;
+  active_provider_id?: string;
+  active_scope?: "user" | "server";
+  scope?: "user" | "server";
   backend?: string;
   base_url?: string;
   model: string;
@@ -930,6 +947,32 @@ export const api = {
 
   testAdminProvider: (providerId: string, payload?: { model?: string }) =>
     request<ProviderTestResult>(`/api/v1/admin/providers/${providerId}/test`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    }),
+
+  listMyProviders: () =>
+    request<{ count: number; providers: UserProvider[] }>("/api/v1/settings/providers"),
+
+  createMyProvider: (payload: ServerProviderPayload) =>
+    request<UserProvider>("/api/v1/settings/providers", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateMyProvider: (providerId: string, payload: ServerProviderPayload) =>
+    request<UserProvider>(`/api/v1/settings/providers/${providerId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteMyProvider: (providerId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/settings/providers/${providerId}`, {
+      method: "DELETE",
+    }),
+
+  testMyProvider: (providerId: string, payload?: { model?: string }) =>
+    request<ProviderTestResult>(`/api/v1/settings/providers/${providerId}/test`, {
       method: "POST",
       body: JSON.stringify(payload ?? {}),
     }),

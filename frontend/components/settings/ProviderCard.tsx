@@ -3,7 +3,9 @@ import { motion } from "framer-motion";
 import {
   AlertCircle,
   ArrowDown,
+  Check,
   CheckCircle2,
+  ChevronDown,
   Cpu,
   Eye,
   EyeOff,
@@ -33,12 +35,113 @@ type FormState = {
 
 function toForm(data: ProviderSettings): FormState {
   return {
-    provider_id: data.provider_id || data.server?.provider_id || data.server?.id || "",
+    provider_id:
+      data.active_provider_id ||
+      data.provider_id ||
+      data.server?.provider_id ||
+      data.server?.id ||
+      "",
     model: data.model || "",
     api_key: "",
     temperature: String(data.temperature ?? 0.7),
     max_tokens: String(data.max_tokens && data.max_tokens > 0 ? data.max_tokens : 2048),
   };
+}
+
+function optionLabel(item: ProviderOption): string {
+  const prefix = item.scope === "user" ? "我的" : "";
+  const star = item.is_default ? " · 默认" : "";
+  const off = item.enabled === false ? " · 已停用" : "";
+  return `${prefix}${item.name}（${item.kind}）${star}${off}`;
+}
+
+type PickerProps = {
+  value: string;
+  mine: ProviderOption[];
+  server: ProviderOption[];
+  disabled: boolean;
+  onChange: (id: string) => void;
+};
+
+function ProviderPicker({ value, mine, server, disabled, onChange }: PickerProps) {
+  const [open, setOpen] = useState(false);
+  const all = [...mine, ...server];
+  const current = all.find((item) => item.id === value);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
+  const groups: { label: string; items: ProviderOption[] }[] = [
+    { label: "我的通道", items: mine },
+    { label: "服务器通道", items: server },
+  ];
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        disabled={disabled || all.length === 0}
+        className="select flex w-full items-center gap-1 text-left disabled:opacity-60"
+      >
+        <span className="flex-1 truncate">
+          {current ? optionLabel(current) : all.length === 0 ? "暂无可用通道" : "选择通道"}
+        </span>
+        <ChevronDown
+          size={13}
+          className={clsx("shrink-0 text-slate-400 transition", open && "rotate-180")}
+        />
+      </button>
+      {open ? (
+        <>
+          <div
+            className="fixed inset-0 z-20"
+            onClick={() => setOpen(false)}
+            aria-hidden="true"
+          />
+          <div className="absolute left-0 right-0 z-30 mt-1 max-h-64 overflow-y-auto rounded-xl border border-white/60 bg-white/90 p-1 shadow-glass backdrop-blur-xl dark:border-white/10 dark:bg-[#131a2e]/95">
+            {groups.map((group) => (
+              <div key={group.label}>
+                <p className="px-2 pb-0.5 pt-1.5 text-[9.5px] uppercase tracking-wide text-slate-400">
+                  {group.label}
+                  <span className="ml-1 normal-case">（{group.items.length}）</span>
+                </p>
+                {group.items.length === 0 ? (
+                  <p className="px-2 pb-1 text-[10px] text-slate-400">暂无</p>
+                ) : (
+                  group.items.map((item) => {
+                    const active = item.id === value;
+                    const off = item.enabled === false;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          onChange(item.id);
+                          setOpen(false);
+                        }}
+                        className={clsx(
+                          "flex w-full items-center gap-1 rounded-lg px-2 py-1.5 text-left text-[11px] transition",
+                          active
+                            ? "bg-gradient-to-r from-indigo-500 to-violet-500 text-white"
+                            : "text-slate-700 hover:bg-indigo-500/10 dark:text-slate-200",
+                          off && !active && "opacity-55",
+                        )}
+                      >
+                        <span className="flex-1 truncate">{optionLabel(item)}</span>
+                        {active ? <Check size={11} className="shrink-0" /> : null}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 export default function ProviderCard({
@@ -54,6 +157,7 @@ export default function ProviderCard({
   const [testing, setTesting] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
+  const [showMine, setShowMine] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,18 +176,25 @@ export default function ProviderCard({
     void load();
   }, [load]);
 
-  const providers: ProviderOption[] = useMemo(
-    () => data?.providers ?? [],
-    [data],
+  useEffect(() => {
+    const handler = () => void load();
+    window.addEventListener("course-studio:providers-changed", handler);
+    return () => window.removeEventListener("course-studio:providers-changed", handler);
+  }, [load]);
+
+  const providers: ProviderOption[] = useMemo(() => data?.providers ?? [], [data]);
+  const mine = useMemo(
+    () => providers.filter((item) => item.scope === "user"),
+    [providers],
+  );
+  const serverList = useMemo(
+    () => providers.filter((item) => item.scope !== "user"),
+    [providers],
   );
 
   const activeProvider = useMemo(() => {
     if (!providers.length) return null;
-    return (
-      providers.find((item) => item.id === form?.provider_id) ??
-      providers.find((item) => item.is_default) ??
-      providers[0]
-    );
+    return providers.find((item) => item.id === form?.provider_id) ?? providers[0];
   }, [providers, form?.provider_id]);
 
   const modelOptions = activeProvider?.models ?? [];
@@ -94,10 +205,9 @@ export default function ProviderCard({
 
   const pickProvider = (providerId: string) => {
     const target = providers.find((item) => item.id === providerId);
-    const first = target?.models?.[0] ?? "";
     update({
       provider_id: providerId,
-      model: first || (form && target?.models?.length === 0 ? "" : form?.model ?? ""),
+      model: target?.models?.[0] ?? "",
     });
   };
 
@@ -175,9 +285,17 @@ export default function ProviderCard({
   const disabled = !canWrite || busy || loading || !form;
   const summary = `${data?.provider_name || activeProvider?.name || "服务器默认"} · ${data?.model || "默认模型"}`;
 
-  const jumpToServer = () => {
-    const target = document.getElementById("server-providers");
+  const jumpTo = (id: string) => {
+    const target = document.getElementById(id);
     if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const toggleMine = () => {
+    setShowMine((prev) => {
+      const next = !prev;
+      if (next) setTimeout(() => jumpTo("my-providers"), 60);
+      return next;
+    });
   };
 
   return (
@@ -220,27 +338,21 @@ export default function ProviderCard({
       ) : (
         <>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <label className="block">
+            <div className="block">
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
                 模型通道
               </span>
-              <select
+              <ProviderPicker
                 value={form.provider_id}
-                onChange={(event) => pickProvider(event.target.value)}
-                disabled={disabled || providers.length === 0}
-                className="select"
-              >
-                {providers.length === 0 ? (
-                  <option value="">暂无可用通道</option>
-                ) : null}
-                {providers.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}（{item.kind}）
-                    {item.is_default ? " · 默认" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
+                mine={mine}
+                server={serverList}
+                disabled={disabled}
+                onChange={pickProvider}
+              />
+              <span className="mt-1 block text-[10px] text-slate-400">
+                我的通道 {mine.length} 个 · 服务器通道 {serverList.length} 个
+              </span>
+            </div>
             <label className="block">
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
                 模型
@@ -363,10 +475,21 @@ export default function ProviderCard({
               <RotateCcw size={12} />
               恢复服务器默认
             </button>
+            <button
+              type="button"
+              onClick={toggleMine}
+              className="btn-quiet px-2.5 py-1.5 text-[11px]"
+            >
+              管理我的通道
+              <ChevronDown
+                size={12}
+                className={clsx("transition", showMine && "rotate-180")}
+              />
+            </button>
             {canManageServer ? (
               <button
                 type="button"
-                onClick={jumpToServer}
+                onClick={() => jumpTo("server-providers")}
                 className="text-[10.5px] text-indigo-500 underline-offset-2 transition hover:underline dark:text-indigo-300"
               >
                 去管理服务器模型

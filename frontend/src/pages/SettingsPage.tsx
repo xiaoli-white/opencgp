@@ -24,6 +24,7 @@ import {
 } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
 import ProviderCard from "@/components/settings/ProviderCard";
+import MyProvidersCard from "@/components/settings/MyProvidersCard";
 import ServerProvidersCard from "@/components/settings/ServerProvidersCard";
 import type { RoleAction } from "@/lib/session";
 
@@ -297,6 +298,18 @@ export default function SettingsPage() {
       <ProviderCard
         canWrite={can("write")}
         canManageServer={canServer}
+        onNotice={(message) => {
+          setError("");
+          setNotice(message);
+        }}
+        onError={(message) => {
+          setNotice("");
+          setError(message);
+        }}
+      />
+
+      <MyProvidersCard
+        canWrite={can("write")}
         onNotice={(message) => {
           setError("");
           setNotice(message);
