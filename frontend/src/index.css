@@ -28,6 +28,8 @@ body {
 
 html {
   -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   scroll-behavior: smooth;
 }
 
@@ -753,4 +755,48 @@ select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid rgba(99, 102, 241, 0.55);
   outline-offset: 2px;
+}
+
+.fab {
+  position: fixed;
+  right: 1rem;
+  bottom: calc(1rem + env(safe-area-inset-bottom));
+  z-index: 40;
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media (max-width: 1023px) {
+  .app-main {
+    padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea,
+  .input,
+  .select,
+  textarea.input {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 640px) {
+  .btn,
+  .btn-quiet {
+    min-height: 40px;
+  }
+
+  .btn-quiet {
+    min-width: 40px;
+    justify-content: center;
+  }
+
+  .chip {
+    min-height: 24px;
+  }
 }

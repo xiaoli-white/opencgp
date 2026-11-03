@@ -26,7 +26,7 @@ export default function ThemeToggle() {
       type="button"
       onClick={toggle}
       aria-label={dark ? "切换到亮色主题" : "切换到暗色主题"}
-      className="grid h-9 w-9 place-items-center rounded-full border border-white/60 bg-white/60 text-slate-500 transition hover:text-indigo-600 hover:shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-slate-300 dark:hover:text-indigo-300"
+      className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/60 bg-white/60 text-slate-500 transition hover:text-indigo-600 hover:shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-slate-300 dark:hover:text-indigo-300"
     >
       {dark ? <Sun size={16} /> : <Moon size={16} />}
     </button>

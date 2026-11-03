@@ -82,7 +82,7 @@ export default function HomePage() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: "easeOut" }}
-        className="glass relative overflow-hidden rounded-[2rem] p-6 shadow-glass sm:p-9"
+        className="glass relative overflow-hidden rounded-[1.5rem] p-5 shadow-glass sm:rounded-[2rem] sm:p-9"
       >
         <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-gradient-to-br from-indigo-400/30 to-violet-400/20 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-24 -left-16 h-56 w-56 rounded-full bg-gradient-to-tr from-violet-300/30 to-indigo-300/10 blur-3xl" />
@@ -91,29 +91,29 @@ export default function HomePage() {
             <Sparkles size={11} />
             对话即作者 · 课程即活文档
           </span>
-          <h1 className="mt-4 max-w-2xl text-[28px] font-semibold leading-tight tracking-tight text-slate-900 dark:text-white sm:text-[38px]">
+          <h1 className="mt-3 max-w-2xl text-2xl font-semibold leading-tight tracking-tight text-slate-900 dark:text-white sm:mt-4 sm:text-[38px]">
             把知识，写成一门
             <span className="text-gradient">会生长的课程</span>
           </h1>
-          <p className="mt-3 max-w-2xl font-reading text-[15px] leading-relaxed text-slate-600 dark:text-slate-300 sm:text-base">
+          <p className="mt-3 max-w-2xl font-reading text-[14px] leading-relaxed text-slate-600 dark:text-slate-300 sm:text-base">
             AI 先检索证据、逐段带引用写作，再陪你追问与局部修改。每一次改动都沉淀为可对比、可回滚的版本——课程不是一次性产物，而是一份持续打磨的活文档。
           </p>
-          <div className="mt-6 flex flex-wrap items-center gap-2.5">
+          <div className="mt-5 flex flex-col gap-2 sm:mt-6 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2.5">
             <button
               type="button"
               onClick={() => setFormOpen(true)}
               disabled={!can("write")}
               title={can("write") ? "" : "当前角色只读"}
-              className="btn btn-primary"
+              className="btn btn-primary w-full justify-center sm:w-auto"
             >
               <Plus size={15} />
               新建课程
             </button>
-            <Link to="/kb" className="btn btn-ghost">
+            <Link to="/kb" className="btn btn-ghost w-full justify-center sm:w-auto">
               <BookOpen size={14} />
               打开知识库
             </Link>
-            <span className="text-[11px] text-slate-400 dark:text-slate-500">
+            <span className="text-center text-[11px] text-slate-400 dark:text-slate-500 sm:text-left">
               已有 {courses.length} 门课程
             </span>
           </div>
@@ -296,7 +296,7 @@ export default function HomePage() {
         </div>
 
         {loading ? (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {[0, 1, 2].map((item) => (
               <div
                 key={item}
@@ -325,7 +325,7 @@ export default function HomePage() {
             </button>
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {courses.map((course, index) => (
               <motion.article
                 key={course.id}

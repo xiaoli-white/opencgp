@@ -391,7 +391,7 @@ export default function BlueprintBoard({
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
           {[
             {
               icon: Layers,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
 import {
   ArrowRight,
@@ -8,7 +8,9 @@ import {
   ChevronRight,
   Clock3,
   Layers,
+  List,
   ScrollText,
+  X,
 } from "lucide-react";
 import {
   api,
@@ -47,6 +49,7 @@ export default function CourseReader({
     [lessons],
   );
 
+  const [tocOpen, setTocOpen] = useState(false);
   const [metaMap, setMetaMap] = useState<Record<string, LessonMeta>>({});
   const [activeId, setActiveId] = useState<string>(readable[0]?.id ?? "");
   const [ratio, setRatio] = useState(0);
@@ -173,8 +176,40 @@ export default function CourseReader({
 
   return (
     <div className="grid gap-5 lg:grid-cols-[230px_minmax(0,1fr)]">
-      <aside className="glass hidden max-h-[calc(100vh-7rem)] flex-col rounded-3xl p-3.5 shadow-glass lg:sticky lg:top-24 lg:flex">
-        <div className="px-1">
+      <div className="flex items-center justify-between gap-2 lg:hidden">
+        <span className="chip-muted">
+          <ScrollText size={11} />
+          连续阅读 · {readable.length} 讲
+        </span>
+        <button
+          type="button"
+          onClick={() => setTocOpen(true)}
+          className="btn btn-ghost shrink-0"
+        >
+          <List size={14} />
+          目录
+        </button>
+      </div>
+      <AnimatePresence>
+        {tocOpen && (
+          <motion.div
+            className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm lg:hidden"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setTocOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+      <aside
+        className={clsx(
+          "glass no-scrollbar flex-col rounded-3xl p-3.5 shadow-glass lg:sticky lg:top-24 lg:flex lg:max-h-[calc(100vh-7rem)]",
+          "max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-50 max-lg:m-3 max-lg:w-[min(300px,calc(100vw-1.5rem))] max-lg:max-h-none max-lg:overflow-y-auto",
+          tocOpen ? "flex" : "hidden",
+        )}
+      >
+        <div className="flex items-start justify-between gap-2 px-1">
+          <div className="min-w-0">
           <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
             <Layers size={11} />
             连续阅读
@@ -183,6 +218,15 @@ export default function CourseReader({
             {readable.length} 讲 ·{" "}
             {progress ? `已通过 ${progress.approved}/${progress.total}` : "阅读中"}
           </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setTocOpen(false)}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 lg:hidden"
+            aria-label="关闭目录"
+          >
+            <X size={16} />
+          </button>
         </div>
 
         <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80 dark:bg-white/10">
@@ -200,7 +244,10 @@ export default function CourseReader({
               <button
                 key={lesson.id}
                 type="button"
-                onClick={() => jumpTo(lesson.id)}
+                onClick={() => {
+                  jumpTo(lesson.id);
+                  setTocOpen(false);
+                }}
                 className={clsx(
                   "flex w-full items-start gap-2 rounded-xl px-2 py-1.5 text-left transition",
                   active
@@ -254,7 +301,7 @@ export default function CourseReader({
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, ease: "easeOut" }}
-              className="glass scroll-mt-24 rounded-3xl p-5 shadow-glass sm:p-8"
+              className="glass scroll-mt-24 rounded-3xl p-4 shadow-glass sm:p-8"
             >
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200/70 pb-4 dark:border-white/10">
                 <div className="min-w-0">

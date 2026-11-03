@@ -219,9 +219,9 @@ export default function ChatPanel({
             animate={{ x: 0 }}
             exit={{ x: 480 }}
             transition={{ type: "spring", stiffness: 300, damping: 32 }}
-            className="glass absolute inset-y-0 right-0 flex w-full flex-col border-l border-white/50 shadow-glass sm:w-[470px] dark:border-white/10"
+            className="glass absolute inset-0 flex w-full flex-col rounded-t-[1.5rem] border-t border-white/50 shadow-glass sm:inset-y-0 sm:right-0 sm:left-auto sm:w-[470px] sm:rounded-none sm:rounded-l-3xl sm:border-l sm:border-t-0 dark:border-white/10"
           >
-            <header className="flex items-start gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-white/10">
+            <header className="sticky top-0 z-10 flex items-start gap-3 border-b border-slate-200/70 bg-white/70 px-4 py-3 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/60 sm:bg-transparent sm:px-5 sm:py-4 sm:backdrop-blur-none dark:sm:bg-transparent">
               <div className="brand-gradient mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-2xl text-white">
                 <MessageSquare size={16} />
               </div>
@@ -236,7 +236,7 @@ export default function ChatPanel({
               <button
                 type="button"
                 onClick={onClose}
-                className="grid h-8 w-8 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
                 aria-label="关闭对话面板"
               >
                 <X size={16} />
@@ -476,7 +476,7 @@ export default function ChatPanel({
               <div ref={bottomRef} />
             </div>
 
-            <footer className="border-t border-slate-200/70 px-5 py-4 dark:border-white/10">
+            <footer className="safe-bottom sticky bottom-0 z-10 border-t border-slate-200/70 bg-white/70 px-4 py-3 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/60 sm:bg-transparent sm:px-5 sm:py-4 sm:backdrop-blur-none dark:sm:bg-transparent">
               {tab === "ask" && (
                 <div className="mb-2 flex flex-wrap gap-1.5">
                   {ASK_PRESETS.map((preset) => (

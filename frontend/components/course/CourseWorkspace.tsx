@@ -9,6 +9,7 @@ import {
   ChevronRight,
   History,
   Loader2,
+  List,
   Lock,
   MessageSquare,
   Network,
@@ -81,6 +82,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   const [topK, setTopK] = useState(5);
   const [generateMode, setGenerateMode] = useState<GenerationMode>("strict");
   const [chatOpen, setChatOpen] = useState(false);
+  const [outlineOpen, setOutlineOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<string | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [grantsOpen, setGrantsOpen] = useState(false);
@@ -481,12 +483,12 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               </span>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="no-scrollbar -mx-1 flex items-center gap-2 overflow-x-auto px-1">
             {can("manage_members") ? (
               <button
                 type="button"
                 onClick={() => setGrantsOpen(true)}
-                className="btn btn-ghost"
+                className="btn btn-ghost shrink-0"
               >
                 <Lock size={13} />
                 可见范围
@@ -494,10 +496,18 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
             ) : null}
             <button
               type="button"
+              onClick={() => setOutlineOpen(true)}
+              className="btn btn-ghost shrink-0 lg:hidden"
+            >
+              <List size={14} />
+              大纲
+            </button>
+            <button
+              type="button"
               {...guard}
               onClick={() => setChatOpen(true)}
               disabled={readOnly || lockBlocked || !activeLesson}
-              className="btn btn-primary"
+              className="btn btn-primary hidden shrink-0 sm:inline-flex"
             >
               <MessageSquare size={14} />
               追问 / 修改
@@ -513,7 +523,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
       ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="inline-flex items-center gap-0.5 rounded-full border border-slate-200/70 bg-white/50 p-0.5 shadow-[0_10px_26px_-24px_rgba(99,102,241,0.9)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.05]">
+        <div className="no-scrollbar inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full border border-slate-200/70 bg-white/50 p-0.5 shadow-[0_10px_26px_-24px_rgba(99,102,241,0.9)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.05]">
           {VIEWS.map((item) => {
             const active = view === item.value;
             const Icon = item.icon;
@@ -565,7 +575,25 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
 
       {view === "reader" ? (
       <div className="grid gap-5 lg:grid-cols-[250px_minmax(0,1fr)] xl:grid-cols-[250px_minmax(0,1fr)_320px]">
-        <aside className="glass flex max-h-[calc(100vh-7rem)] flex-col rounded-3xl p-3.5 shadow-glass lg:sticky lg:top-24">
+        <AnimatePresence>
+          {outlineOpen && (
+            <motion.div
+              className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm lg:hidden"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setOutlineOpen(false)}
+            />
+          )}
+        </AnimatePresence>
+        <aside
+          className={clsx(
+            "glass no-scrollbar flex-col rounded-3xl p-3.5 shadow-glass",
+            "max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-50 max-lg:m-3 max-lg:w-[min(300px,calc(100vw-1.5rem))] max-lg:max-h-none max-lg:overflow-y-auto",
+            "hidden lg:sticky lg:top-24 lg:flex lg:max-h-[calc(100vh-7rem)]",
+            outlineOpen ? "max-lg:flex" : "",
+          )}
+        >
           <div className="flex items-center justify-between px-1">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
@@ -575,14 +603,24 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 {detail.lesson_count} 讲
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setFormOpen((value) => !value)}
-              className="grid h-7 w-7 place-items-center rounded-full bg-indigo-500/10 text-indigo-600 transition hover:bg-indigo-500/20 dark:text-indigo-300"
-              aria-label="新增讲次"
-            >
-              <Plus size={14} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setFormOpen((value) => !value)}
+                className="grid h-9 w-9 place-items-center rounded-full bg-indigo-500/10 text-indigo-600 transition hover:bg-indigo-500/20 dark:text-indigo-300"
+                aria-label="新增讲次"
+              >
+                <Plus size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setOutlineOpen(false)}
+                className="grid h-9 w-9 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 lg:hidden"
+                aria-label="关闭大纲"
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
           <AnimatePresence initial={false}>
@@ -643,6 +681,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     onClick={() => {
                       setActiveId(lesson.id);
                       setGenerateOpen(false);
+                      setOutlineOpen(false);
                     }}
                     className={clsx(
                       "group flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition",
@@ -695,7 +734,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
 
         <div className="min-w-0 space-y-4">
           {activeLesson ? (
-            <article className="glass rounded-3xl p-5 shadow-glass sm:p-8">
+            <article className="glass rounded-3xl p-4 shadow-glass sm:p-8">
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200/70 pb-5 dark:border-white/10">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500">
@@ -721,7 +760,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     {activeLesson.title}
                   </h2>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="no-scrollbar -mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-0.5">
                   <button
                     type="button"
                     {...guard}
@@ -1037,6 +1076,19 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {view === "reader" && activeLesson ? (
+        <button
+          type="button"
+          onClick={() => setChatOpen(true)}
+          disabled={readOnly || lockBlocked}
+          title={readOnly ? "当前角色只读" : lockBlocked ? lockReason : "追问 / 修改"}
+          aria-label="追问 / 修改"
+          className="fab brand-gradient grid h-14 w-14 place-items-center rounded-full text-white shadow-brand transition active:scale-95 disabled:opacity-45 sm:hidden"
+        >
+          <MessageSquare size={20} />
+        </button>
+      ) : null}
 
       <ChatPanel
         open={chatOpen}

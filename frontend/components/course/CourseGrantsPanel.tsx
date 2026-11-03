@@ -94,7 +94,7 @@ export default function CourseGrantsPanel({
             exit={{ x: 40, opacity: 0 }}
             transition={{ duration: 0.22, ease: "easeOut" }}
             onClick={(event) => event.stopPropagation()}
-            className="glass no-scrollbar h-full w-full max-w-md overflow-y-auto p-5 shadow-glass"
+            className="glass no-scrollbar h-full w-full overflow-y-auto p-4 shadow-glass sm:max-w-md sm:p-5"
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
