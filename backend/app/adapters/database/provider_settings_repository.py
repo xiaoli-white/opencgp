@@ -15,6 +15,7 @@ SCHEMA: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS user_provider_settings (
         user_id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL DEFAULT '',
         backend TEXT NOT NULL DEFAULT '',
         base_url TEXT NOT NULL DEFAULT '',
         model TEXT NOT NULL DEFAULT '',
@@ -26,10 +27,15 @@ SCHEMA: tuple[str, ...] = (
     """,
 )
 
+COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("user_provider_settings", "provider_id", "TEXT NOT NULL DEFAULT ''"),
+)
+
 
 def _to_setting(row: Mapping[str, Any]) -> ProviderSetting:
     return ProviderSetting(
         user_id=row["user_id"],
+        provider_id=row["provider_id"] or "",
         backend=row["backend"] or "",
         base_url=row["base_url"] or "",
         model=row["model"] or "",
@@ -50,6 +56,15 @@ class DatabaseProviderSettingsRepository(ProviderSettingsRepository):
             return
         for statement in SCHEMA:
             self.database.execute(statement)
+        for table, column, ddl in COLUMN_MIGRATIONS:
+            columns = {
+                str(row["name"])
+                for row in self.database.fetchall(f"PRAGMA table_info({table})")
+            }
+            if not columns:
+                continue
+            if column not in columns:
+                self.database.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         self._schema_ready = True
 
     def get(self, user_id: str) -> ProviderSetting | None:
@@ -67,10 +82,11 @@ class DatabaseProviderSettingsRepository(ProviderSettingsRepository):
         self.database.execute(
             """
             INSERT INTO user_provider_settings
-                (user_id, backend, base_url, model, api_key_cipher,
+                (user_id, provider_id, backend, base_url, model, api_key_cipher,
                  temperature, max_tokens, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
+                provider_id = excluded.provider_id,
                 backend = excluded.backend,
                 base_url = excluded.base_url,
                 model = excluded.model,
@@ -81,6 +97,7 @@ class DatabaseProviderSettingsRepository(ProviderSettingsRepository):
             """,
             (
                 payload.user_id,
+                payload.provider_id,
                 payload.backend,
                 payload.base_url,
                 payload.model,
@@ -97,3 +114,13 @@ class DatabaseProviderSettingsRepository(ProviderSettingsRepository):
         self.database.execute(
             "DELETE FROM user_provider_settings WHERE user_id = ?", (user_id,)
         )
+
+    def count_by_provider(self, provider_id: str) -> int:
+        self.ensure_schema()
+        if not provider_id:
+            return 0
+        row = self.database.fetchone(
+            "SELECT COUNT(*) AS n FROM user_provider_settings WHERE provider_id = ?",
+            (provider_id,),
+        )
+        return int(row["n"]) if row is not None else 0

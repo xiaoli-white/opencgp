@@ -7,7 +7,14 @@ DEFAULT_USER_ID = "user_local"
 DEFAULT_USER_EMAIL = "local@studio"
 
 ROLES = ("owner", "admin", "editor", "viewer")
-ALL_ACTIONS = ("read", "write", "review", "manage_members", "manage_quota")
+ALL_ACTIONS = (
+    "read",
+    "write",
+    "review",
+    "manage_members",
+    "manage_quota",
+    "manage_server",
+)
 SCOPE_ALL = "all"
 SCOPE_ASSIGNED = "assigned"
 SCOPES = (SCOPE_ALL, SCOPE_ASSIGNED)

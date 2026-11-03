@@ -86,3 +86,19 @@ class RoleInUseError(RuntimeError):
 
 class BuiltinRoleError(ValueError):
     pass
+
+
+class ProviderNotFoundError(LookupError):
+    pass
+
+
+class ProviderDisabledError(ValueError):
+    pass
+
+
+class ProviderInUseError(RuntimeError):
+    pass
+
+
+class DefaultProviderError(ValueError):
+    pass

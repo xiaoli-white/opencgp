@@ -10,6 +10,7 @@ SETTING_SOURCE_SERVER = "server"
 
 class ProviderSetting(BaseModel):
     user_id: str
+    provider_id: str = ""
     backend: str = ""
     base_url: str = ""
     model: str = ""

@@ -204,13 +204,18 @@ class AuthService:
 
     def ensure_tenant_roles(self, tenant_id: str) -> list[Role]:
         self.repository.ensure_schema()
-        existing = {role.key for role in self.repository.list_roles(tenant_id)}
+        existing = {role.key: role for role in self.repository.list_roles(tenant_id)}
         for key, (name, actions, scope) in BUILTIN_ROLES.items():
-            if key in existing:
+            current = existing.get(key)
+            if current is None:
+                self.repository.create_role(
+                    tenant_id, key, name, actions, scope, builtin=True
+                )
                 continue
-            self.repository.create_role(
-                tenant_id, key, name, actions, scope, builtin=True
-            )
+            if current.builtin and set(current.actions) != set(actions):
+                self.repository.update_role(
+                    current.id, name=current.name or name, actions=actions
+                )
         return self.repository.list_roles(tenant_id)
 
     def role_for(self, tenant_id: str, role_key: str) -> Role:

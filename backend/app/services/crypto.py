@@ -34,28 +34,38 @@ def _xor(data: bytes, stream: bytes) -> bytes:
     return bytes(left ^ right for left, right in zip(data, stream))
 
 
+def _tag(secret: str, nonce: bytes, cipher: bytes) -> str:
+    key = (secret or "").encode("utf-8")
+    return _b64encode(hmac.new(key, nonce + cipher, hashlib.sha256).digest())
+
+
 def encrypt_text(plain: str, secret: str) -> str:
     if not plain:
         return ""
     nonce = os.urandom(16)
     data = plain.encode("utf-8")
     cipher = _xor(data, _keystream(secret, nonce, len(data)))
-    return f"{TOKEN_PREFIX}:{_b64encode(nonce)}:{_b64encode(cipher)}"
+    return f"{TOKEN_PREFIX}:{_b64encode(nonce)}:{_b64encode(cipher)}:{_tag(secret, nonce, cipher)}"
 
 
 def decrypt_text(token: str, secret: str) -> str:
     if not token:
         return ""
     parts = (token or "").split(":")
-    if len(parts) != 3 or parts[0] != TOKEN_PREFIX:
+    if len(parts) not in (3, 4) or parts[0] != TOKEN_PREFIX:
         return ""
     try:
         nonce = _b64decode(parts[1])
         cipher = _b64decode(parts[2])
     except (ValueError, TypeError):
         return ""
+    if len(parts) == 4 and not hmac.compare_digest(parts[3], _tag(secret, nonce, cipher)):
+        return ""
     plain = _xor(cipher, _keystream(secret, nonce, len(cipher)))
-    return plain.decode("utf-8", errors="replace")
+    text = plain.decode("utf-8", errors="replace")
+    if "\ufffd" in text:
+        return ""
+    return text
 
 
 def mask_secret(secret: str) -> str:

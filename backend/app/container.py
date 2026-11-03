@@ -25,6 +25,7 @@ from app.ports.exporter import Exporter
 from app.ports.llm import LLMProvider
 from app.ports.lock_repository import LockRepository
 from app.ports.parser import DocumentParser
+from app.ports.provider_catalog_repository import ProviderCatalogRepository
 from app.ports.provider_settings_repository import ProviderSettingsRepository
 from app.ports.quota_repository import QuotaRepository
 from app.ports.storage import StorageBackend
@@ -35,6 +36,7 @@ from app.services.blueprint import BlueprintService
 from app.services.generation import GenerationService
 from app.services.ingest import IngestService
 from app.services.locks import LockService
+from app.services.provider_catalog import ProviderCatalogService
 from app.services.provider_settings import ProviderSettingsService
 from app.services.quota import QuotaService
 
@@ -233,6 +235,26 @@ class Container:
 
         return self._get_or_build("provider_settings_repository", build)
 
+    def provider_catalog_repository(self) -> ProviderCatalogRepository:
+        def build() -> ProviderCatalogRepository:
+            from app.adapters.database.provider_catalog_repository import (
+                DatabaseProviderCatalogRepository,
+            )
+
+            return DatabaseProviderCatalogRepository(database=self.database())
+
+        return self._get_or_build("provider_catalog_repository", build)
+
+    def provider_catalog(self) -> ProviderCatalogService:
+        def build() -> ProviderCatalogService:
+            return ProviderCatalogService(
+                repository=self.provider_catalog_repository(),
+                server=self.settings.llm,
+                secret=self.settings.auth.secret,
+            )
+
+        return self._get_or_build("provider_catalog", build)
+
     def provider_settings(self) -> ProviderSettingsService:
         def build() -> ProviderSettingsService:
             return ProviderSettingsService(
@@ -240,6 +262,7 @@ class Container:
                 server=self.settings.llm,
                 secret=self.settings.auth.secret,
                 default_provider=self.llm,
+                catalog=self.provider_catalog(),
             )
 
         return self._get_or_build("provider_settings", build)

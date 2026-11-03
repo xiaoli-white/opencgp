@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.container import get_container
-from app.models.auth import DEFAULT_TENANT_ID, AuthContext
+from app.models.auth import ALL_ACTIONS, DEFAULT_TENANT_ID, AuthContext
 from app.models.citation import Citation
 from app.models.blueprint import CourseBlueprint, GlossaryTerm
 from app.models.course import Course, Lesson
@@ -49,6 +49,10 @@ from app.services.errors import (
     RoleNotFoundError,
     RoleInUseError,
     BuiltinRoleError,
+    DefaultProviderError,
+    ProviderDisabledError,
+    ProviderInUseError,
+    ProviderNotFoundError,
 )
 
 settings = get_settings()
@@ -911,6 +915,7 @@ def auth_me(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
         "role_key": ctx.role_key or ctx.role,
         "role_name": ctx.role_name,
         "actions": sorted(ctx.actions),
+        "can": {action: service.can(ctx, action) for action in ALL_ACTIONS},
         "scope": ctx.scope,
         "tenants": service.tenants_payload(ctx.user),
         "auth_mode": service.mode,
@@ -1020,12 +1025,37 @@ class QuotaUpdateRequest(BaseModel):
 
 
 class ProviderSettingsRequest(BaseModel):
-    backend: str = Field(min_length=1)
+    provider_id: str | None = None
+    backend: str = ""
     base_url: str = ""
     model: str = ""
     api_key: str | None = None
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=0, le=200000)
+
+
+class ProviderCreateRequest(BaseModel):
+    name: str = Field(min_length=1)
+    kind: Literal["openai_compat", "dummy"] = "openai_compat"
+    base_url: str = ""
+    api_key: str | None = None
+    models: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    is_default: bool = False
+
+
+class ProviderUpdateRequest(BaseModel):
+    name: str | None = None
+    kind: Literal["openai_compat", "dummy"] | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    models: list[str] | None = None
+    enabled: bool | None = None
+    is_default: bool | None = None
+
+
+class ProviderTestRequest(BaseModel):
+    model: str = ""
 
 
 def _quota_payload(tenant_id: str) -> dict[str, Any]:
@@ -1296,15 +1326,21 @@ def update_provider_settings(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    return container.provider_settings().save(
-        ctx.user.id,
-        req.backend,
-        req.base_url,
-        req.model,
-        req.api_key,
-        req.temperature,
-        req.max_tokens,
-    )
+    try:
+        return container.provider_settings().save(
+            ctx.user.id,
+            req.backend,
+            req.base_url,
+            req.model,
+            req.api_key,
+            req.temperature,
+            req.max_tokens,
+            req.provider_id,
+        )
+    except ProviderNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ProviderDisabledError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.delete("/api/v1/settings/provider")
@@ -1317,10 +1353,13 @@ def reset_provider_settings(
 
 @app.post("/api/v1/settings/provider/test")
 async def test_provider_settings(
+    req: ProviderTestRequest | None = None,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
     provider = container.llm_for(ctx.user.id)
+    selected = (req.model if req is not None else "").strip()
+    model = selected or getattr(provider, "model", "")
     started = time.perf_counter()
     detail = ""
     ok = True
@@ -1336,6 +1375,124 @@ async def test_provider_settings(
         "ok": ok,
         "latency_ms": int((time.perf_counter() - started) * 1000),
         "provider": type(provider).__name__,
-        "model": getattr(provider, "model", ""),
+        "model": model,
+        "detail": detail,
+    }
+
+
+def _provider_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, ProviderNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(
+        exc, (ProviderDisabledError, DefaultProviderError, ValueError)
+    ):
+        return HTTPException(status_code=400, detail=str(exc))
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/v1/admin/providers")
+def list_server_providers(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "manage_server")
+    service = container.provider_catalog()
+    providers = [service.payload(item) for item in service.list()]
+    return {"count": len(providers), "providers": providers}
+
+
+@app.post("/api/v1/admin/providers")
+def create_server_provider(
+    req: ProviderCreateRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> Any:
+    _enforce(ctx, "manage_server")
+    service = container.provider_catalog()
+    try:
+        provider = service.create(
+            req.name,
+            req.kind,
+            req.base_url,
+            req.api_key,
+            req.models,
+            req.enabled,
+            req.is_default,
+        )
+    except ValueError as exc:
+        raise _provider_error(exc) from exc
+    return service.payload(provider)
+
+
+@app.patch("/api/v1/admin/providers/{provider_id}")
+def update_server_provider(
+    provider_id: str,
+    req: ProviderUpdateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Any:
+    _enforce(ctx, "manage_server")
+    service = container.provider_catalog()
+    try:
+        provider = service.update(
+            provider_id,
+            req.name,
+            req.kind,
+            req.base_url,
+            req.api_key,
+            req.models,
+            req.enabled,
+            req.is_default,
+        )
+    except (ProviderNotFoundError, ValueError) as exc:
+        raise _provider_error(exc) from exc
+    return service.payload(provider)
+
+
+@app.delete("/api/v1/admin/providers/{provider_id}")
+def delete_server_provider(
+    provider_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "manage_server")
+    service = container.provider_catalog()
+    references = container.provider_settings_repository().count_by_provider(provider_id)
+    try:
+        service.delete(provider_id, references)
+    except ProviderInUseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ProviderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DefaultProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.post("/api/v1/admin/providers/{provider_id}/test")
+async def test_server_provider(
+    provider_id: str,
+    req: ProviderTestRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "manage_server")
+    service = container.provider_catalog()
+    provider = service.get(provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="provider 不存在")
+    selected = (req.model if req is not None else "").strip()
+    model = service.resolve_model(provider, selected)
+    llm = service.build_provider(provider, model)
+    started = time.perf_counter()
+    detail = ""
+    ok = True
+    try:
+        await asyncio.wait_for(llm.complete("ping", max_tokens=8), timeout=15)
+    except asyncio.TimeoutError:
+        ok = False
+        detail = "请求超时（15s）"
+    except Exception as exc:
+        ok = False
+        detail = f"{type(exc).__name__}: {exc}"
+    return {
+        "ok": ok,
+        "latency_ms": int((time.perf_counter() - started) * 1000),
+        "provider": provider.name,
+        "kind": provider.kind,
+        "model": model,
         "detail": detail,
     }

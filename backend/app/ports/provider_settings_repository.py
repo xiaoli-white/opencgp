@@ -18,3 +18,6 @@ class ProviderSettingsRepository(Protocol):
 
     def delete(self, user_id: str) -> None:
         ...
+
+    def count_by_provider(self, provider_id: str) -> int:
+        ...
