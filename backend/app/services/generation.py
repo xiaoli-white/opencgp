@@ -65,6 +65,7 @@ class GenerationService:
         mode: str | None = None,
         expected_version: int | None = None,
         tenant_id: str = "",
+        llm: LLMProvider | None = None,
     ) -> GenerationResult:
         lesson = self.repository.get_lesson(lesson_id)
         if lesson is None:
@@ -88,13 +89,14 @@ class GenerationService:
             for index, citation in enumerate(citations, start=1)
         ]
 
+        provider = llm or self.llm
         if resolved_mode is GenerationMode.loose:
             content, prompt, provider_name, grounded = await self._write_loose(
-                course, lesson, resolved_topic, evidence
+                course, lesson, resolved_topic, evidence, provider
             )
         else:
             content, prompt, provider_name, grounded = await self._write_strict(
-                course, lesson, resolved_topic, evidence
+                course, lesson, resolved_topic, evidence, provider
             )
 
         applied = self.repository.append_version(
@@ -130,15 +132,16 @@ class GenerationService:
         lesson: Lesson,
         topic: str,
         evidence: Sequence[Evidence],
+        llm: LLMProvider,
     ) -> tuple[str, str, str, bool]:
         if not evidence:
             return NO_EVIDENCE_NOTICE, "", "", False
         prompt = self._build_strict_prompt(course, lesson, topic, evidence)
-        provider_name = type(self.llm).__name__
-        if getattr(self.llm, "is_placeholder", False):
+        provider_name = type(llm).__name__
+        if getattr(llm, "is_placeholder", False):
             content = self._strict_placeholder_draft(lesson, topic, evidence)
         else:
-            content = await self.llm.complete(prompt)
+            content = await llm.complete(prompt)
         return content, prompt, provider_name, bool(content)
 
     async def _write_loose(
@@ -147,13 +150,14 @@ class GenerationService:
         lesson: Lesson,
         topic: str,
         evidence: Sequence[Evidence],
+        llm: LLMProvider,
     ) -> tuple[str, str, str, bool]:
         prompt = self._build_loose_prompt(course, lesson, topic, evidence)
-        provider_name = type(self.llm).__name__
-        if getattr(self.llm, "is_placeholder", False):
+        provider_name = type(llm).__name__
+        if getattr(llm, "is_placeholder", False):
             content = self._loose_placeholder_draft(lesson, topic, evidence)
         else:
-            content = await self.llm.complete(prompt)
+            content = await llm.complete(prompt)
         return with_loose_notice(content), prompt, provider_name, False
 
     @staticmethod

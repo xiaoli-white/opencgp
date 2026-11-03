@@ -76,6 +76,7 @@ class BlueprintService:
         source_ids: Sequence[str] | None = None,
         focus: str = "",
         tenant_id: str = "",
+        llm: LLMProvider | None = None,
     ) -> CourseBlueprint:
         course = self.course_repository.get_course(course_id)
         if course is None:
@@ -96,13 +97,16 @@ class BlueprintService:
         if resolved_mode is GenerationMode.strict and not evidence:
             raise NoEvidenceError(NO_EVIDENCE_MESSAGE)
 
-        provider_name = type(self.llm).__name__
-        if getattr(self.llm, "is_placeholder", False):
+        llm_provider = llm or self.llm
+        provider_name = type(llm_provider).__name__
+        if getattr(llm_provider, "is_placeholder", False):
             blueprint = self._placeholder_blueprint(
                 course, evidence, resolved_mode, provider_name
             )
         else:
-            payload = await self._request_payload(course, evidence, resolved_mode, focus)
+            payload = await self._request_payload(
+                course, evidence, resolved_mode, focus, llm_provider
+            )
             blueprint = self._blueprint_from_payload(
                 course, payload, evidence, resolved_mode, provider_name
             )
@@ -272,9 +276,11 @@ class BlueprintService:
         evidence: Sequence[Evidence],
         mode: GenerationMode,
         focus: str,
+        llm: LLMProvider | None = None,
     ) -> dict[str, Any]:
+        provider = llm or self.llm
         prompt = self._build_prompt(course, evidence, mode, focus)
-        raw = await self.llm.complete(prompt)
+        raw = await provider.complete(prompt)
         payload = _extract_json(raw)
         if payload is None:
             retry = (
@@ -282,7 +288,7 @@ class BlueprintService:
                 + "\n\n## 重要提醒\n上一次输出不是合法 JSON，无法解析。"
                 "只输出合法 JSON 对象，不要输出代码块围栏或任何解释文字。"
             )
-            raw = await self.llm.complete(retry)
+            raw = await provider.complete(retry)
             payload = _extract_json(raw)
         if payload is None:
             raise BlueprintParseError("模型返回的课程蓝图不是合法 JSON，无法解析")

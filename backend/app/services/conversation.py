@@ -66,7 +66,11 @@ class ConversationService:
         self.evidence_char_limit = evidence_char_limit
 
     async def ask(
-        self, lesson_id: str, question: str, selection: str | None = None
+        self,
+        lesson_id: str,
+        question: str,
+        selection: str | None = None,
+        llm: LLMProvider | None = None,
     ) -> AskResult:
         lesson, course, citations = self._context(lesson_id)
         thread = self._lesson_thread(lesson)
@@ -76,11 +80,12 @@ class ConversationService:
             course, lesson, citations, history, question, selected
         )
 
-        provider = type(self.llm).__name__
-        if getattr(self.llm, "is_placeholder", False):
+        llm_provider = llm or self.llm
+        provider = type(llm_provider).__name__
+        if getattr(llm_provider, "is_placeholder", False):
             answer = self._placeholder_answer(lesson, question, citations)
         else:
-            answer = (await self.llm.complete(prompt)).strip()
+            answer = (await llm_provider.complete(prompt)).strip()
             if not answer:
                 raise EmptyLLMResponseError("模型未返回追问回答")
 
@@ -108,6 +113,7 @@ class ConversationService:
         target: str | None = None,
         mode: str | None = None,
         expected_version: int | None = None,
+        llm: LLMProvider | None = None,
     ) -> AmendResult:
         lesson, course, citations = self._context(lesson_id)
         if expected_version is not None and int(expected_version) != lesson.current_version:
@@ -127,13 +133,14 @@ class ConversationService:
             resolved_mode,
         )
 
-        provider = type(self.llm).__name__
-        if getattr(self.llm, "is_placeholder", False):
+        llm_provider = llm or self.llm
+        provider = type(llm_provider).__name__
+        if getattr(llm_provider, "is_placeholder", False):
             new_content = self._placeholder_amend(
                 current_content, instruction, resolved_target, resolved_mode
             )
         else:
-            new_content = (await self.llm.complete(prompt)).strip()
+            new_content = (await llm_provider.complete(prompt)).strip()
             if not new_content:
                 raise EmptyLLMResponseError("模型未返回修改后的正文")
         if resolved_mode is GenerationMode.loose:
@@ -183,6 +190,7 @@ class ConversationService:
         lesson_id: str,
         message_id: str | None = None,
         question: str | None = None,
+        llm: LLMProvider | None = None,
     ) -> DrilldownResult:
         lesson, _course, lesson_citations = self._context(lesson_id)
         thread = self.conversations.get_lesson_thread(lesson_id)

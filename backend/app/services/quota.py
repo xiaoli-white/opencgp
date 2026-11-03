@@ -37,19 +37,37 @@ class QuotaService:
         storage_bytes: int,
     ) -> QuotaLimits:
         limits = QuotaLimits(
-            monthly_generations=max(0, int(monthly_generations)),
-            monthly_uploads=max(0, int(monthly_uploads)),
-            storage_bytes=max(0, int(storage_bytes)),
+            monthly_generations=int(monthly_generations),
+            monthly_uploads=int(monthly_uploads),
+            storage_bytes=int(storage_bytes),
         )
         return self.repository.save_limits(tenant_id, limits)
+
+    @staticmethod
+    def _unlimited(cap: int) -> bool:
+        return int(cap) <= 0
+
+    def unlimited(self, tenant_id: str) -> dict[str, bool]:
+        limits = self.limits(tenant_id)
+        return {
+            "generations": self._unlimited(limits.monthly_generations),
+            "uploads": self._unlimited(limits.monthly_uploads),
+            "storage": self._unlimited(limits.storage_bytes),
+        }
 
     def remaining(self, tenant_id: str) -> dict[str, int]:
         limits = self.limits(tenant_id)
         usage = self.usage(tenant_id)
         return {
-            "generations": max(0, limits.monthly_generations - usage.generations),
-            "uploads": max(0, limits.monthly_uploads - usage.uploads),
-            "storage_bytes": max(0, limits.storage_bytes - usage.storage_bytes),
+            "generations": -1
+            if self._unlimited(limits.monthly_generations)
+            else max(0, limits.monthly_generations - usage.generations),
+            "uploads": -1
+            if self._unlimited(limits.monthly_uploads)
+            else max(0, limits.monthly_uploads - usage.uploads),
+            "storage_bytes": -1
+            if self._unlimited(limits.storage_bytes)
+            else max(0, limits.storage_bytes - usage.storage_bytes),
         }
 
     def check_and_record(
@@ -76,7 +94,7 @@ class QuotaService:
             used, cap = usage.uploads, limits.monthly_uploads
         else:
             used, cap = usage.storage_bytes, limits.storage_bytes
-        if used + amount > cap:
+        if not self._unlimited(cap) and used + amount > cap:
             raise QuotaExceededError(f"本月已达上限 {used}/{cap}，请升级或联系管理员")
         self.repository.record(tenant_id, user_id, resolved, amount, ref_id)
         return self.usage(tenant_id)

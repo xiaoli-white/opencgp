@@ -15,11 +15,22 @@ class OpenAICompatLLM(LLMProvider):
         api_key: str = "",
         model: str = "",
         timeout: float = 60.0,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> None:
         self.base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
         self.api_key = api_key
         self.model = model or "gpt-3.5-turbo"
         self.timeout = timeout
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+
+    def _apply_defaults(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.temperature is not None and "temperature" not in payload:
+            payload["temperature"] = float(self.temperature)
+        if self.max_tokens and self.max_tokens > 0 and "max_tokens" not in payload:
+            payload["max_tokens"] = int(self.max_tokens)
+        return payload
 
     def _endpoint(self) -> str:
         return f"{self.base_url}/chat/completions"
@@ -44,6 +55,7 @@ class OpenAICompatLLM(LLMProvider):
             "messages": self._messages(prompt, kwargs),
             "stream": False,
         }
+        payload = self._apply_defaults(payload)
         payload.update(kwargs)
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(

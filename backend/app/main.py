@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
@@ -483,6 +485,7 @@ async def generate_lesson(
             mode=payload.mode.value,
             expected_version=payload.expected_version,
             tenant_id=_tenant_of(ctx),
+            llm=container.llm_for(ctx.user.id),
         )
     except LessonNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
@@ -549,7 +552,10 @@ async def ask_lesson(
     selection = (req.selection or "").strip() or None
     try:
         result = await container.conversation().ask(
-            lesson_id, question, selection=selection
+            lesson_id,
+            question,
+            selection=selection,
+            llm=container.llm_for(ctx.user.id),
         )
     except LessonNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
@@ -578,6 +584,7 @@ async def amend_lesson(
             target=req.target,
             mode=req.mode.value,
             expected_version=req.expected_version,
+            llm=container.llm_for(ctx.user.id),
         )
     except VersionConflictError as exc:
         return _conflict(exc)
@@ -603,7 +610,10 @@ async def drilldown_lesson(
     payload = req or LessonDrilldownRequest()
     try:
         result = await container.conversation().drilldown(
-            lesson_id, message_id=payload.message_id, question=payload.question
+            lesson_id,
+            message_id=payload.message_id,
+            question=payload.question,
+            llm=container.llm_for(ctx.user.id),
         )
     except LessonNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
@@ -731,6 +741,7 @@ async def generate_course_blueprint(
             source_ids=payload.source_ids,
             focus=payload.focus,
             tenant_id=_tenant_of(ctx),
+            llm=container.llm_for(ctx.user.id),
         )
     except NoEvidenceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1003,9 +1014,18 @@ class LessonHeartbeatRequest(BaseModel):
 
 
 class QuotaUpdateRequest(BaseModel):
-    monthly_generations: int = Field(ge=0)
-    monthly_uploads: int = Field(ge=0)
-    storage_bytes: int = Field(ge=0)
+    monthly_generations: int = Field(ge=-1)
+    monthly_uploads: int = Field(ge=-1)
+    storage_bytes: int = Field(ge=-1)
+
+
+class ProviderSettingsRequest(BaseModel):
+    backend: str = Field(min_length=1)
+    base_url: str = ""
+    model: str = ""
+    api_key: str | None = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: int | None = Field(default=None, ge=0, le=200000)
 
 
 def _quota_payload(tenant_id: str) -> dict[str, Any]:
@@ -1017,6 +1037,7 @@ def _quota_payload(tenant_id: str) -> dict[str, Any]:
         "limits": service.limits(tenant_id).model_dump(),
         "usage": usage.model_dump(),
         "remaining": service.remaining(tenant_id),
+        "unlimited": service.unlimited(tenant_id),
     }
 
 
@@ -1259,3 +1280,62 @@ def replace_course_grants(
 @app.get("/api/v1/me/capabilities")
 def my_capabilities(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
     return container.auth_service().capabilities(ctx)
+
+
+@app.get("/api/v1/settings/provider")
+def get_provider_settings(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    return container.provider_settings().get_effective(ctx.user.id)
+
+
+@app.put("/api/v1/settings/provider")
+def update_provider_settings(
+    req: ProviderSettingsRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    return container.provider_settings().save(
+        ctx.user.id,
+        req.backend,
+        req.base_url,
+        req.model,
+        req.api_key,
+        req.temperature,
+        req.max_tokens,
+    )
+
+
+@app.delete("/api/v1/settings/provider")
+def reset_provider_settings(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    return container.provider_settings().reset(ctx.user.id)
+
+
+@app.post("/api/v1/settings/provider/test")
+async def test_provider_settings(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    provider = container.llm_for(ctx.user.id)
+    started = time.perf_counter()
+    detail = ""
+    ok = True
+    try:
+        await asyncio.wait_for(provider.complete("ping", max_tokens=8), timeout=15)
+    except asyncio.TimeoutError:
+        ok = False
+        detail = "请求超时（15s）"
+    except Exception as exc:
+        ok = False
+        detail = f"{type(exc).__name__}: {exc}"
+    return {
+        "ok": ok,
+        "latency_ms": int((time.perf_counter() - started) * 1000),
+        "provider": type(provider).__name__,
+        "model": getattr(provider, "model", ""),
+        "detail": detail,
+    }

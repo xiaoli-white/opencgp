@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from typing import Any, Callable
 
 from app.config import Settings, get_settings
@@ -24,6 +25,7 @@ from app.ports.exporter import Exporter
 from app.ports.llm import LLMProvider
 from app.ports.lock_repository import LockRepository
 from app.ports.parser import DocumentParser
+from app.ports.provider_settings_repository import ProviderSettingsRepository
 from app.ports.quota_repository import QuotaRepository
 from app.ports.storage import StorageBackend
 from app.ports.vectorstore import VectorStore
@@ -33,7 +35,10 @@ from app.services.blueprint import BlueprintService
 from app.services.generation import GenerationService
 from app.services.ingest import IngestService
 from app.services.locks import LockService
+from app.services.provider_settings import ProviderSettingsService
 from app.services.quota import QuotaService
+
+PROVIDER_CACHE_SIZE = 64
 
 
 class Container:
@@ -42,6 +47,7 @@ class Container:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self._instances: dict[str, Any] = {}
+        self._provider_cache: OrderedDict[tuple[Any, ...], LLMProvider] = OrderedDict()
 
     def _get_or_build(self, key: str, builder: Callable[[], Any]) -> Any:
         if key not in self._instances:
@@ -216,6 +222,40 @@ class Container:
             )
 
         return self._get_or_build("auth_service", build)
+
+    def provider_settings_repository(self) -> ProviderSettingsRepository:
+        def build() -> ProviderSettingsRepository:
+            from app.adapters.database.provider_settings_repository import (
+                DatabaseProviderSettingsRepository,
+            )
+
+            return DatabaseProviderSettingsRepository(database=self.database())
+
+        return self._get_or_build("provider_settings_repository", build)
+
+    def provider_settings(self) -> ProviderSettingsService:
+        def build() -> ProviderSettingsService:
+            return ProviderSettingsService(
+                repository=self.provider_settings_repository(),
+                server=self.settings.llm,
+                secret=self.settings.auth.secret,
+                default_provider=self.llm,
+            )
+
+        return self._get_or_build("provider_settings", build)
+
+    def llm_for(self, user_id: str) -> LLMProvider:
+        service = self.provider_settings()
+        cache_key = service.cache_key(user_id)
+        cached = self._provider_cache.get(cache_key)
+        if cached is not None:
+            self._provider_cache.move_to_end(cache_key)
+            return cached
+        provider = service.build_provider(user_id)
+        self._provider_cache[cache_key] = provider
+        while len(self._provider_cache) > PROVIDER_CACHE_SIZE:
+            self._provider_cache.popitem(last=False)
+        return provider
 
     def quota_repository(self) -> QuotaRepository:
         def build() -> QuotaRepository:

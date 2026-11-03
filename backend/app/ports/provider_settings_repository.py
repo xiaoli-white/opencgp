@@ -1,0 +1,20 @@
+from __future__ import annotations
+
+from typing import Protocol, runtime_checkable
+
+from app.models.provider_setting import ProviderSetting
+
+
+@runtime_checkable
+class ProviderSettingsRepository(Protocol):
+    def ensure_schema(self) -> None:
+        ...
+
+    def get(self, user_id: str) -> ProviderSetting | None:
+        ...
+
+    def save(self, setting: ProviderSetting) -> ProviderSetting:
+        ...
+
+    def delete(self, user_id: str) -> None:
+        ...
