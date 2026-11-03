@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
@@ -18,6 +18,7 @@ import {
   type Citation,
   type IngestResult,
   type SearchResponse,
+  type StorageInfo,
 } from "@/lib/api";
 import { formatChars, sourceLabel } from "@/lib/format";
 
@@ -37,6 +38,22 @@ export default function KbPage() {
   const [searchResult, setSearchResult] = useState<SearchResponse | null>(null);
   const [searchError, setSearchError] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [storage, setStorage] = useState<StorageInfo | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const info = await api.storageInfo();
+        if (!cancelled) setStorage(info);
+      } catch {
+        if (!cancelled) setStorage(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const maxScore = useMemo(() => {
     if (!searchResult?.citations.length) return 1;
@@ -237,6 +254,13 @@ export default function KbPage() {
                   <span>{formatChars(uploadResult.char_count)}</span>
                   <span className="truncate">ID · {uploadResult.source_id}</span>
                 </div>
+                {uploadResult.object_key || typeof uploadResult.meta?.object_key === "string" ? (
+                  <p className="mt-2 truncate rounded-lg bg-emerald-500/10 px-2 py-1 font-mono text-[10.5px] text-emerald-800/90 dark:text-emerald-200/90">
+                    object_key ·{" "}
+                    {uploadResult.object_key ??
+                      (uploadResult.meta.object_key as string)}
+                  </p>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => {
@@ -396,6 +420,15 @@ export default function KbPage() {
           </div>
         </section>
       </div>
+
+      {storage ? (
+        <p className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border border-white/45 bg-white/45 px-4 py-2 text-[11px] text-slate-500 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-400">
+          <span>对象存储 · {storage.backend}</span>
+          {storage.bucket ? <span className="truncate">bucket · {storage.bucket}</span> : null}
+          <span className="tabular-nums">{storage.objects} 个对象</span>
+          {storage.prefix ? <span className="truncate font-mono">{storage.prefix}</span> : null}
+        </p>
+      ) : null}
     </div>
   );
 }

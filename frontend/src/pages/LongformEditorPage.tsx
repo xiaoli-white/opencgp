@@ -19,11 +19,13 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import {
+  ApiError,
   api,
   type GenerationMode,
   type Longform,
   type LongformVersion,
 } from "@/lib/api";
+import { cancelJob, runJob } from "@/lib/jobs";
 import { contentLength, formatChars, formatDateTime } from "@/lib/format";
 import MarkdownReader from "@/components/reader/MarkdownReader";
 import { useSession } from "@/components/auth/SessionProvider";
@@ -69,6 +71,8 @@ export default function LongformEditorPage() {
   const [notice, setNotice] = useState("");
 
   const [busy, setBusy] = useState("");
+  const [jobProgress, setJobProgress] = useState(0);
+  const [jobId, setJobId] = useState<string | null>(null);
   const elapsed = useElapsed(Boolean(busy));
 
   const [outlineOpen, setOutlineOpen] = useState(false);
@@ -115,14 +119,33 @@ export default function LongformEditorPage() {
       return;
     }
     setBusy("all");
+    setJobProgress(0);
+    setJobId(null);
     setError("");
     setNotice("");
     const startedAt = Date.now();
     try {
-      const updated = await api.generateLongform(longform.id, {
-        mode: (longform.last_mode as GenerationMode) || "loose",
-        expected_version: longform.current_version,
-      });
+      let updated: Longform | null = null;
+      try {
+        await runJob(
+          "longform_generate",
+          { longform_id: longform.id },
+          {
+            onProgress: setJobProgress,
+            onJob: (created) => setJobId(created.id),
+          },
+        );
+        updated = await api.getLongform(longform.id);
+      } catch (queueErr) {
+        const queueable =
+          queueErr instanceof ApiError &&
+          (queueErr.status === 400 || queueErr.status === 404 || queueErr.status === 422);
+        if (!queueable) throw queueErr;
+        updated = await api.generateLongform(longform.id, {
+          mode: (longform.last_mode as GenerationMode) || "loose",
+          expected_version: longform.current_version,
+        });
+      }
       setLongform(updated);
       const versionData = await api.listLongformVersions(longform.id);
       setVersions(versionData.versions);
@@ -132,6 +155,7 @@ export default function LongformEditorPage() {
       setError(err instanceof Error ? err.message : "生成失败");
     } finally {
       setBusy("");
+      setJobId(null);
     }
   };
 
@@ -169,15 +193,34 @@ export default function LongformEditorPage() {
       return;
     }
     setBusy("rewrite");
+    setJobProgress(0);
+    setJobId(null);
     setError("");
     setNotice("");
     const startedAt = Date.now();
     try {
-      const updated = await api.rewriteLongform(longform.id, {
-        instruction: text,
-        mode: rewriteMode,
-        expected_version: longform.current_version,
-      });
+      let updated: Longform | null = null;
+      try {
+        await runJob(
+          "longform_rewrite",
+          { longform_id: longform.id, instruction: text },
+          {
+            onProgress: setJobProgress,
+            onJob: (created) => setJobId(created.id),
+          },
+        );
+        updated = await api.getLongform(longform.id);
+      } catch (queueErr) {
+        const queueable =
+          queueErr instanceof ApiError &&
+          (queueErr.status === 400 || queueErr.status === 404 || queueErr.status === 422);
+        if (!queueable) throw queueErr;
+        updated = await api.rewriteLongform(longform.id, {
+          instruction: text,
+          mode: rewriteMode,
+          expected_version: longform.current_version,
+        });
+      }
       setLongform(updated);
       const versionData = await api.listLongformVersions(longform.id);
       setVersions(versionData.versions);
@@ -189,6 +232,17 @@ export default function LongformEditorPage() {
       setError(err instanceof Error ? err.message : "重写失败");
     } finally {
       setBusy("");
+      setJobId(null);
+    }
+  };
+
+  const cancelActive = async () => {
+    if (!jobId) return;
+    try {
+      await cancelJob(jobId);
+      setNotice("已请求取消任务");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "取消失败");
     }
   };
 
@@ -378,6 +432,26 @@ export default function LongformEditorPage() {
                 已耗时 {elapsed}s
               </span>
             </span>
+            {busy === "all" || busy === "rewrite" ? (
+              <div className="mt-2 flex items-center gap-2">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/60 dark:bg-white/10">
+                  <div
+                    className="brand-gradient h-full rounded-full transition-all duration-500"
+                    style={{ width: `${Math.max(6, Math.round(jobProgress * 100))}%` }}
+                  />
+                </div>
+                <span className="tabular-nums opacity-80">{Math.round(jobProgress * 100)}%</span>
+                {jobId ? (
+                  <button
+                    type="button"
+                    onClick={() => void cancelActive()}
+                    className="rounded-full border border-current/30 px-2 py-0.5 text-[11px] font-medium"
+                  >
+                    取消
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
 

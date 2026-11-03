@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
@@ -19,7 +19,8 @@ import {
   X,
 } from "lucide-react";
 import clsx from "clsx";
-import { api, type ResearchRun } from "@/lib/api";
+import { ApiError, api, type ResearchRun } from "@/lib/api";
+import { jobResultNumber, jobResultString, runJob } from "@/lib/jobs";
 import { formatDateTime } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
 
@@ -142,7 +143,11 @@ export default function ResearchPage() {
   const [topK, setTopK] = useState(5);
 
   const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [jobId, setJobId] = useState<string | null>(null);
   const elapsed = useElapsed(running);
+  const [searchParams] = useSearchParams();
+  const focusId = searchParams.get("id") ?? "";
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -177,6 +182,25 @@ export default function ResearchPage() {
     void loadHistory();
   }, [loadHistory]);
 
+  useEffect(() => {
+    if (!focusId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const detail = await api.getResearch(focusId);
+        if (cancelled) return;
+        setRun(detail);
+        setNotice(`已从任务中心载入研究「${detail.topic}」`);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "加载研究详情失败");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [focusId]);
+
   const citationIndex = useMemo(() => {
     const map = new Map<string, ResearchRun["citations"][number]>();
     (run?.citations ?? []).forEach((item, index) => {
@@ -193,20 +217,47 @@ export default function ResearchPage() {
       return;
     }
     setRunning(true);
+    setProgress(0);
+    setJobId(null);
     setError("");
     setNotice("");
     setBlueprintResult(null);
     const startedAt = Date.now();
     try {
-      const result = await api.runResearch({ topic: text, depth, top_k: topK });
-      setRun(result);
+      let researchId = "";
+      let citations = 0;
+      try {
+        const job = await runJob(
+          "research",
+          { topic: text, depth, top_k: topK },
+          {
+            onProgress: setProgress,
+            onJob: (created) => setJobId(created.id),
+          },
+        );
+        researchId = jobResultString(job, "research_id");
+        citations = jobResultNumber(job, "citations");
+      } catch (queueErr) {
+        const queueable =
+          queueErr instanceof ApiError &&
+          (queueErr.status === 400 || queueErr.status === 404 || queueErr.status === 422);
+        if (!queueable) throw queueErr;
+        const result = await api.runResearch({ topic: text, depth, top_k: topK });
+        researchId = result.id;
+        citations = result.citations.length;
+      }
+      if (!researchId) throw new Error("任务已完成但未返回研究结果");
+      const detail = await api.getResearch(researchId);
+      setProgress(1);
+      setRun(detail);
       const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-      setNotice(`研究完成 · 用时 ${seconds} 秒 · ${result.citations.length} 条证据`);
+      setNotice(`研究完成 · 用时 ${seconds} 秒 · ${citations || detail.citations.length} 条证据`);
       await loadHistory();
     } catch (err) {
       setError(err instanceof Error ? err.message : "研究失败");
     } finally {
       setRunning(false);
+      setJobId(null);
     }
   };
 
@@ -358,8 +409,17 @@ export default function ResearchPage() {
                   已耗时 {elapsed}s
                 </span>
               </div>
-              <p className="mt-1.5 leading-relaxed opacity-80">
-                同步请求，通常需要 5–30 秒，请不要刷新页面。
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/60 dark:bg-white/10">
+                <div
+                  className="brand-gradient h-full rounded-full transition-all duration-500"
+                  style={{ width: `${Math.max(6, Math.round(progress * 100))}%` }}
+                />
+              </div>
+              <p className="mt-1.5 flex items-center justify-between leading-relaxed opacity-80">
+                <span>
+                  {jobId ? "已进入后台队列，可离开本页" : "同步请求，通常需要 5–30 秒"}
+                </span>
+                <span className="tabular-nums">{Math.round(progress * 100)}%</span>
               </p>
             </div>
           ) : null}

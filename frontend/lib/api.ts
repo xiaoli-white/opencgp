@@ -363,12 +363,22 @@ export type AmendResult = {
   prompt: string;
 };
 
+export type StorageInfo = {
+  backend: string;
+  bucket?: string;
+  endpoint?: string;
+  prefix?: string;
+  objects: number;
+  ok?: boolean;
+};
+
 export type IngestResult = {
   source_id: string;
   source_name: string;
   parser: string;
   chunk_count: number;
   char_count: number;
+  object_key?: string;
   meta: Record<string, unknown>;
 };
 
@@ -615,7 +625,7 @@ type RequestOptions = {
   anonymous?: boolean;
 };
 
-async function request<T>(
+export async function request<T>(
   path: string,
   init: RequestInit = {},
   options: RequestOptions = {},
@@ -1168,4 +1178,6 @@ export const api = {
     request<{ ok?: boolean }>(`/api/v1/longforms/${longformId}`, {
       method: "DELETE",
     }),
+
+  storageInfo: () => request<StorageInfo>("/api/v1/storage/info"),
 };

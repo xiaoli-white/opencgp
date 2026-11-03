@@ -8,6 +8,7 @@ import {
   IdCard,
   LayoutGrid,
   Library,
+  ListChecks,
   LogOut,
   Menu,
   PenLine,
@@ -38,6 +39,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/kb", label: "知识库", icon: Library, exact: false },
   { href: "/research", label: "深度研究", icon: BrainCircuit, exact: false },
   { href: "/longforms", label: "长篇写作", icon: PenLine, exact: false },
+  { href: "/jobs", label: "任务中心", icon: ListChecks, exact: false },
   { href: "/settings", label: "个人设置", icon: IdCard, exact: true },
   { href: "/settings/workspace", label: "空间设置", icon: Users, exact: true },
   {
@@ -310,7 +312,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           ? "深度研究"
           : pathname.startsWith("/longforms")
             ? "长篇写作"
-            : pathname === "/settings"
+            : pathname === "/jobs"
+              ? "任务中心"
+              : pathname === "/settings"
               ? "个人设置"
               : pathname === "/settings/workspace"
                 ? "空间设置"
@@ -326,7 +330,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           ? "拆解子问题 · 检索证据 · 转成课程蓝图"
           : pathname.startsWith("/longforms")
             ? "大纲 · 逐节生成 · 版本回滚"
-            : pathname === "/settings"
+            : pathname === "/jobs"
+              ? "后台队列 · 进度 · 结果"
+              : pathname === "/settings"
               ? "我的模型 · 我的通道 · 账号信息"
               : pathname === "/settings/workspace"
                 ? "角色 · 空间成员 · 用量与配额"

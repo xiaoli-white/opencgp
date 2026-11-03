@@ -1,0 +1,396 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Ban,
+  CheckCircle2,
+  Clock3,
+  ListChecks,
+  Loader2,
+  RefreshCw,
+  XCircle,
+} from "lucide-react";
+import clsx from "clsx";
+import {
+  JOB_KIND_LABEL,
+  JOB_STATUS_LABEL,
+  cancelJob,
+  isTerminal,
+  listJobs,
+  type Job,
+} from "@/lib/jobs";
+import { formatDateTime } from "@/lib/format";
+import { useSession } from "@/components/auth/SessionProvider";
+
+type FilterKey = "all" | "active" | "done" | "failed";
+
+const FILTERS: { key: FilterKey; label: string }[] = [
+  { key: "all", label: "全部" },
+  { key: "active", label: "进行中" },
+  { key: "done", label: "已完成" },
+  { key: "failed", label: "失败" },
+];
+
+function statusTone(status: string): string {
+  if (status === "succeeded")
+    return "bg-emerald-500/12 text-emerald-700 ring-emerald-500/25 dark:bg-emerald-400/15 dark:text-emerald-300 dark:ring-emerald-300/25";
+  if (status === "failed")
+    return "bg-rose-500/12 text-rose-700 ring-rose-500/25 dark:bg-rose-400/15 dark:text-rose-300 dark:ring-rose-300/25";
+  if (status === "canceled")
+    return "bg-slate-500/12 text-slate-600 ring-slate-400/25 dark:bg-slate-400/15 dark:text-slate-300 dark:ring-slate-300/25";
+  if (status === "running")
+    return "bg-indigo-500/12 text-indigo-600 ring-indigo-400/25 dark:bg-indigo-400/15 dark:text-indigo-300 dark:ring-indigo-300/25";
+  return "bg-amber-500/12 text-amber-700 ring-amber-500/25 dark:bg-amber-400/15 dark:text-amber-300 dark:ring-amber-300/25";
+}
+
+function statusIcon(status: string) {
+  if (status === "succeeded") return <CheckCircle2 size={12} />;
+  if (status === "failed") return <XCircle size={12} />;
+  if (status === "canceled") return <Ban size={12} />;
+  if (status === "running") return <Loader2 size={12} className="animate-spin" />;
+  return <Clock3 size={12} />;
+}
+
+function formatDuration(job: Job): string {
+  const start = job.started_at || job.created_at;
+  const end = job.finished_at || (job.status === "queued" ? start : Date.now() / 1000);
+  const seconds = Math.max(0, Math.round(end - start));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s`;
+}
+
+function resultLink(job: Job): { href: string; label: string } | null {
+  const result = job.result ?? {};
+  const payload = job.payload ?? {};
+  const pick = (key: string) => {
+    const value = result[key] ?? payload[key];
+    return typeof value === "string" ? value : "";
+  };
+  if (job.kind === "research") {
+    const id = pick("research_id");
+    return id ? { href: `/research?id=${encodeURIComponent(id)}`, label: "查看研究" } : null;
+  }
+  if (job.kind === "longform_create" || job.kind === "longform_generate" || job.kind === "longform_rewrite") {
+    const id = pick("longform_id");
+    return id ? { href: `/longforms/${encodeURIComponent(id)}`, label: "打开编辑器" } : null;
+  }
+  if (job.kind === "lesson_generate" || job.kind === "blueprint_generate") {
+    const id = pick("course_id");
+    return id ? { href: `/courses/${encodeURIComponent(id)}`, label: "打开课程" } : null;
+  }
+  return null;
+}
+
+function matchesFilter(job: Job, filter: FilterKey): boolean {
+  if (filter === "active") return !isTerminal(job.status);
+  if (filter === "done") return job.status === "succeeded";
+  if (filter === "failed") return job.status === "failed" || job.status === "canceled";
+  return true;
+}
+
+export default function JobsPage() {
+  const { can } = useSession();
+  const writable = can("write");
+
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [filter, setFilter] = useState<FilterKey>("all");
+  const [canceling, setCanceling] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const timerRef = useRef<number | null>(null);
+
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const data = await listJobs({ limit: 40 });
+      setJobs(data.jobs ?? []);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "加载任务列表失败");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const hasActive = useMemo(() => jobs.some((job) => !isTerminal(job.status)), [jobs]);
+
+  useEffect(() => {
+    if (!hasActive) {
+      if (timerRef.current) {
+        window.clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      return;
+    }
+    timerRef.current = window.setInterval(() => {
+      void load(true);
+    }, 2000);
+    return () => {
+      if (timerRef.current) {
+        window.clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [hasActive, load]);
+
+  const counters = useMemo(() => {
+    const active = jobs.filter((job) => !isTerminal(job.status)).length;
+    const failed = jobs.filter((job) => job.status === "failed" || job.status === "canceled").length;
+    return { active, done: jobs.filter((job) => job.status === "succeeded").length, failed };
+  }, [jobs]);
+
+  const visible = useMemo(() => jobs.filter((job) => matchesFilter(job, filter)), [jobs, filter]);
+
+  const handleCancel = async (job: Job) => {
+    if (canceling) return;
+    setCanceling(job.id);
+    setError("");
+    try {
+      await cancelJob(job.id);
+      setNotice(`已请求取消 ${JOB_KIND_LABEL[job.kind] ?? job.kind}`);
+      await load(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "取消失败");
+    } finally {
+      setCanceling(null);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <motion.section
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35 }}
+        className="glass rounded-3xl p-5 shadow-glass sm:p-6"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <span className="chip-muted inline-flex items-center gap-1.5">
+              <ListChecks size={12} />
+              后台队列
+            </span>
+            <h1 className="mt-2.5 text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50 sm:text-2xl">
+              任务中心
+            </h1>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              研究、长篇生成与讲次生成都在后台排队执行，可随时查看进度或取消。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="btn btn-quiet"
+            disabled={loading}
+          >
+            <RefreshCw size={13} className={clsx(loading && "animate-spin")} />
+            刷新
+          </button>
+        </div>
+
+        <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
+          {[
+            { label: "进行中", value: counters.active, tone: "text-indigo-600 dark:text-indigo-300" },
+            { label: "成功", value: counters.done, tone: "text-emerald-600 dark:text-emerald-300" },
+            { label: "失败/取消", value: counters.failed, tone: "text-rose-600 dark:text-rose-300" },
+          ].map((item) => (
+            <div
+              key={item.label}
+              className="rounded-2xl border border-white/45 bg-white/55 px-3 py-2.5 dark:border-white/10 dark:bg-white/[0.05]"
+            >
+              <div className="text-[11px] text-slate-500 dark:text-slate-400">{item.label}</div>
+              <div className={clsx("text-lg font-semibold tabular-nums", item.tone)}>
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="no-scrollbar mt-4 flex gap-1.5 overflow-x-auto">
+          {FILTERS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setFilter(item.key)}
+              className={clsx(
+                "shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium transition",
+                filter === item.key
+                  ? "brand-gradient text-white shadow-brand"
+                  : "border border-white/50 bg-white/55 text-slate-600 hover:text-indigo-600 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-300 dark:hover:text-indigo-200",
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        {error ? (
+          <div className="mt-3 flex items-start gap-2 rounded-2xl border border-rose-300/50 bg-rose-50/70 px-4 py-2.5 text-xs text-rose-700 dark:border-rose-300/25 dark:bg-rose-400/10 dark:text-rose-300">
+            <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+            <span className="break-words">{error}</span>
+          </div>
+        ) : null}
+
+        {notice ? (
+          <div className="mt-3 rounded-2xl border border-emerald-300/50 bg-emerald-50/70 px-4 py-2.5 text-xs text-emerald-700 dark:border-emerald-300/25 dark:bg-emerald-400/10 dark:text-emerald-300">
+            {notice}
+          </div>
+        ) : null}
+      </motion.section>
+
+      <div className="space-y-3">
+        {loading && !jobs.length ? (
+          <div className="glass flex items-center gap-2 rounded-3xl px-5 py-8 text-sm text-slate-500 shadow-glass dark:text-slate-400">
+            <Loader2 size={15} className="animate-spin" />
+            正在加载任务…
+          </div>
+        ) : null}
+
+        {!loading && !visible.length ? (
+          <div className="glass rounded-3xl px-5 py-10 text-center shadow-glass">
+            <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-indigo-500/10 text-indigo-600 dark:bg-indigo-400/15 dark:text-indigo-300">
+              <ListChecks size={20} />
+            </div>
+            <p className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">
+              暂无任务
+            </p>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              在深度研究或长篇写作页发起长任务后，会出现在这里。
+            </p>
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              <Link to="/research" className="btn btn-primary">
+                去深度研究
+                <ArrowRight size={13} />
+              </Link>
+              <Link to="/longforms" className="btn btn-ghost">
+                去长篇写作
+              </Link>
+            </div>
+          </div>
+        ) : null}
+
+        {visible.map((job) => {
+          const link = resultLink(job);
+          const running = job.status === "running" || job.status === "queued";
+          const percent = Math.round(Math.min(1, Math.max(0, job.progress || 0)) * 100);
+          return (
+            <motion.div
+              key={job.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25 }}
+              className="glass rounded-2xl p-4 shadow-glass sm:p-5"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      {JOB_KIND_LABEL[job.kind] ?? job.kind}
+                    </span>
+                    <span
+                      className={clsx(
+                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1",
+                        statusTone(job.status),
+                      )}
+                    >
+                      {statusIcon(job.status)}
+                      {JOB_STATUS_LABEL[job.status] ?? job.status}
+                    </span>
+                    <span className="text-[11px] text-slate-400 dark:text-slate-500">
+                      {formatDateTime(job.created_at)} · 耗时 {formatDuration(job)}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate font-mono text-[11px] text-slate-400 dark:text-slate-500">
+                    {job.id}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {link && job.status === "succeeded" ? (
+                    <Link to={link.href} className="btn btn-quiet">
+                      {link.label}
+                      <ArrowRight size={12} />
+                    </Link>
+                  ) : null}
+                  {running && writable ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleCancel(job)}
+                      disabled={canceling === job.id}
+                      className="btn btn-quiet"
+                    >
+                      {canceling === job.id ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Ban size={12} />
+                      )}
+                      取消
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              {running ? (
+                <div className="mt-3">
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200/70 dark:bg-white/10">
+                    <div
+                      className="brand-gradient h-full rounded-full transition-all duration-500"
+                      style={{ width: `${Math.max(percent, job.status === "queued" ? 4 : 8)}%` }}
+                    />
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                    <span>{job.status === "queued" ? "排队中，等待 worker 领取" : "执行中"}</span>
+                    <span className="tabular-nums">{percent}%</span>
+                  </div>
+                </div>
+              ) : null}
+
+              {job.status === "failed" && job.error ? (
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={() => setExpanded(expanded === job.id ? null : job.id)}
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-600 dark:text-rose-300"
+                  >
+                    <AlertTriangle size={11} />
+                    {expanded === job.id ? "收起错误" : "查看错误"}
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {expanded === job.id ? (
+                      <motion.pre
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-rose-300/40 bg-rose-50/60 p-3 text-[11px] leading-relaxed text-rose-700 dark:border-rose-300/20 dark:bg-rose-400/10 dark:text-rose-300"
+                      >
+                        {job.error}
+                      </motion.pre>
+                    ) : null}
+                  </AnimatePresence>
+                </div>
+              ) : null}
+
+              {job.status === "succeeded" && job.result ? (
+                <p className="mt-2 truncate text-[11px] text-slate-500 dark:text-slate-400">
+                  {Object.entries(job.result)
+                    .filter(([, value]) => typeof value === "string" || typeof value === "number")
+                    .slice(0, 4)
+                    .map(([key, value]) => `${key}=${String(value)}`)
+                    .join(" · ")}
+                </p>
+              ) : null}
+            </motion.div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
