@@ -1,5 +1,3 @@
-"use client";
-
 import clsx from "clsx";
 import { statusLabel, statusTone, type StatusTone } from "@/lib/format";
 

@@ -3,10 +3,11 @@ import {
   getTenantId,
   getToken,
   type Role,
+  type RoleAction,
 } from "@/lib/session";
 
 export const API_BASE = (
-  process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"
+  import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000"
 ).replace(/\/+$/, "");
 
 export type AuthUser = {
@@ -47,8 +48,55 @@ export type MeResponse = {
   user: AuthUser;
   tenant: TenantRef;
   role: Role;
+  role_key?: string;
+  role_name?: string;
+  actions?: RoleAction[];
+  scope?: RoleScope;
   tenants: AuthTenant[];
   auth_mode: AuthMode;
+};
+
+export type RoleScope = "all" | "assigned";
+
+export type RoleRecord = {
+  id: string;
+  key: string;
+  name: string;
+  actions: RoleAction[];
+  scope: RoleScope;
+  builtin: boolean | number;
+  member_count: number;
+};
+
+export type RoleList = {
+  count: number;
+  roles: RoleRecord[];
+};
+
+export type CourseGrant = {
+  user_id: string;
+  user_email: string;
+  user_display_name: string;
+  level: "read" | "write";
+};
+
+export type CourseGrants = {
+  course_id: string;
+  count: number;
+  grants: CourseGrant[];
+};
+
+export type Capabilities = {
+  user_id: string;
+  tenant_id: string;
+  role: {
+    key: string;
+    name: string;
+    actions: RoleAction[];
+    scope: RoleScope;
+  };
+  can: Record<RoleAction, boolean>;
+  visible_course_ids: string[] | "all";
 };
 
 export type AuthPayload = {
@@ -357,7 +405,7 @@ async function request<T>(
     });
   } catch {
     throw new ApiError(
-      `无法连接后端服务（${API_BASE}）。请确认 FastAPI 已启动，或检查 NEXT_PUBLIC_API_BASE。`,
+      `无法连接后端服务（${API_BASE}）。请确认 FastAPI 已启动，或检查 VITE_API_BASE。`,
       0,
     );
   }
@@ -619,6 +667,44 @@ export const api = {
     }),
 
   getQuota: () => request<Quota>("/api/v1/quotas"),
+
+  listRoles: () => request<RoleList>("/api/v1/roles"),
+
+  createRole: (payload: {
+    name: string;
+    actions: RoleAction[];
+    scope: RoleScope;
+  }) =>
+    request<RoleRecord>("/api/v1/roles", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateRole: (
+    roleId: string,
+    payload: { name?: string; actions?: RoleAction[]; scope?: RoleScope },
+  ) =>
+    request<RoleRecord>(`/api/v1/roles/${roleId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteRole: (roleId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/roles/${roleId}`, { method: "DELETE" }),
+
+  getCourseGrants: (courseId: string) =>
+    request<CourseGrants>(`/api/v1/courses/${courseId}/grants`),
+
+  saveCourseGrants: (
+    courseId: string,
+    grants: { user_id: string; level: "read" | "write" }[],
+  ) =>
+    request<CourseGrants>(`/api/v1/courses/${courseId}/grants`, {
+      method: "PUT",
+      body: JSON.stringify({ grants }),
+    }),
+
+  getCapabilities: () => request<Capabilities>("/api/v1/me/capabilities"),
 
   updateQuota: (payload: QuotaUsage) =>
     request<Quota>("/api/v1/quotas", {

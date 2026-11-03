@@ -1,7 +1,5 @@
-"use client";
-
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
@@ -11,6 +9,7 @@ import {
   ChevronRight,
   History,
   Loader2,
+  Lock,
   MessageSquare,
   Network,
   Plus,
@@ -41,6 +40,7 @@ import ChatPanel from "@/components/chat/ChatPanel";
 import ModePicker from "@/components/course/ModePicker";
 import BlueprintBoard from "@/components/blueprint/BlueprintBoard";
 import ReviewControls from "@/components/course/ReviewControls";
+import CourseGrantsPanel from "@/components/course/CourseGrantsPanel";
 import StatusBadge from "@/components/course/StatusBadge";
 import { useSession } from "@/components/auth/SessionProvider";
 
@@ -53,7 +53,7 @@ const VIEWS: { value: WorkspaceView; label: string; icon: typeof BookOpen }[] = 
 ];
 
 export default function CourseWorkspace({ courseId }: { courseId: string }) {
-  const { can } = useSession();
+  const { can, roleName } = useSession();
   const readOnly = !can("write");
   const guard = readOnly
     ? { disabled: true, title: "当前角色只读" }
@@ -73,6 +73,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   const [chatOpen, setChatOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<string | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
+  const [grantsOpen, setGrantsOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [formOpen, setFormOpen] = useState(false);
@@ -325,7 +326,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
           {loadError || "课程不存在，或后端服务未启动。"}
         </p>
-        <Link href="/" className="btn btn-ghost mt-5">
+        <Link to="/" className="btn btn-ghost mt-5">
           <ArrowLeft size={14} />
           返回课程列表
         </Link>
@@ -346,7 +347,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <Link
-              href="/"
+              to="/"
               className="inline-flex items-center gap-1 text-[11px] text-slate-400 transition hover:text-indigo-600 dark:hover:text-indigo-300"
             >
               <ArrowLeft size={12} />
@@ -374,22 +375,34 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               </span>
             </div>
           </div>
-          <button
-            type="button"
-            {...guard}
-            onClick={() => setChatOpen(true)}
-            disabled={readOnly || !activeLesson}
-            className="btn btn-primary"
-          >
-            <MessageSquare size={14} />
-            追问 / 修改
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {can("manage_members") ? (
+              <button
+                type="button"
+                onClick={() => setGrantsOpen(true)}
+                className="btn btn-ghost"
+              >
+                <Lock size={13} />
+                可见范围
+              </button>
+            ) : null}
+            <button
+              type="button"
+              {...guard}
+              onClick={() => setChatOpen(true)}
+              disabled={readOnly || !activeLesson}
+              className="btn btn-primary"
+            >
+              <MessageSquare size={14} />
+              追问 / 修改
+            </button>
+          </div>
         </div>
       </div>
 
       {readOnly ? (
         <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-          你以 只读 身份访问该空间，可浏览与阅读，写入类操作已禁用。
+          你以 {roleName || "只读"} 身份访问，仅可读取，写入类操作已禁用。
         </div>
       ) : null}
 
@@ -772,7 +785,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                         <Sparkles size={14} />
                         生成正文
                       </button>
-                      <Link href="/kb" className="btn btn-ghost">
+                      <Link to="/kb" className="btn btn-ghost">
                         先上传资料
                       </Link>
                     </div>
@@ -909,6 +922,12 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         onClose={handleCloseChat}
         onApplied={handleChatApplied}
         onNotice={setNotice}
+      />
+
+      <CourseGrantsPanel
+        courseId={courseId}
+        open={grantsOpen}
+        onClose={() => setGrantsOpen(false)}
       />
     </motion.div>
   );

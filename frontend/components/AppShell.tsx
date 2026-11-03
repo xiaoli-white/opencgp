@@ -1,7 +1,5 @@
-"use client";
-
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { Link } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
@@ -40,11 +38,12 @@ type SidebarProps = {
 };
 
 function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
-  const { me, role, tenant, tenantName, tenants, switchTenant, logout } = useSession();
+  const { me, role, roleName, tenant, tenantName, tenants, switchTenant, logout } =
+    useSession();
 
   const displayName = me?.user.display_name || me?.user.email || "本地用户";
   const initial = displayName.slice(0, 1).toUpperCase();
-  const roleText = role ? ROLE_LABEL[role] : "只读";
+  const roleText = roleName || (role ? ROLE_LABEL[role] ?? role : "只读");
 
   const statusText =
     status === "online"
@@ -67,7 +66,7 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
   return (
     <div className="glass flex h-full min-h-0 flex-col rounded-3xl p-4 shadow-glass">
       <Link
-        href="/"
+        to="/"
         onClick={onNavigate}
         className="group flex items-center gap-3 rounded-2xl px-2 py-2"
       >
@@ -94,7 +93,7 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
           return (
             <Link
               key={item.href}
-              href={item.href}
+              to={item.href}
               onClick={onNavigate}
               className={clsx(
                 "flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition",
@@ -130,7 +129,7 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
             return (
               <Link
                 key={course.id}
-                href={`/courses/${course.id}`}
+                to={`/courses/${course.id}`}
                 onClick={onNavigate}
                 className={clsx(
                   "group flex items-start gap-2 rounded-xl px-2.5 py-2 transition",
@@ -225,8 +224,8 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
 }
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-  const router = useRouter();
+  const pathname = useLocation().pathname;
+  const navigate = useNavigate();
   const { authMode } = useSession();
   const [courses, setCourses] = useState<Course[]>([]);
   const [status, setStatus] = useState<Status>("checking");
@@ -265,12 +264,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const handler = () => {
-      if (authMode === "required") router.push("/login");
+      if (authMode === "required") navigate("/login");
     };
     window.addEventListener("course-studio:auth-required", handler);
     return () =>
       window.removeEventListener("course-studio:auth-required", handler);
-  }, [authMode, router]);
+  }, [authMode, navigate]);
 
 
   useEffect(() => {
@@ -332,11 +331,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 {subtitle}
               </p>
             </div>
-            <Link href="/settings" className="btn-quiet hidden lg:inline-flex">
+            <Link to="/settings" className="btn-quiet hidden lg:inline-flex">
               <Users size={14} />
               成员
             </Link>
-            <Link href="/kb" className="btn-quiet hidden md:inline-flex">
+            <Link to="/kb" className="btn-quiet hidden md:inline-flex">
               <Library size={14} />
               知识库
             </Link>

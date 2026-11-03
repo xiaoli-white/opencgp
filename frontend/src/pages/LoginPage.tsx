@@ -1,7 +1,5 @@
-"use client";
-
 import { useCallback, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle, ArrowRight, Loader2, LogIn, Sparkles, UserPlus } from "lucide-react";
 import clsx from "clsx";
@@ -11,8 +9,8 @@ import { setTenantId, setToken } from "@/lib/session";
 type Tab = "login" | "register";
 
 export default function LoginPage() {
-  const router = useRouter();
-  const params = useSearchParams();
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
   const redirect = params.get("redirect") || "/";
 
   const [tab, setTab] = useState<Tab>("login");
@@ -41,9 +39,8 @@ export default function LoginPage() {
   }, []);
 
   const go = useCallback(() => {
-    router.push(redirect);
-    router.refresh();
-  }, [router, redirect]);
+    navigate(redirect);
+  }, [navigate, redirect]);
 
   const submit = useCallback(async () => {
     setError("");

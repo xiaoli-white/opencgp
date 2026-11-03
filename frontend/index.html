@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI 课程工作室</title>
+    <meta
+      name="description"
+      content="以对话为中心、以课程为活文档的 AI 课程创作工作台——检索取证、逐讲生成、追问修改、版本可回溯。"
+    />
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("course-studio-theme");
+          var dark = stored
+            ? stored === "dark"
+            : window.matchMedia("(prefers-color-scheme: dark)").matches;
+          if (dark) {
+            document.documentElement.classList.add("dark");
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div class="app-backdrop" aria-hidden="true"></div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

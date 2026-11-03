@@ -1,5 +1,3 @@
-"use client";
-
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { GitCompare, History, Loader2, RotateCcw, X } from "lucide-react";

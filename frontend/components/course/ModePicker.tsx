@@ -1,5 +1,3 @@
-"use client";
-
 import clsx from "clsx";
 import { Check, PenLine, ShieldCheck } from "lucide-react";
 import type { GenerationMode } from "@/lib/api";

@@ -1,8 +1,6 @@
-"use client";
-
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
@@ -20,8 +18,8 @@ import { useSession } from "@/components/auth/SessionProvider";
 const FLOW = ["建课", "建讲", "检索取证", "逐讲生成", "追问 / 改版", "版本回滚"];
 
 export default function HomePage() {
-  const { can, role } = useSession();
-  const router = useRouter();
+  const { can, visibleCourseIds } = useSession();
+  const navigate = useNavigate();
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -70,7 +68,7 @@ export default function HomePage() {
         language: form.language,
       });
       window.dispatchEvent(new Event("course-studio:refresh"));
-      router.push(`/courses/${course.id}`);
+      navigate(`/courses/${course.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "创建课程失败");
     } finally {
@@ -111,7 +109,7 @@ export default function HomePage() {
               <Plus size={15} />
               新建课程
             </button>
-            <Link href="/kb" className="btn btn-ghost">
+            <Link to="/kb" className="btn btn-ghost">
               <BookOpen size={14} />
               打开知识库
             </Link>
@@ -340,6 +338,10 @@ export default function HomePage() {
                 <div className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-gradient-to-br from-indigo-400/25 to-violet-400/15 blur-2xl transition-transform duration-500 group-hover:scale-125" />
                 <div className="relative flex items-center justify-between">
                   <span className="chip">{difficultyLabel(course.difficulty)}</span>
+                  {visibleCourseIds !== "all" &&
+                  visibleCourseIds.includes(course.id) ? (
+                    <span className="chip">授权可见</span>
+                  ) : null}
                   <span className="text-[10px] text-slate-400 dark:text-slate-500">
                     {formatRelative(course.updated_at)}
                   </span>
@@ -361,7 +363,7 @@ export default function HomePage() {
                   </span>
                 </div>
                 <Link
-                  href={`/courses/${course.id}`}
+                  to={`/courses/${course.id}`}
                   aria-label={course.title}
                   className="absolute inset-0 rounded-3xl"
                 />
