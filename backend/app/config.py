@@ -76,12 +76,26 @@ class DatabaseConfig:
 class StorageConfig:
     backend: str = "local"
     root: str = "data/storage"
+    endpoint: str = ""
+    region: str = "us-east-1"
+    bucket: str = ""
+    access_key: str = ""
+    secret_key: str = ""
+    prefix: str = ""
+    timeout: float = 10.0
 
     @classmethod
     def from_env(cls) -> "StorageConfig":
         return cls(
             backend=_env("STORAGE_BACKEND", "local"),
             root=_env("STORAGE_ROOT", "data/storage"),
+            endpoint=_env("S3_ENDPOINT", ""),
+            region=_env("S3_REGION", "us-east-1") or "us-east-1",
+            bucket=_env("S3_BUCKET", ""),
+            access_key=_env("S3_ACCESS_KEY", ""),
+            secret_key=_env("S3_SECRET_KEY", ""),
+            prefix=_env("S3_PREFIX", ""),
+            timeout=float(_env("S3_TIMEOUT", "10") or 10),
         )
 
 
@@ -262,6 +276,31 @@ class LockConfig:
 
 
 @dataclass
+class JobsConfig:
+    queue_backend: str = "local"
+    redis_url: str = ""
+    concurrency: int = 2
+    sse_interval: float = 0.6
+    sse_max_seconds: float = 600.0
+    sse_ping_seconds: float = 15.0
+    max_attempts: int = 3
+    brpop_timeout: int = 2
+
+    @classmethod
+    def from_env(cls) -> "JobsConfig":
+        return cls(
+            queue_backend=_env("QUEUE_BACKEND", "local") or "local",
+            redis_url=_env("REDIS_URL", ""),
+            concurrency=max(1, int(_env("JOB_CONCURRENCY", "2") or 2)),
+            sse_interval=max(0.1, float(_env("JOB_SSE_INTERVAL", "0.6") or 0.6)),
+            sse_max_seconds=max(10.0, float(_env("JOB_SSE_MAX_SECONDS", "600") or 600)),
+            sse_ping_seconds=max(1.0, float(_env("JOB_SSE_PING_SECONDS", "15") or 15)),
+            max_attempts=max(1, int(_env("JOB_MAX_ATTEMPTS", "3") or 3)),
+            brpop_timeout=max(1, int(_env("JOB_BRPOP_TIMEOUT", "2") or 2)),
+        )
+
+
+@dataclass
 class Settings:
     """应用总配置。"""
 
@@ -281,6 +320,7 @@ class Settings:
     auth: AuthConfig = field(default_factory=AuthConfig)
     locks: LockConfig = field(default_factory=LockConfig)
     websearch: WebSearchConfig = field(default_factory=WebSearchConfig)
+    jobs: JobsConfig = field(default_factory=JobsConfig)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -301,6 +341,7 @@ class Settings:
             auth=AuthConfig.from_env(),
             locks=LockConfig.from_env(),
             websearch=WebSearchConfig.from_env(),
+            jobs=JobsConfig.from_env(),
         )
 
 

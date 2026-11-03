@@ -34,6 +34,8 @@ from app.ports.vectorstore import VectorStore
 from app.ports.web_search import WebSearchPort
 from app.ports.research_repository import ResearchRepository
 from app.ports.longform_repository import LongformRepository
+from app.ports.job_repository import JobRepository
+from app.ports.job_queue import JobQueue
 from app.services.auth import AuthService
 from app.services.conversation import ConversationService
 from app.services.blueprint import BlueprintService
@@ -46,6 +48,7 @@ from app.services.quota import QuotaService
 from app.services.user_providers import UserProviderService
 from app.services.research import ResearchService
 from app.services.longform import LongformService
+from app.services.jobs import JobService
 
 PROVIDER_CACHE_SIZE = 64
 
@@ -76,11 +79,24 @@ class Container:
 
     def storage(self) -> StorageBackend:
         def build() -> StorageBackend:
-            backend = self.settings.storage.backend
+            settings = self.settings.storage
+            backend = (settings.backend or "local").strip().lower()
             if backend == "local":
                 from app.adapters.storage.local import LocalStorageBackend
 
-                return LocalStorageBackend(root=self.settings.storage.root)
+                return LocalStorageBackend(root=settings.root)
+            if backend in ("s3", "rustfs"):
+                from app.adapters.storage.s3 import S3StorageBackend
+
+                return S3StorageBackend(
+                    endpoint=settings.endpoint,
+                    bucket=settings.bucket,
+                    access_key=settings.access_key,
+                    secret_key=settings.secret_key,
+                    region=settings.region,
+                    prefix=settings.prefix,
+                    timeout=settings.timeout,
+                )
             raise ValueError(f"不支持的 storage backend: {backend!r}")
 
         return self._get_or_build("storage", build)
@@ -147,6 +163,9 @@ class Container:
             return IngestService(
                 vectorstore=self.vectorstore(),
                 parser=self.parser(),
+                storage=self.storage(),
+                storage_prefix=self.settings.storage.prefix,
+
                 chunk_size=self.settings.ingest.chunk_size,
                 chunk_overlap=self.settings.ingest.chunk_overlap,
                 max_file_mb=self.settings.ingest.max_file_mb,
@@ -400,6 +419,72 @@ class Container:
             )
 
         return self._get_or_build("longform", build)
+
+    def job_repository(self) -> JobRepository:
+        def build() -> JobRepository:
+            from app.adapters.database.job_repository import DatabaseJobRepository
+
+            return DatabaseJobRepository(database=self.database())
+
+        return self._get_or_build("job_repository", build)
+
+    def job_queue(self) -> JobQueue:
+        def build() -> JobQueue:
+            settings = self.settings.jobs
+            backend = (settings.queue_backend or "local").strip().lower()
+            if backend == "redis":
+                try:
+                    from app.adapters.queue.redis import build_redis_job_queue
+
+                    return build_redis_job_queue(
+                        url=settings.redis_url,
+                        concurrency=settings.concurrency,
+                        max_attempts=settings.max_attempts,
+                        brpop_timeout=settings.brpop_timeout,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[queue] redis backend 不可用，回落 local: {exc!r}")
+            from app.adapters.queue.local import LocalJobQueue
+
+            return LocalJobQueue(concurrency=settings.concurrency)
+
+        return self._get_or_build("job_queue", build)
+
+    def job_events(self):
+        def build():
+            settings = self.settings.jobs
+            backend = (settings.queue_backend or "local").strip().lower()
+            if backend == "redis":
+                try:
+                    from app.adapters.queue.redis import build_redis_job_event_bus
+
+                    return build_redis_job_event_bus(url=settings.redis_url)
+                except Exception as exc:
+                    print(f"[jobs] redis 事件总线不可用，回落本地: {exc!r}")
+            from app.adapters.queue.local import NullJobEventBus
+
+            return NullJobEventBus()
+
+        return self._get_or_build("job_events", build)
+
+    def job_service(self) -> JobService:
+        def build() -> JobService:
+            settings = self.settings.jobs
+            return JobService(
+                repository=self.job_repository(),
+                queue=self.job_queue(),
+                research=self.research(),
+                longform=self.longform(),
+                generation=self.generation(),
+                blueprint=self.blueprint(),
+                quota=self.quota_service(),
+                llm_for=self.llm_for,
+                events=self.job_events(),
+                default_top_k=self.settings.generation.top_k,
+                default_mode=self.settings.generation.default_mode,
+            )
+
+        return self._get_or_build("job_service", build)
 
     def conversation_repository(self) -> ConversationRepository:
         def build() -> ConversationRepository:

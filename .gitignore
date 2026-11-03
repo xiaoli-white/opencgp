@@ -42,3 +42,6 @@ repo_llvmswift/
 swift-truss/
 vyx-fixes/
 frontend/dist/
+
+# 本地运行时数据（redis/rustfs 容器卷）
+.runtime/

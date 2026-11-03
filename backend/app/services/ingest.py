@@ -22,12 +22,18 @@ class IngestService:
         chunk_size: int = 800,
         chunk_overlap: int = 120,
         max_file_mb: int = 20,
+        storage: Any = None,
+        storage_prefix: str = "",
     ) -> None:
         self.vectorstore = vectorstore
         self.parser = parser
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.max_file_mb = max_file_mb
+        self.storage = storage
+        self.storage_prefix = (storage_prefix or "").strip("/")
+        self.last_object_key = ""
+        self.last_object_error = ""
 
     async def ingest_bytes(
         self,
@@ -48,10 +54,14 @@ class IngestService:
         parsed = self.parser.parse(data, filename)
         digest = hashlib.sha256(data).hexdigest()
         merged_meta = {"filename": filename, "sha256": digest, **parsed.meta, **(meta or {})}
+        resolved_id = source_id or _source_id(digest)
+        object_key = self._store_raw(data, filename, resolved_id, tenant_id)
+        if object_key:
+            merged_meta["object_key"] = object_key
         return await self.ingest_text(
             parsed.text,
             source_name=source_name or parsed.source_name,
-            source_id=source_id or _source_id(digest),
+            source_id=resolved_id,
             meta={**merged_meta, "parser": parsed.parser},
             tenant_id=tenant_id,
         )
@@ -86,6 +96,29 @@ class IngestService:
                 "ingested_at": time.time(),
             },
         )
+
+    def _store_raw(
+        self, data: bytes, filename: str, source_id: str, tenant_id: str
+    ) -> str:
+        self.last_object_key = ""
+        self.last_object_error = ""
+        if self.storage is None:
+            return ""
+        key = self.object_key(tenant_id, source_id, filename)
+        try:
+            self.storage.put(key, data, content_type="application/octet-stream")
+        except Exception as exc:
+            self.last_object_error = repr(exc)
+            print(f"[ingest] 原始文件写入对象存储失败: {exc!r}")
+            return ""
+        self.last_object_key = key
+        return key
+
+    def object_key(self, tenant_id: str, source_id: str, filename: str) -> str:
+        tenant = (tenant_id or "tenant_default").strip() or "tenant_default"
+        name = (filename or "upload.bin").strip().replace("/", "_") or "upload.bin"
+        parts = [part for part in (self.storage_prefix, tenant, source_id, name) if part]
+        return "/".join(parts)
 
     async def search(
         self,

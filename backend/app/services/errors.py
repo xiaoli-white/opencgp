@@ -118,3 +118,11 @@ class LongformNotFoundError(LookupError):
 
 class LongformSectionNotFoundError(LookupError):
     pass
+
+
+class JobNotFoundError(LookupError):
+    pass
+
+
+class UnsupportedJobKindError(ValueError):
+    pass

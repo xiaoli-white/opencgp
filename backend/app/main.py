@@ -11,10 +11,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+from contextlib import asynccontextmanager
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -29,6 +31,8 @@ from app.models.mode import GenerationMode
 from app.models.thread import LessonThreadView
 from app.models.longform import LongformProfile
 from app.models.research import ResearchRun
+from app.models.job import JOB_KINDS, JOB_STATUSES, Job
+from app.services.jobs import JobContext
 from app.services.errors import (
     AuthRequiredError,
     BlueprintNotFoundError,
@@ -59,15 +63,36 @@ from app.services.errors import (
     ResearchParseError,
     LongformNotFoundError,
     LongformSectionNotFoundError,
+    JobNotFoundError,
+    UnsupportedJobKindError,
 )
 
 settings = get_settings()
 container = get_container()
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    service = container.job_service()
+    try:
+        service.recover_stale()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[jobs] 恢复残留任务失败: {exc!r}")
+    try:
+        service.start()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[jobs] 队列启动失败: {exc!r}")
+    yield
+    try:
+        await service.aclose()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[jobs] 队列关闭失败: {exc!r}")
+
+
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="AI 课程工作室 · 以对话为中心、以课程为活文档的创作工作台",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -213,6 +238,14 @@ def health() -> dict[str, Any]:
             adapters[name] = {"ok": False, "error": str(exc)}
         else:
             adapters[name] = {"ok": ok}
+    try:
+        adapters["storage"]["backend"] = (settings.storage.backend or "local").strip().lower()
+        adapters["storage"]["bucket"] = settings.storage.bucket
+        error = getattr(container.storage(), "last_error", "")
+        if error:
+            adapters["storage"]["error"] = error
+    except Exception:
+        pass
 
     all_ok = all(v["ok"] for v in adapters.values())
     try:
@@ -224,11 +257,34 @@ def health() -> dict[str, Any]:
         }
     except Exception as exc:  # noqa: BLE001
         adapters["websearch"] = {"ok": False, "error": str(exc), "optional": True}
+    queue_info: dict[str, Any] = {"backend": "unknown", "ok": False}
+    jobs_info: dict[str, int] = {"queued": 0, "running": 0}
+    try:
+        queue = container.job_queue()
+        queue_info = {
+            "backend": getattr(queue, "name", "unknown"),
+            "ok": bool(queue.healthcheck()) if hasattr(queue, "healthcheck") else True,
+        }
+        stats = queue.stats() if hasattr(queue, "stats") else {}
+        queue_info["pending"] = int(stats.get("pending") or 0)
+        queue_info["concurrency"] = int(stats.get("concurrency") or 0)
+    except Exception as exc:  # noqa: BLE001
+        queue_info = {"backend": "unknown", "ok": False, "error": str(exc)}
+    try:
+        counts = container.job_service().counts()
+        jobs_info = {
+            "queued": int(counts.get("queued") or 0),
+            "running": int(counts.get("running") or 0),
+        }
+    except Exception as exc:  # noqa: BLE001
+        jobs_info = {"queued": 0, "running": 0, "error": str(exc)}
     return {
         "status": "ok" if all_ok else "degraded",
         "app": settings.app_name,
         "env": settings.env,
         "adapters": adapters,
+        "queue": queue_info,
+        "jobs": jobs_info,
     }
 
 
@@ -279,7 +335,9 @@ async def kb_upload(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return result.model_dump()
+    payload = result.model_dump()
+    payload["object_key"] = container.ingest().last_object_key
+    return payload
 
 
 class SearchRequest(BaseModel):
@@ -1970,3 +2028,223 @@ def delete_longform(
     if not container.longform().delete(longform_id, _tenant_of(ctx)):
         raise HTTPException(status_code=404, detail=f"长篇不存在: {longform_id}")
     return {"ok": True}
+
+
+class JobSubmitRequest(BaseModel):
+    kind: str = Field(min_length=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+def _job_payload(job: Job) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "kind": job.kind,
+        "status": job.status,
+        "progress": round(float(job.progress or 0.0), 4),
+        "error": job.error,
+        "result": job.result,
+        "payload": job.payload,
+        "tenant_id": job.tenant_id,
+        "user_id": job.user_id,
+        "attempts": job.attempts,
+        "cancel_requested": job.cancel_requested,
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+    }
+
+
+def _job_ctx(ctx: AuthContext) -> JobContext:
+    return JobContext(tenant_id=_tenant_of(ctx), user_id=ctx.user.id)
+
+
+@app.get("/api/v1/jobs/kinds")
+def list_job_kinds(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    return {"count": len(JOB_KINDS), "kinds": list(JOB_KINDS), "statuses": list(JOB_STATUSES)}
+
+
+@app.post("/api/v1/jobs", status_code=201)
+def submit_job(
+    req: JobSubmitRequest, ctx: AuthContext = Depends(require_write)
+) -> dict[str, Any]:
+    try:
+        job = container.job_service().submit(req.kind, req.payload, _job_ctx(ctx))
+    except UnsupportedJobKindError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    return _job_payload(job)
+
+
+@app.get("/api/v1/jobs")
+def list_jobs(
+    status: str | None = None,
+    kind: str | None = None,
+    limit: int = Query(default=20, ge=1, le=200),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    jobs = container.job_service().list(_tenant_of(ctx), status, kind, limit)
+    return {"count": len(jobs), "jobs": [_job_payload(job) for job in jobs]}
+
+
+@app.get("/api/v1/jobs/{job_id}")
+def get_job(job_id: str, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    job = container.job_service().get(job_id, _tenant_of(ctx))
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
+    return _job_payload(job)
+
+
+@app.post("/api/v1/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, ctx: AuthContext = Depends(require_write)) -> dict[str, Any]:
+    try:
+        job = container.job_service().cancel(job_id, _tenant_of(ctx))
+    except JobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {exc}") from exc
+    return _job_payload(job)
+
+
+@app.get("/api/v1/jobs/{job_id}/events")
+async def job_events(
+    job_id: str, request: Request, ctx: AuthContext = Depends(get_auth_context)
+) -> StreamingResponse:
+    _enforce(ctx, "read")
+    tenant_id = _tenant_of(ctx)
+    service = container.job_service()
+    job = service.get(job_id, tenant_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
+    jobs_settings = settings.jobs
+    interval = float(jobs_settings.sse_interval or 0.6)
+    max_seconds = float(jobs_settings.sse_max_seconds or 600.0)
+    ping_seconds = float(jobs_settings.sse_ping_seconds or 15.0)
+    use_bus = (jobs_settings.queue_backend or "local").strip().lower() == "redis"
+    bus = container.job_events() if use_bus else None
+
+    def frame_of(payload: dict[str, Any]) -> str:
+        return "event: status\n" + "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+
+    async def bus_stream():
+        snapshot = service.snapshot(job_id)
+        if snapshot is not None:
+            yield frame_of(snapshot)
+            if snapshot["status"] in ("succeeded", "failed", "canceled"):
+                return
+        deadline = time.time() + max_seconds
+        last_ping = time.time()
+        try:
+            async for message in bus.subscribe(job_id):
+                if await request.is_disconnected():
+                    return
+                if not message:
+                    if time.time() - last_ping >= ping_seconds:
+                        last_ping = time.time()
+                        yield ": ping\n\n"
+                    if time.time() >= deadline:
+                        return
+                    continue
+                payload = {
+                    "id": message.get("id") or job_id,
+                    "kind": message.get("kind") or "",
+                    "status": message.get("status") or "running",
+                    "progress": round(float(message.get("progress") or 0.0), 4),
+                    "error": message.get("error"),
+                    "result": message.get("result"),
+                }
+                last_ping = time.time()
+                yield frame_of(payload)
+                if payload["status"] in ("succeeded", "failed", "canceled"):
+                    return
+                if time.time() >= deadline:
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[jobs] SSE 订阅失败 {job_id}: {exc!r}")
+            snapshot = service.snapshot(job_id)
+            if snapshot is not None:
+                yield frame_of(snapshot)
+        finally:
+            try:
+                await bus.aclose()
+            except Exception:
+                pass
+
+    async def event_stream():
+        deadline = time.time() + max_seconds
+        last_signature: tuple[Any, ...] | None = None
+        while True:
+            if await request.is_disconnected():
+                break
+            current = service.get(job_id, tenant_id)
+            if current is None:
+                payload = {"id": job_id, "status": "failed", "progress": 0, "error": "任务不存在", "result": None}
+                yield "event: status\n" + "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+                break
+            frame = {
+                "id": current.id,
+                "kind": current.kind,
+                "status": current.status,
+                "progress": round(float(current.progress or 0.0), 4),
+                "error": current.error,
+                "result": current.result,
+            }
+            signature = (frame["status"], frame["progress"], frame["error"])
+            if signature != last_signature:
+                last_signature = signature
+                yield "event: status\n" + "data: " + json.dumps(frame, ensure_ascii=False) + "\n\n"
+            if current.status in ("succeeded", "failed", "canceled"):
+                break
+            if time.time() >= deadline:
+                break
+            await asyncio.sleep(interval)
+
+    stream = bus_stream() if use_bus else event_stream()
+    return StreamingResponse(
+        stream,
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/v1/storage/info")
+def storage_info(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    storage_settings = settings.storage
+    info: dict[str, Any] = {
+        "backend": (storage_settings.backend or "local").strip().lower(),
+        "bucket": storage_settings.bucket,
+        "endpoint": storage_settings.endpoint,
+        "prefix": storage_settings.prefix,
+        "objects": 0,
+    }
+    try:
+        backend = container.storage()
+    except Exception as exc:
+        info["error"] = str(exc)
+        return info
+    if info["backend"] in ("s3", "rustfs"):
+        tenant_prefix = "/".join(
+            part
+            for part in (
+                storage_settings.prefix.strip("/"),
+                _tenant_of(ctx) or "tenant_default",
+            )
+            if part
+        ) + "/"
+        try:
+            backend.ensure_bucket()
+            info["objects"] = int(backend.count_objects(tenant_prefix))
+            info["prefix"] = tenant_prefix
+            info["ok"] = True
+        except Exception as exc:
+            info["error"] = str(exc)
+    else:
+        try:
+            info["ok"] = bool(backend.healthcheck())
+        except Exception as exc:
+            info["error"] = str(exc)
+    return info

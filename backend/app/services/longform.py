@@ -4,7 +4,7 @@ import json
 import re
 import time
 import uuid
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from app.models.citation import Citation
 from app.models.generation import Evidence
@@ -170,6 +170,7 @@ class LongformService:
         top_k: int | None = None,
         tenant_id: str = "",
         llm: LLMProvider | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> Longform:
         longform = self._require(longform_id)
         resolved_mode = GenerationMode.normalize(mode or longform.last_mode or self.default_mode)
@@ -177,7 +178,8 @@ class LongformService:
         sections: list[OutlineSection] = []
         citations: list[Citation] = []
         known: set[tuple[str, int]] = set()
-        for section in longform.outline:
+        total = max(1, len(longform.outline))
+        for index, section in enumerate(longform.outline, start=1):
             found, evidence = await self._evidence(longform, section, top_k, tenant_id)
             for citation in found:
                 key = (citation.source_id, citation.chunk_index)
@@ -192,6 +194,8 @@ class LongformService:
                     update={"content": content, "status": SECTION_GENERATED}
                 )
             )
+            if on_progress is not None:
+                on_progress(index, total)
         applied = self.repository.append_version(
             longform_id,
             content=self._compose(longform, sections),
