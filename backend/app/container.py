@@ -31,6 +31,9 @@ from app.ports.user_provider_repository import UserProviderRepository
 from app.ports.quota_repository import QuotaRepository
 from app.ports.storage import StorageBackend
 from app.ports.vectorstore import VectorStore
+from app.ports.web_search import WebSearchPort
+from app.ports.research_repository import ResearchRepository
+from app.ports.longform_repository import LongformRepository
 from app.services.auth import AuthService
 from app.services.conversation import ConversationService
 from app.services.blueprint import BlueprintService
@@ -41,6 +44,8 @@ from app.services.provider_catalog import ProviderCatalogService
 from app.services.provider_settings import ProviderSettingsService
 from app.services.quota import QuotaService
 from app.services.user_providers import UserProviderService
+from app.services.research import ResearchService
+from app.services.longform import LongformService
 
 PROVIDER_CACHE_SIZE = 64
 
@@ -334,6 +339,67 @@ class Container:
             )
 
         return self._get_or_build("lock_service", build)
+
+    def web_search(self) -> WebSearchPort:
+        def build() -> WebSearchPort:
+            settings = self.settings.websearch
+            backend = (settings.backend or "none").strip().lower()
+            if backend in ("generic", "http_json", "generic_json"):
+                from app.adapters.websearch.http_json import HttpJsonWebSearch
+
+                return HttpJsonWebSearch(
+                    url=settings.url,
+                    api_key=settings.api_key,
+                    result_path=settings.result_path,
+                    method=settings.method,
+                    timeout=settings.timeout,
+                )
+            from app.adapters.websearch.none import NullWebSearch
+
+            return NullWebSearch()
+
+        return self._get_or_build("web_search", build)
+
+    def research_repository(self) -> ResearchRepository:
+        def build() -> ResearchRepository:
+            from app.adapters.database.research_repository import (
+                DatabaseResearchRepository,
+            )
+
+            return DatabaseResearchRepository(database=self.database())
+
+        return self._get_or_build("research_repository", build)
+
+    def research(self) -> ResearchService:
+        def build() -> ResearchService:
+            return ResearchService(
+                repository=self.research_repository(),
+                vectorstore=self.vectorstore(),
+                llm=self.llm(),
+                web_search=self.web_search(),
+            )
+
+        return self._get_or_build("research", build)
+
+    def longform_repository(self) -> LongformRepository:
+        def build() -> LongformRepository:
+            from app.adapters.database.longform_repository import (
+                DatabaseLongformRepository,
+            )
+
+            return DatabaseLongformRepository(database=self.database())
+
+        return self._get_or_build("longform_repository", build)
+
+    def longform(self) -> LongformService:
+        def build() -> LongformService:
+            return LongformService(
+                repository=self.longform_repository(),
+                vectorstore=self.vectorstore(),
+                llm=self.llm(),
+            )
+
+        return self._get_or_build("longform", build)
 
     def conversation_repository(self) -> ConversationRepository:
         def build() -> ConversationRepository:

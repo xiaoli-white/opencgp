@@ -232,6 +232,27 @@ class AuthConfig:
 
 
 @dataclass
+class WebSearchConfig:
+    backend: str = "none"
+    url: str = ""
+    api_key: str = ""
+    result_path: str = "results"
+    method: str = "POST"
+    timeout: float = 10.0
+
+    @classmethod
+    def from_env(cls) -> "WebSearchConfig":
+        return cls(
+            backend=_env("WEBSEARCH_BACKEND", "none"),
+            url=_env("WEBSEARCH_URL", ""),
+            api_key=_env("WEBSEARCH_API_KEY", ""),
+            result_path=_env("WEBSEARCH_RESULT_PATH", "results") or "results",
+            method=_env("WEBSEARCH_METHOD", "POST") or "POST",
+            timeout=float(_env("WEBSEARCH_TIMEOUT", "10") or 10),
+        )
+
+
+@dataclass
 class LockConfig:
     ttl_seconds: int = 120
 
@@ -259,6 +280,7 @@ class Settings:
     conversation: ConversationConfig = field(default_factory=ConversationConfig)
     auth: AuthConfig = field(default_factory=AuthConfig)
     locks: LockConfig = field(default_factory=LockConfig)
+    websearch: WebSearchConfig = field(default_factory=WebSearchConfig)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -278,6 +300,7 @@ class Settings:
             conversation=ConversationConfig.from_env(),
             auth=AuthConfig.from_env(),
             locks=LockConfig.from_env(),
+            websearch=WebSearchConfig.from_env(),
         )
 
 

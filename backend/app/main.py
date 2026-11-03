@@ -27,6 +27,8 @@ from app.models.blueprint import CourseBlueprint, GlossaryTerm
 from app.models.course import Course, Lesson
 from app.models.mode import GenerationMode
 from app.models.thread import LessonThreadView
+from app.models.longform import LongformProfile
+from app.models.research import ResearchRun
 from app.services.errors import (
     AuthRequiredError,
     BlueprintNotFoundError,
@@ -53,6 +55,10 @@ from app.services.errors import (
     ProviderDisabledError,
     ProviderInUseError,
     ProviderNotFoundError,
+    ResearchNotFoundError,
+    ResearchParseError,
+    LongformNotFoundError,
+    LongformSectionNotFoundError,
 )
 
 settings = get_settings()
@@ -209,6 +215,15 @@ def health() -> dict[str, Any]:
             adapters[name] = {"ok": ok}
 
     all_ok = all(v["ok"] for v in adapters.values())
+    try:
+        searcher = container.web_search()
+        adapters["websearch"] = {
+            "ok": bool(searcher.healthcheck()),
+            "backend": getattr(searcher, "name", ""),
+            "optional": True,
+        }
+    except Exception as exc:  # noqa: BLE001
+        adapters["websearch"] = {"ok": False, "error": str(exc), "optional": True}
     return {
         "status": "ok" if all_ok else "degraded",
         "app": settings.app_name,
@@ -1633,3 +1648,325 @@ async def test_server_provider(
         "model": model,
         "detail": detail,
     }
+
+
+class ResearchCreateRequest(BaseModel):
+    topic: str = Field(min_length=1)
+    depth: int = Field(default=2, ge=1, le=3)
+    top_k: int = Field(default=6, ge=1, le=20)
+    source_ids: list[str] = Field(default_factory=list)
+
+
+class ResearchBlueprintRequest(BaseModel):
+    course_id: str = ""
+    create_course: bool = False
+    course_title: str = ""
+    mode: str = "loose"
+
+
+class LongformCreateRequest(BaseModel):
+    title: str = Field(min_length=1)
+    genre: str = "article"
+    tone: str = ""
+    audience: str = ""
+    pov: str = ""
+    citation_policy: str = "optional"
+    target_words: int = Field(default=3000, ge=200, le=50000)
+    mode: str = "loose"
+
+
+class LongformSectionRequest(BaseModel):
+    mode: str | None = None
+    top_k: int | None = Field(default=None, ge=1, le=20)
+
+
+class LongformGenerateRequest(BaseModel):
+    mode: str | None = None
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    expected_version: int | None = None
+
+
+class LongformRewriteRequest(BaseModel):
+    instruction: str = Field(min_length=1)
+    mode: str | None = None
+    expected_version: int | None = None
+
+
+class LongformRevertRequest(BaseModel):
+    version: int = Field(ge=1)
+
+
+def _research_payload(run: ResearchRun) -> dict[str, Any]:
+    return run.model_dump()
+
+
+@app.post("/api/v1/research", status_code=201)
+async def create_research(
+    req: ResearchCreateRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _charge(ctx, "research", 1, ref_id=req.topic[:40])
+    try:
+        run = await container.research().run(
+            req.topic,
+            depth=req.depth,
+            top_k=req.top_k,
+            source_ids=req.source_ids,
+            tenant_id=_tenant_of(ctx),
+            user_id=ctx.user.id,
+            llm=container.llm_for(ctx.user.id),
+        )
+    except ResearchParseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return _research_payload(run)
+
+
+@app.get("/api/v1/research")
+def list_research(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    runs = container.research().list(_tenant_of(ctx), 50)
+    return {"count": len(runs), "runs": [_research_payload(run) for run in runs]}
+
+
+@app.get("/api/v1/research/{run_id}")
+def get_research(run_id: str, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    run = container.research().get(run_id, _tenant_of(ctx))
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"研究不存在: {run_id}")
+    return _research_payload(run)
+
+
+@app.delete("/api/v1/research/{run_id}")
+def delete_research(
+    run_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    removed = container.research().delete(run_id, _tenant_of(ctx))
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"研究不存在: {run_id}")
+    return {"ok": True}
+
+
+@app.post("/api/v1/research/{run_id}/blueprint")
+async def research_to_blueprint(
+    run_id: str,
+    req: ResearchBlueprintRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    payload = req or ResearchBlueprintRequest()
+    run = container.research().get(run_id, _tenant_of(ctx))
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"研究不存在: {run_id}")
+    course_id = (payload.course_id or "").strip()
+    if course_id:
+        _require_course(course_id, ctx, "write")
+    elif payload.create_course:
+        course = container.course_repository().create_course(
+            title=(payload.course_title or run.topic).strip(),
+            subtitle=run.brief.summary[:200],
+            tenant_id=_tenant_of(ctx),
+        )
+        course_id = course.id
+    else:
+        raise HTTPException(status_code=400, detail="请提供 course_id 或设置 create_course=true")
+    _charge(ctx, "blueprint", 1, ref_id=course_id)
+    focus = " ".join(
+        [run.topic, run.brief.summary]
+        + [finding.title for finding in run.brief.findings[:6]]
+    ).strip()
+    try:
+        blueprint = await container.blueprint().generate(
+            course_id,
+            mode=payload.mode or "loose",
+            focus=focus,
+            tenant_id=_tenant_of(ctx),
+            llm=container.llm_for(ctx.user.id),
+        )
+    except NoEvidenceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BlueprintParseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except (BlueprintNotFoundError, ResearchNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "research_id": run.id,
+        "course_id": course_id,
+        "blueprint": blueprint.model_dump(),
+    }
+
+
+def _require_longform(longform_id: str, ctx: AuthContext):
+    longform = container.longform().get(longform_id, _tenant_of(ctx))
+    if longform is None:
+        raise HTTPException(status_code=404, detail=f"长篇不存在: {longform_id}")
+    return longform
+
+
+@app.post("/api/v1/longforms", status_code=201)
+async def create_longform(
+    req: LongformCreateRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _charge(ctx, "longform", 1, ref_id=req.title[:40])
+    profile = LongformProfile(
+        genre=req.genre,
+        tone=req.tone,
+        audience=req.audience,
+        pov=req.pov,
+        citation_policy=req.citation_policy,
+        unit_name="节",
+    )
+    longform = await container.longform().create(
+        req.title,
+        profile=profile,
+        target_words=req.target_words,
+        mode=req.mode,
+        tenant_id=_tenant_of(ctx),
+        user_id=ctx.user.id,
+        llm=container.llm_for(ctx.user.id),
+    )
+    return longform.model_dump()
+
+
+@app.get("/api/v1/longforms")
+def list_longforms(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    items = container.longform().list(_tenant_of(ctx), 50)
+    return {"count": len(items), "longforms": [item.model_dump() for item in items]}
+
+
+@app.get("/api/v1/longforms/{longform_id}")
+def get_longform(
+    longform_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    return _require_longform(longform_id, ctx).model_dump()
+
+
+@app.post("/api/v1/longforms/{longform_id}/sections/{section_id}/generate")
+async def generate_longform_section(
+    longform_id: str,
+    section_id: str,
+    req: LongformSectionRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_longform(longform_id, ctx)
+    payload = req or LongformSectionRequest()
+    _charge(ctx, "longform", 1, ref_id=longform_id)
+    try:
+        section, longform = await container.longform().generate_section(
+            longform_id,
+            section_id,
+            mode=payload.mode,
+            top_k=payload.top_k,
+            tenant_id=_tenant_of(ctx),
+            llm=container.llm_for(ctx.user.id),
+        )
+    except LongformSectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
+    except LongformNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "section_id": section.id,
+        "content": section.content,
+        "longform": longform.model_dump(),
+    }
+
+
+@app.post("/api/v1/longforms/{longform_id}/generate")
+async def generate_longform(
+    longform_id: str,
+    req: LongformGenerateRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    longform = _require_longform(longform_id, ctx)
+    payload = req or LongformGenerateRequest()
+    if payload.expected_version is not None and int(payload.expected_version) != longform.current_version:
+        return _conflict(VersionConflictError(int(payload.expected_version), longform.current_version))
+    _charge(ctx, "longform", 1, ref_id=longform_id)
+    updated = await container.longform().generate_all(
+        longform_id,
+        mode=payload.mode,
+        top_k=payload.top_k,
+        tenant_id=_tenant_of(ctx),
+        llm=container.llm_for(ctx.user.id),
+    )
+    return updated.model_dump()
+
+
+@app.post("/api/v1/longforms/{longform_id}/rewrite")
+async def rewrite_longform(
+    longform_id: str,
+    req: LongformRewriteRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_longform(longform_id, ctx)
+    _charge(ctx, "longform", 1, ref_id=longform_id)
+    try:
+        updated = await container.longform().rewrite(
+            longform_id,
+            req.instruction,
+            mode=req.mode,
+            expected_version=req.expected_version,
+            llm=container.llm_for(ctx.user.id),
+        )
+    except VersionConflictError as exc:
+        return _conflict(exc)
+    except LongformNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return updated.model_dump()
+
+
+@app.get("/api/v1/longforms/{longform_id}/versions")
+def list_longform_versions(
+    longform_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_longform(longform_id, ctx)
+    versions = container.longform().list_versions(longform_id)
+    return {
+        "count": len(versions),
+        "versions": [
+            {
+                "id": item.id,
+                "version": item.version,
+                "note": item.note,
+                "mode": item.mode,
+                "created_at": item.created_at,
+                "content_length": len(item.content),
+            }
+            for item in versions
+        ],
+    }
+
+
+@app.post("/api/v1/longforms/{longform_id}/revert")
+def revert_longform(
+    longform_id: str,
+    req: LongformRevertRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_longform(longform_id, ctx)
+    try:
+        longform, version = container.longform().revert(longform_id, req.version)
+    except LongformNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"longform": longform.model_dump(), "version": version.version}
+
+
+@app.delete("/api/v1/longforms/{longform_id}")
+def delete_longform(
+    longform_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    if not container.longform().delete(longform_id, _tenant_of(ctx)):
+        raise HTTPException(status_code=404, detail=f"长篇不存在: {longform_id}")
+    return {"ok": True}

@@ -102,3 +102,19 @@ class ProviderInUseError(RuntimeError):
 
 class DefaultProviderError(ValueError):
     pass
+
+
+class ResearchNotFoundError(LookupError):
+    pass
+
+
+class ResearchParseError(RuntimeError):
+    pass
+
+
+class LongformNotFoundError(LookupError):
+    pass
+
+
+class LongformSectionNotFoundError(LookupError):
+    pass

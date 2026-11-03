@@ -6,7 +6,7 @@ DEFAULT_MONTHLY_GENERATIONS = 200
 DEFAULT_MONTHLY_UPLOADS = 100
 DEFAULT_STORAGE_BYTES = 100 * 1024 * 1024
 
-GENERATION_KINDS = ("generate", "amend", "ask", "blueprint")
+GENERATION_KINDS = ("generate", "amend", "ask", "blueprint", "research", "longform")
 UPLOAD_KINDS = ("upload",)
 STORAGE_KINDS = ("storage",)
 QUOTA_KINDS = GENERATION_KINDS + UPLOAD_KINDS + STORAGE_KINDS
