@@ -148,6 +148,91 @@ export type Health = {
   adapters: Record<string, { ok: boolean; error?: string }>;
 };
 
+export type GlossaryTerm = {
+  term: string;
+  definition: string;
+  aliases: string[];
+  node_ids: string[];
+};
+
+export type LearningStage = {
+  id: string;
+  title: string;
+  goal: string;
+  node_ids: string[];
+  estimated_minutes: number;
+};
+
+export type OutlineNode = {
+  id: string;
+  stage_id: string;
+  title: string;
+  summary: string;
+  objectives: string[];
+  prerequisites: string[];
+  estimated_minutes: number;
+  lesson_id: string | null;
+  status: string;
+};
+
+export type Blueprint = {
+  course_id: string;
+  version: number;
+  overview: string;
+  mode: GenerationMode | "";
+  grounded: boolean;
+  learning_path: LearningStage[];
+  outline: OutlineNode[];
+  glossary: GlossaryTerm[];
+  provider: string;
+  warning: string;
+  updated_at: number;
+};
+
+export type BlueprintEnvelope = {
+  exists: boolean;
+  blueprint: Blueprint | null;
+};
+
+export type LessonReview = {
+  id: string;
+  lesson_id: string;
+  action: "approve" | "request_revision" | string;
+  note: string;
+  version: number;
+  status: string;
+  created_at: number;
+};
+
+export type CourseProgress = {
+  course_id: string;
+  total: number;
+  by_status: Record<string, number>;
+  approved: number;
+  pending_review: number;
+  next_lesson_id: string | null;
+  blueprint_ready: boolean;
+  blueprint_version: number;
+};
+
+export type GlossaryPayload = {
+  course_id: string;
+  count: number;
+  glossary: GlossaryTerm[];
+};
+
+export type ApplyBlueprintResult = {
+  created_lessons: Lesson[];
+  blueprint: Blueprint;
+  created_count: number;
+};
+
+export type ReviewResult = {
+  lesson: Lesson;
+  review: LessonReview;
+  course_progress: CourseProgress;
+};
+
 export class ApiError extends Error {
   status: number;
 
@@ -322,4 +407,67 @@ export const api = {
       `/api/v1/kb/sources/${encodeURIComponent(sourceId)}`,
       { method: "DELETE" },
     ),
+
+  getBlueprint: (courseId: string) =>
+    request<BlueprintEnvelope>(`/api/v1/courses/${courseId}/blueprint`),
+
+  generateBlueprint: (
+    courseId: string,
+    payload: {
+      mode?: GenerationMode;
+      top_k?: number;
+      source_ids?: string[];
+      focus?: string;
+    } = {},
+  ) =>
+    request<Blueprint>(`/api/v1/courses/${courseId}/blueprint/generate`, {
+      method: "POST",
+      body: JSON.stringify({
+        mode: payload.mode ?? "strict",
+        top_k: payload.top_k ?? null,
+        source_ids: payload.source_ids ?? null,
+        focus: payload.focus ?? "",
+      }),
+    }),
+
+  saveBlueprint: (courseId: string, blueprint: Blueprint) =>
+    request<Blueprint>(`/api/v1/courses/${courseId}/blueprint`, {
+      method: "PUT",
+      body: JSON.stringify({ blueprint }),
+    }),
+
+  applyBlueprint: (courseId: string) =>
+    request<ApplyBlueprintResult>(
+      `/api/v1/courses/${courseId}/blueprint/apply`,
+      { method: "POST" },
+    ),
+
+  getGlossary: (courseId: string) =>
+    request<GlossaryPayload>(`/api/v1/courses/${courseId}/glossary`),
+
+  saveGlossary: (courseId: string, terms: GlossaryTerm[]) =>
+    request<GlossaryPayload>(`/api/v1/courses/${courseId}/glossary`, {
+      method: "PUT",
+      body: JSON.stringify({ terms }),
+    }),
+
+  reviewLesson: (
+    lessonId: string,
+    action: "approve" | "request_revision",
+    note = "",
+  ) =>
+    request<ReviewResult>(`/api/v1/lessons/${lessonId}/review`, {
+      method: "POST",
+      body: JSON.stringify({ action, note }),
+    }),
+
+  getProgress: (courseId: string) =>
+    request<CourseProgress>(`/api/v1/courses/${courseId}/progress`),
+
+  listLessonReviews: (lessonId: string) =>
+    request<{
+      lesson_id: string;
+      count: number;
+      reviews: LessonReview[];
+    }>(`/api/v1/lessons/${lessonId}/reviews`),
 };

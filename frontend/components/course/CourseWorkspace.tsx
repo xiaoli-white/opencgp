@@ -12,7 +12,9 @@ import {
   History,
   Loader2,
   MessageSquare,
+  Network,
   Plus,
+  ScrollText,
   Sparkles,
   Target,
   X,
@@ -21,6 +23,7 @@ import clsx from "clsx";
 import {
   api,
   type CourseDetail,
+  type CourseProgress,
   type GenerationMode,
   type LessonVersion,
 } from "@/lib/api";
@@ -32,9 +35,21 @@ import {
   statusLabel,
 } from "@/lib/format";
 import MarkdownReader from "@/components/reader/MarkdownReader";
+import CourseReader from "@/components/reader/CourseReader";
 import VersionPanel from "@/components/reader/VersionPanel";
 import ChatPanel from "@/components/chat/ChatPanel";
 import ModePicker from "@/components/course/ModePicker";
+import BlueprintBoard from "@/components/blueprint/BlueprintBoard";
+import ReviewControls from "@/components/course/ReviewControls";
+import StatusBadge from "@/components/course/StatusBadge";
+
+type WorkspaceView = "reader" | "blueprint" | "continuous";
+
+const VIEWS: { value: WorkspaceView; label: string; icon: typeof BookOpen }[] = [
+  { value: "reader", label: "阅读", icon: BookOpen },
+  { value: "blueprint", label: "蓝图", icon: Network },
+  { value: "continuous", label: "连续阅读", icon: ScrollText },
+];
 
 export default function CourseWorkspace({ courseId }: { courseId: string }) {
   const [detail, setDetail] = useState<CourseDetail | null>(null);
@@ -58,6 +73,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   const [newTitle, setNewTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const [versionTick, setVersionTick] = useState(0);
+  const [view, setView] = useState<WorkspaceView>("reader");
+  const [progress, setProgress] = useState<CourseProgress | null>(null);
+  const [blueprintTick, setBlueprintTick] = useState(0);
 
   const loadCourse = useCallback(
     async (preferred?: string | null) => {
@@ -74,6 +92,26 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     },
     [courseId],
   );
+
+  const refreshProgress = useCallback(async () => {
+    try {
+      const data = await api.getProgress(courseId);
+      setProgress(data);
+    } catch {
+      setProgress(null);
+    }
+  }, [courseId]);
+
+  const refreshWorkspace = useCallback(async () => {
+    await loadCourse(activeId);
+    await refreshProgress();
+    setVersionTick((tick) => tick + 1);
+    setBlueprintTick((tick) => tick + 1);
+  }, [activeId, loadCourse, refreshProgress]);
+
+  useEffect(() => {
+    void refreshProgress();
+  }, [refreshProgress, versionTick, blueprintTick]);
 
   useEffect(() => {
     let cancelled = false;
@@ -218,6 +256,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
       setNewTitle("");
       setFormOpen(false);
       setNotice(`已创建《${result.lesson.title}》`);
+      await refreshProgress();
       window.dispatchEvent(new Event("course-studio:refresh"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "创建讲次失败");
@@ -244,6 +283,17 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     setChatOpen(false);
     setPendingSelection(null);
   }, []);
+
+  const handleOpenLesson = useCallback((lessonId: string) => {
+    if (lessonId) setActiveId(lessonId);
+    setView("reader");
+    setGenerateOpen(false);
+  }, []);
+
+  const handleLessonsChanged = useCallback(async () => {
+    await loadCourse(activeId);
+    await refreshProgress();
+  }, [activeId, loadCourse, refreshProgress]);
 
   if (loading) {
     return (
@@ -330,6 +380,42 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="inline-flex items-center gap-0.5 rounded-full border border-slate-200/70 bg-white/50 p-0.5 shadow-[0_10px_26px_-24px_rgba(99,102,241,0.9)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.05]">
+          {VIEWS.map((item) => {
+            const active = view === item.value;
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => setView(item.value)}
+                className={clsx(
+                  "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium transition",
+                  active
+                    ? "brand-gradient text-white shadow-[0_10px_22px_-14px_rgba(99,102,241,0.9)]"
+                    : "text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-200",
+                )}
+              >
+                <Icon size={12} />
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {progress ? (
+            <span className="chip-muted">
+              已通过 {progress.approved}/{progress.total} · 待审{" "}
+              {progress.pending_review}
+            </span>
+          ) : null}
+          <span className="chip-muted">
+            蓝图 {progress?.blueprint_ready ? `v${progress.blueprint_version}` : "未生成"}
+          </span>
+        </div>
+      </div>
+
       {error ? (
         <div className="flex items-start gap-2 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-xs leading-relaxed text-rose-700 dark:text-rose-300">
           <AlertCircle size={14} className="mt-0.5 shrink-0" />
@@ -345,6 +431,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         </div>
       ) : null}
 
+      {view === "reader" ? (
       <div className="grid gap-5 lg:grid-cols-[250px_minmax(0,1fr)] xl:grid-cols-[250px_minmax(0,1fr)_320px]">
         <aside className="glass flex max-h-[calc(100vh-7rem)] flex-col rounded-3xl p-3.5 shadow-glass lg:sticky lg:top-24">
           <div className="flex items-center justify-between px-1">
@@ -482,7 +569,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                   <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500">
                     <span>第 {activeLesson.order_index} 讲</span>
                     <span>·</span>
-                    <span>{statusLabel(activeLesson.status)}</span>
+                    <StatusBadge status={activeLesson.status} />
                     <span>·</span>
                     <span>v{activeLesson.current_version}</span>
                     {activeLesson.content ? (
@@ -526,6 +613,14 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                   </button>
                 </div>
               </div>
+
+              <ReviewControls
+                lesson={activeLesson}
+                progress={progress}
+                onReviewed={refreshWorkspace}
+                onNotice={setNotice}
+                onError={setError}
+              />
 
               <AnimatePresence initial={false}>
                 {generateOpen && (
@@ -703,6 +798,29 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           />
         </div>
       </div>
+      ) : null}
+
+      {view === "blueprint" ? (
+        <BlueprintBoard
+          courseId={courseId}
+          lessons={detail.lessons}
+          reloadKey={blueprintTick}
+          onOpenLesson={handleOpenLesson}
+          onLessonsChanged={handleLessonsChanged}
+          onNotice={setNotice}
+          onError={setError}
+          onProgressRefresh={() => void refreshProgress()}
+        />
+      ) : null}
+
+      {view === "continuous" ? (
+        <CourseReader
+          lessons={detail.lessons}
+          progress={progress}
+          onOpenLesson={handleOpenLesson}
+          onGoReader={() => setView("reader")}
+        />
+      ) : null}
 
       <AnimatePresence>
         {versionsOpen && (

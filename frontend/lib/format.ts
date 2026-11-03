@@ -33,14 +33,40 @@ export function difficultyLabel(value: string): string {
 }
 
 const STATUS_LABELS: Record<string, string> = {
+  planned: "待生成",
   draft: "草稿",
+  generated: "已生成",
   review: "待审",
   approved: "已通过",
   published: "已发布",
+  needs_revision: "待修改",
+  reverted: "已回滚",
 };
 
 export function statusLabel(value: string): string {
   return STATUS_LABELS[value] ?? (value || "草稿");
+}
+
+export type StatusTone =
+  | "neutral"
+  | "indigo"
+  | "emerald"
+  | "amber"
+  | "rose";
+
+const STATUS_TONES: Record<string, StatusTone> = {
+  planned: "neutral",
+  draft: "neutral",
+  generated: "indigo",
+  review: "indigo",
+  approved: "emerald",
+  published: "emerald",
+  needs_revision: "amber",
+  reverted: "rose",
+};
+
+export function statusTone(value: string): StatusTone {
+  return STATUS_TONES[value] ?? "neutral";
 }
 
 export function formatChars(count: number): string {
