@@ -27,6 +27,7 @@ from app.ports.lock_repository import LockRepository
 from app.ports.parser import DocumentParser
 from app.ports.provider_catalog_repository import ProviderCatalogRepository
 from app.ports.provider_settings_repository import ProviderSettingsRepository
+from app.ports.user_provider_repository import UserProviderRepository
 from app.ports.quota_repository import QuotaRepository
 from app.ports.storage import StorageBackend
 from app.ports.vectorstore import VectorStore
@@ -39,6 +40,7 @@ from app.services.locks import LockService
 from app.services.provider_catalog import ProviderCatalogService
 from app.services.provider_settings import ProviderSettingsService
 from app.services.quota import QuotaService
+from app.services.user_providers import UserProviderService
 
 PROVIDER_CACHE_SIZE = 64
 
@@ -255,6 +257,27 @@ class Container:
 
         return self._get_or_build("provider_catalog", build)
 
+    def user_provider_repository(self) -> UserProviderRepository:
+        def build() -> UserProviderRepository:
+            from app.adapters.database.user_provider_repository import (
+                DatabaseUserProviderRepository,
+            )
+
+            return DatabaseUserProviderRepository(database=self.database())
+
+        return self._get_or_build("user_provider_repository", build)
+
+    def user_providers(self) -> UserProviderService:
+        def build() -> UserProviderService:
+            return UserProviderService(
+                repository=self.user_provider_repository(),
+                server=self.settings.llm,
+                secret=self.settings.auth.secret,
+                default_provider=self.llm,
+            )
+
+        return self._get_or_build("user_providers", build)
+
     def provider_settings(self) -> ProviderSettingsService:
         def build() -> ProviderSettingsService:
             return ProviderSettingsService(
@@ -263,6 +286,7 @@ class Container:
                 secret=self.settings.auth.secret,
                 default_provider=self.llm,
                 catalog=self.provider_catalog(),
+                user_providers=self.user_providers(),
             )
 
         return self._get_or_build("provider_settings", build)

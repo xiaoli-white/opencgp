@@ -115,6 +115,19 @@ class DatabaseProviderSettingsRepository(ProviderSettingsRepository):
             "DELETE FROM user_provider_settings WHERE user_id = ?", (user_id,)
         )
 
+    def clear_provider_reference(self, user_id: str, provider_id: str) -> None:
+        self.ensure_schema()
+        if not provider_id:
+            return
+        self.database.execute(
+            """
+            UPDATE user_provider_settings
+            SET provider_id = '', updated_at = ?
+            WHERE user_id = ? AND provider_id = ?
+            """,
+            (time.time(), user_id, provider_id),
+        )
+
     def count_by_provider(self, provider_id: str) -> int:
         self.ensure_schema()
         if not provider_id:

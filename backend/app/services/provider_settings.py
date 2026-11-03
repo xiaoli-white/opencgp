@@ -18,11 +18,13 @@ from app.models.provider_setting import (
     SETTING_SOURCE_USER,
     ProviderSetting,
 )
+from app.models.user_provider import SCOPE_SERVER, SCOPE_USER, UserProvider
 from app.ports.llm import LLMProvider
 from app.ports.provider_settings_repository import ProviderSettingsRepository
 from app.services.crypto import decrypt_text, encrypt_text, mask_secret
 from app.services.errors import ProviderDisabledError, ProviderNotFoundError
 from app.services.provider_catalog import ProviderCatalogService
+from app.services.user_providers import UserProviderService
 
 ProviderFactory = Callable[..., LLMProvider]
 
@@ -30,6 +32,7 @@ ProviderFactory = Callable[..., LLMProvider]
 @dataclass
 class ResolvedProvider:
     source: str = SETTING_SOURCE_SERVER
+    scope: str = SCOPE_SERVER
     provider_id: str = ""
     provider_name: str = ""
     kind: str = ""
@@ -55,6 +58,7 @@ class ProviderSettingsService:
         provider_factory: ProviderFactory | None = None,
         default_provider: Callable[[], LLMProvider] | None = None,
         catalog: ProviderCatalogService | None = None,
+        user_providers: UserProviderService | None = None,
     ) -> None:
         self.repository = repository
         self.server = server
@@ -62,6 +66,11 @@ class ProviderSettingsService:
         self._provider_factory = provider_factory
         self._default_provider = default_provider
         self.catalog = catalog or ProviderCatalogService(
+            repository=None,
+            server=server,
+            secret=self.secret,
+        )
+        self.user_providers = user_providers or UserProviderService(
             repository=None,
             server=server,
             secret=self.secret,
@@ -96,35 +105,96 @@ class ProviderSettingsService:
         summary["has_key"] = bool(summary.get("has_key") or self.server.api_key)
         return summary
 
+    def _personal(self, user_id: str, provider_id: str) -> UserProvider | None:
+        try:
+            return self.user_providers.get(user_id, provider_id)
+        except ProviderNotFoundError:
+            return None
+
+    def _from_personal(
+        self,
+        provider: UserProvider,
+        setting: ProviderSetting | None,
+        user_key: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> ResolvedProvider:
+        models = list(provider.models)
+        model = (setting.model if setting else "") or (
+            models[0] if models else self.server.model
+        )
+        return ResolvedProvider(
+            source=SETTING_SOURCE_USER,
+            scope=SCOPE_USER,
+            provider_id=provider.id,
+            provider_name=provider.name,
+            kind=provider.kind,
+            base_url=provider.base_url or self.server.base_url,
+            model=model,
+            api_key=user_key or self.user_providers.api_key(provider),
+            temperature=temperature,
+            max_tokens=max_tokens,
+            models=models,
+            updated_at=max(
+                provider.updated_at, setting.updated_at if setting else 0.0
+            ),
+        )
+
+    def _from_server(
+        self,
+        provider: Any,
+        setting: ProviderSetting | None,
+        user_key: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> ResolvedProvider:
+        models = list(provider.models)
+        model = (setting.model if setting else "") or (
+            models[0] if models else self.server.model
+        )
+        return ResolvedProvider(
+            source=SETTING_SOURCE_USER if user_key else SETTING_SOURCE_SERVER,
+            scope=SCOPE_SERVER,
+            provider_id=provider.id,
+            provider_name=provider.name,
+            kind=provider.kind,
+            base_url=provider.base_url or self.server.base_url,
+            model=model,
+            api_key=user_key or self.catalog.api_key(provider),
+            temperature=temperature,
+            max_tokens=max_tokens,
+            models=models,
+            updated_at=max(
+                provider.updated_at, setting.updated_at if setting else 0.0
+            ),
+        )
+
     def resolve(self, user_id: str) -> ResolvedProvider:
         setting = self._setting(user_id)
         user_key = self._user_key(setting)
         temperature = setting.temperature if setting else DEFAULT_TEMPERATURE
         max_tokens = setting.max_tokens if setting else DEFAULT_MAX_TOKENS
         provider_id = (setting.provider_id if setting else "") or ""
-        provider = self.catalog.get(provider_id) if provider_id else None
-        if provider is not None and provider.enabled:
-            key = user_key or self.catalog.api_key(provider)
-            models = list(provider.models)
-            model = (setting.model if setting else "") or (
-                models[0] if models else self.server.model
-            )
-            return ResolvedProvider(
-                source=SETTING_SOURCE_USER,
-                provider_id=provider.id,
-                provider_name=provider.name,
-                kind=provider.kind,
-                base_url=provider.base_url or self.server.base_url,
-                model=model,
-                api_key=key,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                models=models,
-                updated_at=setting.updated_at if setting else 0.0,
+        if provider_id:
+            personal = self._personal(user_id, provider_id)
+            if personal is not None and personal.enabled:
+                return self._from_personal(
+                    personal, setting, user_key, temperature, max_tokens
+                )
+            server_provider = self.catalog.get(provider_id)
+            if server_provider is not None and server_provider.enabled:
+                return self._from_server(
+                    server_provider, setting, user_key, temperature, max_tokens
+                )
+        personal_default = self.user_providers.default(user_id)
+        if personal_default is not None and personal_default.enabled:
+            return self._from_personal(
+                personal_default, setting, user_key, temperature, max_tokens
             )
         if setting is not None and setting.backend and user_key:
             return ResolvedProvider(
                 source=SETTING_SOURCE_USER,
+                scope=SCOPE_USER,
                 provider_id="",
                 provider_name="",
                 kind=setting.backend,
@@ -144,6 +214,7 @@ class ProviderSettingsService:
             )
             return ResolvedProvider(
                 source=SETTING_SOURCE_SERVER,
+                scope=SCOPE_SERVER,
                 provider_id=default.id,
                 provider_name=default.name,
                 kind=default.kind,
@@ -153,10 +224,13 @@ class ProviderSettingsService:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 models=models,
-                updated_at=setting.updated_at if setting else 0.0,
+                updated_at=max(
+                    default.updated_at, setting.updated_at if setting else 0.0
+                ),
             )
         return ResolvedProvider(
             source=SETTING_SOURCE_SERVER,
+            scope=SCOPE_SERVER,
             kind=self.server.backend,
             base_url=self.server.base_url,
             model=(setting.model if setting else "") or self.server.model,
@@ -167,12 +241,29 @@ class ProviderSettingsService:
             updated_at=setting.updated_at if setting else 0.0,
         )
 
+    def options(self, user_id: str) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for provider in self.user_providers.list(user_id):
+            if not provider.enabled:
+                continue
+            items.append(self.user_providers.option(provider))
+        for provider in self.catalog.list():
+            if not provider.enabled:
+                continue
+            option = self.catalog.option(provider)
+            option["scope"] = SCOPE_SERVER
+            items.append(option)
+        return items
+
     def get_effective(self, user_id: str) -> dict[str, Any]:
         resolved = self.resolve(user_id)
         return {
             "source": resolved.source,
             "provider_id": resolved.provider_id,
             "provider_name": resolved.provider_name,
+            "active_provider_id": resolved.provider_id,
+            "active_scope": resolved.scope,
+            "scope": resolved.scope,
             "backend": resolved.kind,
             "base_url": resolved.base_url,
             "model": resolved.model,
@@ -182,7 +273,7 @@ class ProviderSettingsService:
             "has_key": resolved.has_key,
             "api_key_masked": mask_secret(resolved.api_key),
             "updated_at": resolved.updated_at,
-            "providers": self.catalog.options(),
+            "providers": self.options(user_id),
             "server": self._server_payload(),
         }
 
@@ -208,14 +299,22 @@ class ProviderSettingsService:
         next_model = (model or "").strip()
         next_provider_id = existing.provider_id if existing is not None else ""
         if target:
-            provider = self.catalog.get(target)
-            if provider is None:
-                raise ProviderNotFoundError("指定的 provider 不存在")
-            if not provider.enabled:
-                raise ProviderDisabledError("指定的 provider 已被禁用")
-            next_provider_id = provider.id
-            next_backend = ""
-            next_base_url = ""
+            personal = self._personal(user_id, target)
+            if personal is not None:
+                if not personal.enabled:
+                    raise ProviderDisabledError("指定的通道已被禁用")
+                next_provider_id = personal.id
+                next_backend = ""
+                next_base_url = ""
+            else:
+                provider = self.catalog.get(target)
+                if provider is None:
+                    raise ProviderNotFoundError("指定的 provider 不存在")
+                if not provider.enabled:
+                    raise ProviderDisabledError("指定的 provider 已被禁用")
+                next_provider_id = provider.id
+                next_backend = ""
+                next_base_url = ""
         elif next_backend:
             next_provider_id = ""
         setting = ProviderSetting(
@@ -244,10 +343,14 @@ class ProviderSettingsService:
         self.repository.delete(user_id)
         return self.get_effective(user_id)
 
+    def clear_reference(self, user_id: str, provider_id: str) -> None:
+        self.repository.clear_provider_reference(user_id, provider_id)
+
     def cache_key(self, user_id: str) -> tuple[Any, ...]:
         resolved = self.resolve(user_id)
         digest = hashlib.sha256(resolved.api_key.encode("utf-8")).hexdigest()
         return (
+            resolved.scope,
             resolved.source,
             resolved.provider_id,
             resolved.kind,
@@ -256,6 +359,7 @@ class ProviderSettingsService:
             digest,
             resolved.temperature,
             resolved.max_tokens,
+            resolved.updated_at,
         )
 
     def build_provider(self, user_id: str) -> LLMProvider:

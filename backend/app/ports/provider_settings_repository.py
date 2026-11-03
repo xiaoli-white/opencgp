@@ -21,3 +21,6 @@ class ProviderSettingsRepository(Protocol):
 
     def count_by_provider(self, provider_id: str) -> int:
         ...
+
+    def clear_provider_reference(self, user_id: str, provider_id: str) -> None:
+        ...

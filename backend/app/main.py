@@ -1058,6 +1058,26 @@ class ProviderTestRequest(BaseModel):
     model: str = ""
 
 
+class UserProviderCreateRequest(BaseModel):
+    name: str = Field(min_length=1)
+    kind: Literal["openai_compat", "dummy"] = "openai_compat"
+    base_url: str = ""
+    api_key: str | None = None
+    models: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    is_default: bool = False
+
+
+class UserProviderUpdateRequest(BaseModel):
+    name: str | None = None
+    kind: Literal["openai_compat", "dummy"] | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    models: list[str] | None = None
+    enabled: bool | None = None
+    is_default: bool | None = None
+
+
 def _quota_payload(tenant_id: str) -> dict[str, Any]:
     service = container.quota_service()
     usage = service.usage(tenant_id)
@@ -1359,6 +1379,123 @@ async def test_provider_settings(
     _enforce(ctx, "write")
     provider = container.llm_for(ctx.user.id)
     selected = (req.model if req is not None else "").strip()
+    model = selected or getattr(provider, "model", "")
+    started = time.perf_counter()
+    detail = ""
+    ok = True
+    try:
+        await asyncio.wait_for(provider.complete("ping", max_tokens=8), timeout=15)
+    except asyncio.TimeoutError:
+        ok = False
+        detail = "请求超时（15s）"
+    except Exception as exc:
+        ok = False
+        detail = f"{type(exc).__name__}: {exc}"
+    return {
+        "ok": ok,
+        "latency_ms": int((time.perf_counter() - started) * 1000),
+        "provider": type(provider).__name__,
+        "model": model,
+        "detail": detail,
+    }
+
+
+@app.get("/api/v1/settings/providers")
+def list_user_providers(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    return container.user_providers().list_payload(ctx.user.id)
+
+
+@app.post("/api/v1/settings/providers")
+def create_user_provider(
+    req: UserProviderCreateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    service = container.user_providers()
+    try:
+        provider = service.create(
+            ctx.user.id,
+            req.name,
+            req.kind,
+            req.base_url,
+            req.api_key,
+            req.models,
+            req.enabled,
+            req.is_default,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return service.payload(provider)
+
+
+@app.patch("/api/v1/settings/providers/{provider_id}")
+def update_user_provider(
+    provider_id: str,
+    req: UserProviderUpdateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    service = container.user_providers()
+    try:
+        provider = service.update(
+            ctx.user.id,
+            provider_id,
+            req.name,
+            req.kind,
+            req.base_url,
+            req.api_key,
+            req.models,
+            req.enabled,
+            req.is_default,
+        )
+    except ProviderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return service.payload(provider)
+
+
+@app.delete("/api/v1/settings/providers/{provider_id}")
+def delete_user_provider(
+    provider_id: str,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    service = container.user_providers()
+    try:
+        service.delete(ctx.user.id, provider_id)
+    except ProviderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DefaultProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    settings_service = container.provider_settings()
+    settings_service.clear_reference(ctx.user.id, provider_id)
+    payload = settings_service.get_effective(ctx.user.id)
+    return {
+        "ok": True,
+        "active_provider_id": payload["active_provider_id"],
+        "active_scope": payload["active_scope"],
+    }
+
+
+@app.post("/api/v1/settings/providers/{provider_id}/test")
+async def test_user_provider(
+    provider_id: str,
+    req: ProviderTestRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    service = container.user_providers()
+    selected = (req.model if req is not None else "").strip()
+    try:
+        provider = service.build(ctx.user.id, provider_id, selected)
+    except ProviderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ProviderDisabledError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     model = selected or getattr(provider, "model", "")
     started = time.perf_counter()
     detail = ""
