@@ -1,3 +1,10 @@
+from app.models.blueprint import (
+    CourseBlueprint,
+    GlossaryTerm,
+    LearningStage,
+    LessonReview,
+    OutlineNode,
+)
 from app.models.chunk import Chunk
 from app.models.citation import Citation
 from app.models.course import Course, Lesson, LessonVersion
@@ -19,16 +26,21 @@ __all__ = [
     "Chunk",
     "Citation",
     "Course",
+    "CourseBlueprint",
     "DrilldownResult",
     "Evidence",
     "GenerationMode",
     "GenerationResult",
+    "GlossaryTerm",
     "IngestResult",
     "LOOSE_NOTICE",
+    "LearningStage",
     "Lesson",
+    "LessonReview",
     "LessonThreadView",
     "LessonVersion",
     "Message",
+    "OutlineNode",
     "Thread",
     "with_loose_notice",
 ]

@@ -185,6 +185,19 @@ class GenerationConfig:
 
 
 @dataclass
+class BlueprintConfig:
+    top_k: int = 6
+    default_mode: str = ""
+
+    @classmethod
+    def from_env(cls) -> "BlueprintConfig":
+        return cls(
+            top_k=int(_env("BLUEPRINT_TOP_K", "6") or 6),
+            default_mode=_env("BLUEPRINT_DEFAULT_MODE", ""),
+        )
+
+
+@dataclass
 class ConversationConfig:
     history_limit: int = 20
     history_char_limit: int = 400
@@ -218,6 +231,7 @@ class Settings:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
+    blueprint: BlueprintConfig = field(default_factory=BlueprintConfig)
     conversation: ConversationConfig = field(default_factory=ConversationConfig)
 
     @classmethod
@@ -234,6 +248,7 @@ class Settings:
             embedding=EmbeddingConfig.from_env(),
             ingest=IngestConfig.from_env(),
             generation=GenerationConfig.from_env(),
+            blueprint=BlueprintConfig.from_env(),
             conversation=ConversationConfig.from_env(),
         )
 

@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from app.config import Settings, get_settings
 from app.ports.conversation_repository import ConversationRepository
+from app.ports.blueprint_repository import BlueprintRepository
 from app.ports.course_repository import CourseRepository
 from app.ports.database import Database
 from app.ports.embedding import EmbeddingProvider
@@ -24,6 +25,7 @@ from app.ports.parser import DocumentParser
 from app.ports.storage import StorageBackend
 from app.ports.vectorstore import VectorStore
 from app.services.conversation import ConversationService
+from app.services.blueprint import BlueprintService
 from app.services.generation import GenerationService
 from app.services.ingest import IngestService
 
@@ -163,6 +165,31 @@ class Container:
             )
 
         return self._get_or_build("generation", build)
+
+    def blueprint_repository(self) -> BlueprintRepository:
+        def build() -> BlueprintRepository:
+            from app.adapters.database.blueprint_repository import (
+                DatabaseBlueprintRepository,
+            )
+
+            return DatabaseBlueprintRepository(database=self.database())
+
+        return self._get_or_build("blueprint_repository", build)
+
+    def blueprint(self) -> BlueprintService:
+        def build() -> BlueprintService:
+            settings = self.settings.blueprint
+            default_mode = settings.default_mode or self.settings.generation.default_mode
+            return BlueprintService(
+                repository=self.blueprint_repository(),
+                course_repository=self.course_repository(),
+                vectorstore=self.vectorstore(),
+                llm=self.llm(),
+                default_top_k=settings.top_k,
+                default_mode=default_mode,
+            )
+
+        return self._get_or_build("blueprint", build)
 
     def conversation_repository(self) -> ConversationRepository:
         def build() -> ConversationRepository:

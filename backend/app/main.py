@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,14 +20,18 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.container import get_container
 from app.models.citation import Citation
+from app.models.blueprint import CourseBlueprint, GlossaryTerm
 from app.models.course import Course, Lesson
 from app.models.mode import GenerationMode
 from app.models.thread import LessonThreadView
 from app.services.errors import (
+    BlueprintNotFoundError,
+    BlueprintParseError,
     EmptyLLMResponseError,
     LessonContentEmptyError,
     LessonNotFoundError,
     MessageNotFoundError,
+    NoEvidenceError,
 )
 
 settings = get_settings()
@@ -239,6 +243,7 @@ def get_course(course_id: str) -> dict[str, Any]:
         "course": course.model_dump(),
         "lesson_count": len(lessons),
         "lessons": [lesson.model_dump() for lesson in lessons],
+        "progress": container.blueprint().progress(course_id),
     }
 
 
@@ -435,4 +440,146 @@ def get_thread(thread_id: str, limit: int | None = Query(default=None, ge=1, le=
         "message_count": conversations.count_messages(thread.id),
         "returned_count": len(messages),
         "messages": [message.model_dump() for message in messages],
+    }
+
+
+class BlueprintGenerateRequest(BaseModel):
+    mode: GenerationMode = GenerationMode.strict
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    source_ids: list[str] | None = None
+    focus: str = ""
+
+
+class BlueprintSaveRequest(BaseModel):
+    blueprint: CourseBlueprint
+
+
+class GlossaryUpdateRequest(BaseModel):
+    terms: list[GlossaryTerm] = Field(default_factory=list)
+
+
+class LessonReviewRequest(BaseModel):
+    action: Literal["approve", "request_revision"]
+    note: str = ""
+
+
+def _glossary_payload(course_id: str, blueprint: CourseBlueprint | None) -> dict[str, Any]:
+    terms = blueprint.glossary if blueprint else []
+    return {
+        "course_id": course_id,
+        "count": len(terms),
+        "glossary": [term.model_dump() for term in terms],
+    }
+
+
+@app.get("/api/v1/courses/{course_id}/blueprint")
+def get_course_blueprint(course_id: str) -> dict[str, Any]:
+    _require_course(course_id)
+    blueprint = container.blueprint().get_blueprint(course_id)
+    return {
+        "exists": blueprint is not None,
+        "blueprint": blueprint.model_dump() if blueprint else None,
+    }
+
+
+@app.post("/api/v1/courses/{course_id}/blueprint/generate")
+async def generate_course_blueprint(
+    course_id: str, req: BlueprintGenerateRequest | None = None
+) -> dict[str, Any]:
+    payload = req or BlueprintGenerateRequest()
+    _require_course(course_id)
+    try:
+        blueprint = await container.blueprint().generate(
+            course_id,
+            mode=payload.mode.value,
+            top_k=payload.top_k,
+            source_ids=payload.source_ids,
+            focus=payload.focus,
+        )
+    except NoEvidenceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BlueprintParseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except BlueprintNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return blueprint.model_dump()
+
+
+@app.put("/api/v1/courses/{course_id}/blueprint")
+def save_course_blueprint(course_id: str, req: BlueprintSaveRequest) -> dict[str, Any]:
+    _require_course(course_id)
+    try:
+        saved = container.blueprint().save_blueprint(course_id, req.blueprint)
+    except BlueprintNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return saved.model_dump()
+
+
+@app.post("/api/v1/courses/{course_id}/blueprint/apply")
+def apply_course_blueprint(course_id: str) -> dict[str, Any]:
+    _require_course(course_id)
+    try:
+        blueprint, created = container.blueprint().apply(course_id)
+    except BlueprintNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "created_lessons": [lesson.model_dump() for lesson in created],
+        "blueprint": blueprint.model_dump(),
+        "created_count": len(created),
+    }
+
+
+@app.get("/api/v1/courses/{course_id}/glossary")
+def get_course_glossary(course_id: str) -> dict[str, Any]:
+    _require_course(course_id)
+    blueprint = container.blueprint().get_blueprint(course_id)
+    return _glossary_payload(course_id, blueprint)
+
+
+@app.put("/api/v1/courses/{course_id}/glossary")
+def update_course_glossary(course_id: str, req: GlossaryUpdateRequest) -> dict[str, Any]:
+    _require_course(course_id)
+    try:
+        blueprint = container.blueprint().set_glossary(course_id, req.terms)
+    except BlueprintNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _glossary_payload(course_id, blueprint)
+
+
+@app.get("/api/v1/courses/{course_id}/progress")
+def get_course_progress(course_id: str) -> dict[str, Any]:
+    _require_course(course_id)
+    return container.blueprint().progress(course_id)
+
+
+@app.post("/api/v1/lessons/{lesson_id}/review")
+def review_lesson(lesson_id: str, req: LessonReviewRequest) -> dict[str, Any]:
+    try:
+        lesson, review = container.blueprint().review_lesson(
+            lesson_id, req.action, note=req.note
+        )
+    except LessonNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
+    except LessonContentEmptyError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"该讲尚无正文，无法通过审核: {lesson_id}"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    progress = container.blueprint().progress(lesson.course_id)
+    return {
+        "lesson": lesson.model_dump(),
+        "review": review.model_dump(),
+        "course_progress": progress,
+    }
+
+
+@app.get("/api/v1/lessons/{lesson_id}/reviews")
+def list_lesson_reviews(lesson_id: str) -> dict[str, Any]:
+    _require_lesson(lesson_id)
+    reviews = container.blueprint().list_reviews(lesson_id)
+    return {
+        "lesson_id": lesson_id,
+        "count": len(reviews),
+        "reviews": [review.model_dump() for review in reviews],
     }
