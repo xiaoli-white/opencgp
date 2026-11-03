@@ -126,12 +126,62 @@ export type QuotaUsage = {
   storage_bytes: number;
 };
 
+export type QuotaConsumption = {
+  generations: number;
+  uploads: number;
+  storage_bytes: number;
+};
+
+export type QuotaUnlimited = {
+  generations: boolean;
+  uploads: boolean;
+  storage: boolean;
+};
+
 export type Quota = {
   tenant_id: string;
   period: string;
   limits: QuotaUsage;
-  usage: QuotaUsage & { period?: string };
-  remaining: QuotaUsage;
+  usage: QuotaConsumption & { period?: string };
+  remaining: QuotaConsumption;
+  unlimited?: QuotaUnlimited;
+};
+
+export type ProviderServerInfo = {
+  backend: string;
+  base_url: string;
+  model: string;
+  has_key: boolean;
+};
+
+export type ProviderSettings = {
+  source: "user" | "server";
+  backend: string;
+  base_url: string;
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  has_key: boolean;
+  api_key_masked: string;
+  updated_at?: number | string | null;
+  server: ProviderServerInfo;
+};
+
+export type ProviderPayload = {
+  backend: string;
+  base_url: string;
+  model: string;
+  api_key?: string;
+  temperature?: number;
+  max_tokens?: number;
+};
+
+export type ProviderTestResult = {
+  ok: boolean;
+  latency_ms: number;
+  provider: string;
+  model: string;
+  detail: string;
 };
 
 export type Citation = {
@@ -795,4 +845,18 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+
+  getProviderSettings: () => request<ProviderSettings>("/api/v1/settings/provider"),
+
+  saveProviderSettings: (payload: ProviderPayload) =>
+    request<ProviderSettings>("/api/v1/settings/provider", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  resetProviderSettings: () =>
+    request<ProviderSettings>("/api/v1/settings/provider", { method: "DELETE" }),
+
+  testProvider: () =>
+    request<ProviderTestResult>("/api/v1/settings/provider/test", { method: "POST" }),
 };

@@ -25,7 +25,7 @@ import { useSession } from "@/components/auth/SessionProvider";
 const NAV_ITEMS = [
   { href: "/", label: "课程工作台", icon: LayoutGrid },
   { href: "/kb", label: "知识库", icon: Library },
-  { href: "/settings", label: "成员与配额", icon: Users },
+  { href: "/settings", label: "设置与配额", icon: Users },
 ];
 
 type Status = "checking" | "online" | "degraded" | "offline";
@@ -289,7 +289,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       : pathname === "/kb"
         ? "知识库"
         : pathname === "/settings"
-          ? "成员与配额"
+          ? "设置与配额"
           : activeCourse?.title ?? "课程";
   const subtitle =
     pathname === "/"
@@ -297,7 +297,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       : pathname === "/kb"
         ? "上传资料，作为写作与追问的证据底座"
         : pathname === "/settings"
-          ? "空间成员角色与用量配额"
+          ? "模型服务 · 成员角色 · 用量与配额"
           : activeCourse?.subtitle || "大纲 · 阅读 · 追问 · 版本";
 
   if (pathname === "/login") {
@@ -318,7 +318,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               onClick={() => setDrawer(true)}
-              className="grid h-9 w-9 place-items-center rounded-full text-slate-500 transition hover:bg-white/60 hover:text-indigo-600 dark:text-slate-300 dark:hover:bg-white/10 lg:hidden"
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-slate-500 transition hover:bg-white/60 hover:text-indigo-600 dark:text-slate-300 dark:hover:bg-white/10 lg:hidden"
               aria-label="打开导航"
             >
               <Menu size={18} />
@@ -343,7 +343,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="min-w-0 flex-1 px-4 pb-14 pt-4 sm:px-6">{children}</main>
+        <main className="app-main min-w-0 flex-1 px-4 pb-14 pt-4 sm:px-6">{children}</main>
       </div>
 
       <AnimatePresence>
@@ -375,7 +375,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 <button
                   type="button"
                   onClick={() => setDrawer(false)}
-                  className="absolute -right-1 top-2 grid h-8 w-8 place-items-center rounded-full bg-white/80 text-slate-500 shadow-sm dark:bg-slate-800/80 dark:text-slate-300"
+                  className="absolute -right-1 top-2 grid h-10 w-10 place-items-center rounded-full bg-white/80 text-slate-500 shadow-sm dark:bg-slate-800/80 dark:text-slate-300"
                   aria-label="关闭导航"
                 >
                   <X size={15} />

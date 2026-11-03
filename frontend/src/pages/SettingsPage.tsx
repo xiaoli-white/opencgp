@@ -23,6 +23,7 @@ import {
   type RoleScope,
 } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
+import ProviderCard from "@/components/settings/ProviderCard";
 import type { RoleAction } from "@/lib/session";
 
 const ACTIONS: { value: RoleAction; label: string }[] = [
@@ -86,6 +87,11 @@ export default function SettingsPage() {
     monthly_uploads: 0,
     storage_bytes: 0,
   });
+  const [unlimited, setUnlimited] = useState({
+    generations: false,
+    uploads: false,
+    storage: false,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -107,6 +113,11 @@ export default function SettingsPage() {
       const q = await api.getQuota();
       setQuota(q);
       setLimits(q.limits);
+      setUnlimited({
+        generations: Boolean(q.unlimited?.generations) || (q.limits?.monthly_generations ?? 1) <= 0,
+        uploads: Boolean(q.unlimited?.uploads) || (q.limits?.monthly_uploads ?? 1) <= 0,
+        storage: Boolean(q.unlimited?.storage) || (q.limits?.storage_bytes ?? 1) <= 0,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载失败");
     } finally {
@@ -230,16 +241,26 @@ export default function SettingsPage() {
     setError("");
     setNotice("");
     try {
-      const next = await api.updateQuota(limits);
+      const payload: QuotaUsage = {
+        monthly_generations: unlimited.generations ? 0 : limits.monthly_generations,
+        monthly_uploads: unlimited.uploads ? 0 : limits.monthly_uploads,
+        storage_bytes: unlimited.storage ? 0 : limits.storage_bytes,
+      };
+      const next = await api.updateQuota(payload);
       setQuota(next);
       setLimits(next.limits);
-      setNotice("配额已更新");
+      setUnlimited({
+        generations: Boolean(next.unlimited?.generations) || (next.limits?.monthly_generations ?? 1) <= 0,
+        uploads: Boolean(next.unlimited?.uploads) || (next.limits?.monthly_uploads ?? 1) <= 0,
+        storage: Boolean(next.unlimited?.storage) || (next.limits?.storage_bytes ?? 1) <= 0,
+      });
+      setNotice("用量与配额已更新");
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败");
     } finally {
       setBusy(false);
     }
-  }, [limits]);
+  }, [limits, unlimited]);
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4">
@@ -269,9 +290,22 @@ export default function SettingsPage() {
         </div>
       ) : null}
 
+      <ProviderCard
+        canWrite={canManage}
+        onNotice={(message) => {
+          setError("");
+          setNotice(message);
+        }}
+        onError={(message) => {
+          setNotice("");
+          setError(message);
+        }}
+      />
+
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.06 }}
         className="glass rounded-3xl p-5 shadow-glass"
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -499,7 +533,7 @@ export default function SettingsPage() {
             onChange={(event) => setEmail(event.target.value)}
             placeholder="成员邮箱"
             disabled={!canManage}
-            className="input max-w-[240px]"
+            className="input w-full sm:max-w-[240px]"
           />
           <select
             value={newRole}
@@ -580,10 +614,10 @@ export default function SettingsPage() {
         transition={{ delay: 0.08 }}
         className="glass rounded-3xl p-5 shadow-glass"
       >
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <ShieldCheck size={15} className="text-indigo-500 dark:text-indigo-300" />
           <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-            用量配额
+            用量与配额
           </h2>
           {quota ? <span className="chip-muted">周期 {quota.period}</span> : null}
           {role ? <span className="chip-muted">{role}</span> : null}
@@ -592,33 +626,95 @@ export default function SettingsPage() {
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           {(
             [
-              { key: "monthly_generations" as const, label: "每月生成次数" },
-              { key: "monthly_uploads" as const, label: "每月上传次数" },
-              { key: "storage_bytes" as const, label: "存储上限（字节）" },
+              {
+                key: "monthly_generations" as const,
+                flag: "generations" as const,
+                usageKey: "generations" as const,
+                label: "每月生成次数",
+              },
+              {
+                key: "monthly_uploads" as const,
+                flag: "uploads" as const,
+                usageKey: "uploads" as const,
+                label: "每月上传次数",
+              },
+              {
+                key: "storage_bytes" as const,
+                flag: "storage" as const,
+                usageKey: "storage_bytes" as const,
+                label: "存储上限",
+              },
             ]
-          ).map((field) => (
-            <label key={field.key} className="block">
-              <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                {field.label}
-              </span>
-              <input
-                type="number"
-                min={0}
-                value={limits[field.key]}
-                onChange={(event) =>
-                  setLimits((prev) => ({ ...prev, [field.key]: Number(event.target.value) || 0 }))
-                }
-                disabled={!canQuota}
-                className="input"
-              />
-              <span className="mt-1 block text-[10px] text-slate-400">
-                已用 {quota ? quota.usage[field.key] : 0}
-                {field.key === "storage_bytes" && quota
-                  ? ` · ${formatBytes(quota.usage.storage_bytes)}`
-                  : ""}
-              </span>
-            </label>
-          ))}
+          ).map((field) => {
+            const isUnlimited = unlimited[field.flag];
+            const limitValue = limits[field.key];
+            const remaining = quota?.remaining?.[field.usageKey];
+            const used = quota?.usage?.[field.usageKey] ?? 0;
+            const unlimitedFlag =
+              Boolean(quota?.unlimited?.[field.flag]) || (limitValue ?? 0) <= 0 || (remaining ?? 0) < 0;
+            const percent =
+              unlimitedFlag || !limitValue
+                ? 100
+                : Math.min(100, Math.round((used / limitValue) * 100));
+            return (
+              <div key={field.key} className="block">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {field.label}
+                    {field.key === "storage_bytes" ? "（MB）" : ""}
+                  </span>
+                  <label className="flex cursor-pointer items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400">
+                    <input
+                      type="checkbox"
+                      checked={isUnlimited}
+                      onChange={(event) =>
+                        setUnlimited((prev) => ({ ...prev, [field.flag]: event.target.checked }))
+                      }
+                      disabled={!canQuota}
+                      className="h-3 w-3 accent-indigo-500"
+                    />
+                    不限制
+                  </label>
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  step={field.key === "storage_bytes" ? 1 : 1}
+                  value={
+                    field.key === "storage_bytes"
+                      ? Number((limitValue / 1024 / 1024).toFixed(1))
+                      : limitValue
+                  }
+                  onChange={(event) => {
+                    const raw = Number(event.target.value) || 0;
+                    setLimits((prev) => ({
+                      ...prev,
+                      [field.key]:
+                        field.key === "storage_bytes"
+                          ? Math.round(raw * 1024 * 1024)
+                          : raw,
+                    }));
+                  }}
+                  disabled={!canQuota || isUnlimited}
+                  className="input disabled:opacity-50"
+                  placeholder={isUnlimited ? "不限" : ""}
+                />
+                <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-slate-400/20">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500"
+                    style={{ width: `${percent}%` }}
+                  />
+                </div>
+                <span className="mt-1 block text-[10px] text-slate-400">
+                  {unlimitedFlag
+                    ? `已用 ${field.key === "storage_bytes" ? formatBytes(used) : used} · 不限`
+                    : `已用 ${field.key === "storage_bytes" ? formatBytes(used) : used} / ${
+                        field.key === "storage_bytes" ? formatBytes(limitValue) : limitValue
+                      }`}
+                </span>
+              </div>
+            );
+          })}
         </div>
 
         <button
