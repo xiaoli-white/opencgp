@@ -1,4 +1,6 @@
-# AI 课程工作室
+# OpenCGP
+
+> Open Content Generation Platform · 以对话为中心、以作品为活文档的 AI 创作工作台
 
 > 以对话为中心、以课程为活文档的独立 Web 工作台——AI 当作者兼助教，人在关键处拍板，产出成体系的图文知识课程。
 
