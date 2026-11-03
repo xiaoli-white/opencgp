@@ -13,9 +13,10 @@ import {
   X,
 } from "lucide-react";
 import clsx from "clsx";
-import { api, type AmendResult, type Message } from "@/lib/api";
-import { contentLength, formatRelative, sourceLabel } from "@/lib/format";
+import { api, type AmendResult, type GenerationMode, type Message } from "@/lib/api";
+import { contentLength, formatRelative, modeLabel, sourceLabel } from "@/lib/format";
 import MarkdownReader from "@/components/reader/MarkdownReader";
+import ModePicker from "@/components/course/ModePicker";
 
 type ChatPanelProps = {
   open: boolean;
@@ -55,6 +56,7 @@ export default function ChatPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [selection, setSelection] = useState("");
+  const [amendMode, setAmendMode] = useState<GenerationMode>("strict");
   const [amendInfo, setAmendInfo] = useState<AmendResult | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -66,6 +68,7 @@ export default function ChatPanel({
   useEffect(() => {
     setSelection("");
     setInput("");
+    setAmendMode("strict");
   }, [lessonId]);
 
   useEffect(() => {
@@ -160,10 +163,12 @@ export default function ChatPanel({
 
     setBusy(true);
     try {
-      const result = await api.amendLesson(lessonId, text);
+      const result = await api.amendLesson(lessonId, text, undefined, amendMode);
       setAmendInfo(result);
       setInput("");
-      onNotice(`已应用修改，生成 v${result.version}（原 v${result.previous_version}）`);
+      onNotice(
+        `已应用修改，生成 v${result.version}（原 v${result.previous_version} · ${modeLabel(result.mode)}模式）`,
+      );
       await onApplied();
     } catch (err) {
       setError(err instanceof Error ? err.message : "修改失败");
@@ -360,6 +365,22 @@ export default function ChatPanel({
                   <div className="glass-soft rounded-2xl p-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                     用自然语言描述想怎么改，AI 会重写这一讲并落一个新版本，原版本仍可回滚。
                   </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
+                      写作模式
+                    </span>
+                    <ModePicker
+                      value={amendMode}
+                      onChange={setAmendMode}
+                      variant="compact"
+                      disabled={busy}
+                    />
+                  </div>
+                  {amendMode === "loose" ? (
+                    <p className="text-[10px] leading-relaxed text-amber-700 dark:text-amber-300">
+                      非严格模式：允许模型基于自身知识改写，正文顶部会保留「由大模型编写」声明。
+                    </p>
+                  ) : null}
                   <div className="flex flex-wrap gap-1.5">
                     {AMEND_PRESETS.map((preset) => (
                       <button
@@ -376,7 +397,8 @@ export default function ChatPanel({
                   {amendInfo && (
                     <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-300">
                       <p className="font-medium">
-                        已生成 v{amendInfo.version}（来自 v{amendInfo.previous_version}）
+                        已生成 v{amendInfo.version}（来自 v{amendInfo.previous_version} ·{" "}
+                        {modeLabel(amendInfo.mode)}模式）
                       </p>
                       <p className="mt-1 text-[11px] leading-relaxed opacity-80">
                         {amendInfo.note || amendInfo.instruction} ·{" "}

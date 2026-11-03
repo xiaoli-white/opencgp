@@ -57,3 +57,37 @@ export function sourceLabel(name: string): string {
   if (!name) return "未知来源";
   return name.length > 28 ? `${name.slice(0, 26)}…` : name;
 }
+
+export const LOOSE_NOTICE_KEYWORD = "由大模型编写";
+
+const MODE_LABELS: Record<string, string> = {
+  strict: "严格",
+  loose: "非严格",
+};
+
+export function modeLabel(mode: string): string {
+  return MODE_LABELS[mode] ?? "严格";
+}
+
+export function splitLooseNotice(content: string): {
+  body: string;
+  notice: string;
+} {
+  if (!content) return { body: "", notice: "" };
+  let notice = "";
+  const kept: string[] = [];
+  content.split("\n").forEach((line) => {
+    if (line.includes(LOOSE_NOTICE_KEYWORD)) {
+      if (!notice) {
+        notice = line
+          .replace(/^[>\s]+/, "")
+          .replace(/[*\s]+$/, "")
+          .trim();
+      }
+      return;
+    }
+    kept.push(line);
+  });
+  const body = kept.join("\n").replace(/^[\s]+/, "");
+  return { body: body || content, notice };
+}

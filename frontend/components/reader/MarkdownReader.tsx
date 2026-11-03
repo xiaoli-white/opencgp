@@ -6,14 +6,16 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import clsx from "clsx";
 import { AnimatePresence, motion } from "framer-motion";
-import { FileText, MessageSquareQuote } from "lucide-react";
-import type { Citation, Evidence } from "@/lib/api";
+import { AlertTriangle, FileText, MessageSquareQuote } from "lucide-react";
+import type { Citation, Evidence, GenerationMode } from "@/lib/api";
+import { splitLooseNotice } from "@/lib/format";
 
 type MarkdownReaderProps = {
   content: string;
   citations?: Citation[];
   evidence?: Evidence[];
   variant?: "reader" | "compact";
+  mode?: GenerationMode | "";
   className?: string;
   onAskSelection?: (text: string) => void;
 };
@@ -74,6 +76,7 @@ export default function MarkdownReader({
   citations = [],
   evidence,
   variant = "reader",
+  mode,
   className,
   onAskSelection,
 }: MarkdownReaderProps) {
@@ -171,6 +174,16 @@ export default function MarkdownReader({
     return map;
   }, [citations, evidence]);
 
+  const { body, notice } = useMemo(
+    () =>
+      variant === "reader"
+        ? splitLooseNotice(content)
+        : { body: content, notice: "" },
+    [content, variant],
+  );
+
+  const loose = variant === "reader" && (mode === "loose" || Boolean(notice));
+
   const components = useMemo<Components>(
     () => ({
       p({ children }) {
@@ -202,12 +215,35 @@ export default function MarkdownReader({
         className,
       )}
     >
+      {loose ? (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.26, ease: "easeOut" }}
+          className="flex items-start gap-2 rounded-2xl border border-amber-400/45 bg-amber-400/15 px-3.5 py-2.5 font-sans text-[12px] leading-relaxed shadow-[0_14px_30px_-26px_rgba(217,119,6,0.9)] backdrop-blur-xl dark:border-amber-300/25 dark:bg-amber-300/10"
+          role="note"
+        >
+          <AlertTriangle
+            size={14}
+            className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-300"
+          />
+          <span className="text-amber-800 dark:text-amber-200">
+            <span className="font-semibold">非严格模式</span>
+            <span className="mx-1.5 text-amber-500/70 dark:text-amber-300/50">
+              /
+            </span>
+            {notice
+              ? notice.replace(/^⚠️?\s*/, "")
+              : "本讲内容由大模型编写，未经知识库证据核实，请核对后使用"}
+          </span>
+        </motion.div>
+      ) : null}
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
         components={components}
       >
-        {content}
+        {body}
       </ReactMarkdown>
       {onAskSelection ? (
         <AnimatePresence>

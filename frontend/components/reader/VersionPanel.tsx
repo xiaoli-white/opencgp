@@ -92,6 +92,21 @@ export default function VersionPanel({
                   >
                     v{version.version}
                   </span>
+                  <span
+                    className={clsx(
+                      "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold tracking-wide",
+                      version.mode === "loose"
+                        ? "bg-amber-400/22 text-amber-700 ring-1 ring-amber-400/30 dark:bg-amber-300/15 dark:text-amber-300 dark:ring-amber-300/25"
+                        : "bg-indigo-500/12 text-indigo-600 ring-1 ring-indigo-400/20 dark:bg-indigo-400/14 dark:text-indigo-300 dark:ring-indigo-300/20",
+                    )}
+                    title={
+                      version.mode === "loose"
+                        ? "非严格模式：允许模型自由写作，正文标注由大模型编写"
+                        : "严格模式：必须带出处，无据不写"
+                    }
+                  >
+                    {version.mode || "strict"}
+                  </span>
                   <span className="min-w-0 flex-1 truncate text-[12px] text-slate-600 dark:text-slate-300">
                     {version.note || "自动存档"}
                   </span>
@@ -160,6 +175,7 @@ export default function VersionPanel({
                   </p>
                   <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                     v{compareTarget.version - 1} → v{compareTarget.version} ·{" "}
+                    {compareTarget.mode || "strict"} ·{" "}
                     {compareTarget.note || "自动存档"}
                   </p>
                 </div>

@@ -21,17 +21,20 @@ import clsx from "clsx";
 import {
   api,
   type CourseDetail,
+  type GenerationMode,
   type LessonVersion,
 } from "@/lib/api";
 import {
   contentLength,
   difficultyLabel,
   formatRelative,
+  modeLabel,
   statusLabel,
 } from "@/lib/format";
 import MarkdownReader from "@/components/reader/MarkdownReader";
 import VersionPanel from "@/components/reader/VersionPanel";
 import ChatPanel from "@/components/chat/ChatPanel";
+import ModePicker from "@/components/course/ModePicker";
 
 export default function CourseWorkspace({ courseId }: { courseId: string }) {
   const [detail, setDetail] = useState<CourseDetail | null>(null);
@@ -45,6 +48,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [topic, setTopic] = useState("");
   const [topK, setTopK] = useState(5);
+  const [generateMode, setGenerateMode] = useState<GenerationMode>("strict");
   const [chatOpen, setChatOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<string | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
@@ -133,13 +137,26 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     [detail, activeId],
   );
 
-  const currentCitations = useMemo(() => {
-    if (!activeLesson) return [];
-    const matched = versions.find(
-      (version) => version.version === activeLesson.current_version,
-    );
-    return matched?.citations ?? [];
-  }, [versions, activeLesson]);
+  const currentVersionRecord = useMemo(
+    () =>
+      activeLesson
+        ? versions.find(
+            (version) => version.version === activeLesson.current_version,
+          )
+        : undefined,
+    [versions, activeLesson],
+  );
+
+  const currentCitations = useMemo(
+    () => currentVersionRecord?.citations ?? [],
+    [currentVersionRecord],
+  );
+
+  const currentMode = useMemo<GenerationMode | "">(
+    () =>
+      currentVersionRecord?.mode || activeLesson?.last_mode || "",
+    [currentVersionRecord, activeLesson],
+  );
 
   const runGenerate = async () => {
     if (!activeLesson || generating) return;
@@ -149,15 +166,18 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
       const result = await api.generateLesson(activeLesson.id, {
         topic: topic.trim() || undefined,
         top_k: topK,
+        mode: generateMode,
       });
       await loadCourse(activeLesson.id);
       setVersionTick((tick) => tick + 1);
       setGenerateOpen(false);
       setTopic("");
       setNotice(
-        result.grounded
-          ? `已生成 v${result.version} · 引用 ${result.citations.length} 条证据`
-          : `v${result.version} 已写入：知识库暂缺证据，正文为资料不足提示`,
+        result.mode === "loose"
+          ? `已按非严格模式生成 v${result.version} · 正文标注由大模型编写`
+          : result.grounded
+            ? `已生成 v${result.version} · 引用 ${result.citations.length} 条证据`
+            : `v${result.version} 已写入：知识库暂缺证据，正文为资料不足提示`,
       );
       window.dispatchEvent(new Event("course-studio:refresh"));
     } catch (err) {
@@ -465,6 +485,18 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     <span>{statusLabel(activeLesson.status)}</span>
                     <span>·</span>
                     <span>v{activeLesson.current_version}</span>
+                    {activeLesson.content ? (
+                      <span
+                        className={clsx(
+                          "rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                          currentMode === "loose"
+                            ? "bg-amber-400/20 text-amber-700 ring-1 ring-amber-400/30 dark:bg-amber-300/12 dark:text-amber-300 dark:ring-amber-300/20"
+                            : "bg-indigo-500/12 text-indigo-600 ring-1 ring-indigo-400/20 dark:bg-indigo-400/14 dark:text-indigo-300 dark:ring-indigo-300/20",
+                        )}
+                      >
+                        {modeLabel(currentMode)}模式
+                      </span>
+                    ) : null}
                   </div>
                   <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-[22px]">
                     {activeLesson.title}
@@ -505,9 +537,21 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     className="overflow-hidden"
                   >
                     <div className="mt-4 rounded-2xl border border-indigo-200/60 bg-indigo-500/5 p-4 dark:border-indigo-400/20 dark:bg-indigo-400/5">
-                      <p className="text-[11px] font-medium text-indigo-600 dark:text-indigo-300">
-                        生成会先检索知识库证据，再逐段带 [En] 引用写作
-                      </p>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-[11px] font-medium text-indigo-600 dark:text-indigo-300">
+                          {generateMode === "loose"
+                            ? "非严格模式：先检索证据，允许模型自由写作，正文标注由大模型编写"
+                            : "严格模式：先检索知识库证据，再逐段带 [En] 引用写作"}
+                        </p>
+                        <span className="chip-muted">写作模式</span>
+                      </div>
+                      <div className="mt-3">
+                        <ModePicker
+                          value={generateMode}
+                          onChange={setGenerateMode}
+                          disabled={generating}
+                        />
+                      </div>
                       <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_120px_auto]">
                         <input
                           value={topic}
@@ -587,6 +631,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                   <MarkdownReader
                     content={activeLesson.content}
                     citations={currentCitations}
+                    mode={currentMode}
                     onAskSelection={handleAskSelection}
                   />
                 ) : (
@@ -598,7 +643,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                       这一讲还没有正文
                     </p>
                     <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                      生成时会先检索知识库证据；没有证据就明确提示资料不足，而不是自由发挥。
+                      严格模式没有证据就明确提示资料不足；非严格模式允许模型自由写作，但正文会标注「由大模型编写」。
                     </p>
                     <div className="mt-4 flex flex-wrap justify-center gap-2">
                       <button
