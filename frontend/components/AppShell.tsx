@@ -15,12 +15,11 @@ import {
   Server,
   ShieldCheck,
   Sparkles,
-  Users,
   X,
 } from "lucide-react";
 import clsx from "clsx";
 import { useCallback, useEffect, useState } from "react";
-import { api, type Course } from "@/lib/api";
+import { API_BASE, api, type Course } from "@/lib/api";
 import { difficultyLabel } from "@/lib/format";
 import { ROLE_LABEL } from "@/lib/session";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -41,7 +40,6 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/longforms", label: "长篇写作", icon: PenLine, exact: false },
   { href: "/jobs", label: "任务中心", icon: ListChecks, exact: false },
   { href: "/settings", label: "个人设置", icon: IdCard, exact: true },
-  { href: "/settings/workspace", label: "空间设置", icon: Users, exact: true },
   {
     href: "/settings/server",
     label: "服务器设置",
@@ -61,7 +59,7 @@ type SidebarProps = {
 };
 
 function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
-  const { me, role, roleName, tenant, tenantName, tenants, switchTenant, logout, can } =
+  const { me, role, roleName, tenant, tenantName, tenants, avatarUrl, switchTenant, logout, can } =
     useSession();
 
   const displayName = me?.user.display_name || me?.user.email || "本地用户";
@@ -98,10 +96,10 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
         </span>
         <span className="min-w-0">
           <span className="block truncate text-sm font-semibold tracking-tight text-slate-800 dark:text-slate-100">
-            AI 课程工作室
+            OpenCGP
           </span>
-          <span className="block truncate text-[11px] text-slate-500 dark:text-slate-400">
-            对话即作者，课程即活文档
+          <span className="block whitespace-nowrap text-[10px] tracking-tight text-slate-500 dark:text-slate-400">
+            Open Content Generation Platform
           </span>
         </span>
       </Link>
@@ -184,9 +182,17 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
 
       <div className="mt-3 rounded-2xl border border-white/50 bg-white/40 p-3 dark:border-white/10 dark:bg-white/[0.04]">
         <div className="flex items-center gap-2.5">
-          <span className="brand-gradient grid h-8 w-8 shrink-0 place-items-center rounded-full text-[12px] font-semibold text-white">
-            {initial}
-          </span>
+          {avatarUrl ? (
+            <img
+              src={`${API_BASE}${avatarUrl}`}
+              alt="头像"
+              className="h-8 w-8 shrink-0 rounded-full object-cover ring-2 ring-white/60 dark:ring-white/10"
+            />
+          ) : (
+            <span className="brand-gradient grid h-8 w-8 shrink-0 place-items-center rounded-full text-[12px] font-semibold text-white">
+              {initial}
+            </span>
+          )}
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[12px] font-medium text-slate-800 dark:text-slate-100">
               {displayName}
@@ -316,29 +322,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               ? "任务中心"
               : pathname === "/settings"
               ? "个人设置"
-              : pathname === "/settings/workspace"
-                ? "空间设置"
-                : pathname === "/settings/server"
-                  ? "服务器设置"
-                  : activeCourse?.title ?? "课程";
-  const subtitle =
-    pathname === "/"
-      ? "从主题到成体系课程，逐讲生成、随时追问"
-      : pathname === "/kb"
-        ? "上传资料，作为写作与追问的证据底座"
-        : pathname === "/research"
-          ? "拆解子问题 · 检索证据 · 转成课程蓝图"
-          : pathname.startsWith("/longforms")
-            ? "大纲 · 逐节生成 · 版本回滚"
-            : pathname === "/jobs"
-              ? "后台队列 · 进度 · 结果"
-              : pathname === "/settings"
-              ? "我的模型 · 我的通道 · 账号信息"
-              : pathname === "/settings/workspace"
-                ? "角色 · 空间成员 · 用量与配额"
-                : pathname === "/settings/server"
-                  ? "服务器模型通道 · 运行概览（全局生效）"
-                  : activeCourse?.subtitle || "大纲 · 阅读 · 追问 · 版本";
+              : pathname === "/settings/server"
+                ? "服务器设置"
+                : activeCourse?.title ?? "课程";
 
   if (pathname === "/login") {
     return <main className="min-h-screen px-4 py-6">{children}</main>;
@@ -367,18 +353,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <p className="truncate text-sm font-semibold tracking-tight text-slate-800 dark:text-slate-100">
                 {title}
               </p>
-              <p className="hidden truncate text-[11px] text-slate-500 dark:text-slate-400 sm:block">
-                {subtitle}
-              </p>
             </div>
-            <Link to="/settings/workspace" className="btn-quiet hidden lg:inline-flex">
-              <Users size={14} />
-              成员
-            </Link>
-            <Link to="/kb" className="btn-quiet hidden md:inline-flex">
-              <Library size={14} />
-              知识库
-            </Link>
             <ThemeToggle />
           </div>
         </header>

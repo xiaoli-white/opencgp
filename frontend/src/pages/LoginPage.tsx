@@ -92,7 +92,7 @@ export default function LoginPage() {
           </span>
           <div className="min-w-0">
             <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-white">
-              进入 AI 课程工作室
+              进入 OpenCGP
             </h1>
             <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
               {authMode === "disabled"

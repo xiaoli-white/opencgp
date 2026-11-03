@@ -13,6 +13,7 @@ import {
   PenLine,
   Play,
   RotateCcw,
+  Share2,
   Sparkles,
   Wand2,
   X,
@@ -29,6 +30,7 @@ import { cancelJob, runJob } from "@/lib/jobs";
 import { contentLength, formatChars, formatDateTime } from "@/lib/format";
 import MarkdownReader from "@/components/reader/MarkdownReader";
 import { useSession } from "@/components/auth/SessionProvider";
+import SharePanel, { type ShareMember } from "@/components/sharing/SharePanel";
 
 const GENRE_LABELS: Record<string, string> = {
   article: "文章",
@@ -61,7 +63,7 @@ function useElapsed(active: boolean): number {
 export default function LongformEditorPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
-  const { can, roleName } = useSession();
+  const { can, roleName, tenant } = useSession();
   const writable = can("write");
 
   const [longform, setLongform] = useState<Longform | null>(null);
@@ -80,6 +82,65 @@ export default function LongformEditorPage() {
   const [rewriteOpen, setRewriteOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [rewriteMode, setRewriteMode] = useState<GenerationMode>("loose");
+
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareMembers, setShareMembers] = useState<ShareMember[]>([]);
+  const [shareLevels, setShareLevels] = useState<Record<string, string | null>>({});
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareSaving, setShareSaving] = useState(false);
+  const [shareError, setShareError] = useState("");
+
+  const canShare = can("manage_members");
+
+  const openShare = useCallback(async () => {
+    if (!id) return;
+    setShareOpen(true);
+    setShareLoading(true);
+    setShareError("");
+    try {
+      const [memberList, grantList] = await Promise.all([
+        tenant ? api.listMembers(tenant) : Promise.resolve({ count: 0, members: [] }),
+        api.getLongformGrants(id),
+      ]);
+      setShareMembers(
+        (memberList.members ?? []).map((member) => ({
+          user_id: member.user_id,
+          user_email: member.user_email,
+          user_display_name: member.user_display_name,
+          avatar_url: member.avatar_url,
+          note: "空间成员",
+        })),
+      );
+      const next: Record<string, string | null> = {};
+      for (const member of memberList.members ?? []) next[member.user_id] = null;
+      for (const grant of grantList.grants ?? []) {
+        next[grant.user_id] = grant.level === "write" ? "write" : "read";
+      }
+      setShareLevels(next);
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : "共享信息加载失败");
+    } finally {
+      setShareLoading(false);
+    }
+  }, [id, tenant]);
+
+  const saveShare = useCallback(
+    async (entries: { user_id: string; level: string }[]) => {
+      if (!id) return;
+      setShareSaving(true);
+      setShareError("");
+      try {
+        await api.saveLongformGrants(id, entries);
+        setNotice("共享权限已保存");
+        setShareOpen(false);
+      } catch (err) {
+        setShareError(err instanceof Error ? err.message : "保存失败");
+      } finally {
+        setShareSaving(false);
+      }
+    },
+    [id],
+  );
 
   const contentRef = useRef<HTMLDivElement | null>(null);
 
@@ -394,6 +455,16 @@ export default function LongformEditorPage() {
             >
               <Wand2 size={13} />
               重写
+            </button>
+            <button
+              type="button"
+              onClick={() => void openShare()}
+              disabled={!canShare}
+              className="btn btn-quiet whitespace-nowrap"
+              title={canShare ? "共享给空间成员" : "需要成员管理权限"}
+            >
+              <Share2 size={13} />
+              共享
             </button>
             <button
               type="button"
@@ -798,6 +869,26 @@ export default function LongformEditorPage() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      <SharePanel
+        open={shareOpen}
+        title="共享这篇长篇"
+        subtitle={longform ? longform.title : undefined}
+        members={shareMembers}
+        value={shareLevels}
+        options={[
+          { value: "read", label: "可读", desc: "可查看正文与版本" },
+          { value: "write", label: "可写", desc: "可生成、重写与回滚" },
+        ]}
+        loading={shareLoading}
+        saving={shareSaving}
+        error={shareError}
+        onClose={() => setShareOpen(false)}
+        onChange={(userId, level) =>
+          setShareLevels((prev) => ({ ...prev, [userId]: level }))
+        }
+        onSave={saveShare}
+      />
     </div>
   );
 }

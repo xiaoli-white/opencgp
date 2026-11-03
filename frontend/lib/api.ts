@@ -16,6 +16,9 @@ export type AuthUser = {
   display_name: string;
   created_at: number;
   is_active?: boolean;
+  status?: string;
+  role?: string;
+  avatar_url?: string;
 };
 
 export type TenantInfo = {
@@ -30,6 +33,27 @@ export type TenantRef = TenantInfo | string;
 export type AuthTenant = {
   tenant: TenantRef;
   role: Role;
+  can_transfer?: boolean;
+};
+
+export type TenantKind = "system" | "personal" | "team";
+
+export type TenantSummary = {
+  id: string;
+  name: string;
+  slug?: string;
+  plan?: string;
+  kind?: TenantKind | string;
+  owner_user_id?: string;
+  member_count?: number;
+  is_system?: boolean;
+  created_at?: number;
+};
+
+export type TenantMembership = {
+  tenant: TenantSummary;
+  role: Role;
+  can_transfer?: boolean;
 };
 
 export function tenantId(value: TenantRef | null | undefined): string {
@@ -52,6 +76,8 @@ export type MeResponse = {
   role_name?: string;
   actions?: RoleAction[];
   scope?: RoleScope;
+  can?: Partial<Record<RoleAction, boolean>>;
+  avatar_url?: string;
   tenants: AuthTenant[];
   auth_mode: AuthMode;
 };
@@ -86,6 +112,41 @@ export type CourseGrants = {
   grants: CourseGrant[];
 };
 
+export type ShareEntry = {
+  user_id: string;
+  user_email: string;
+  user_display_name: string;
+  level: string;
+};
+
+export type LongformGrants = {
+  longform_id: string;
+  count: number;
+  grants: ShareEntry[];
+};
+
+export type ProviderShares = {
+  provider_id: string;
+  count: number;
+  shares: ShareEntry[];
+};
+
+export type AdminUser = {
+  id: string;
+  email: string;
+  display_name: string;
+  status: string;
+  created_at: number;
+  last_login_at?: number | null;
+  role?: string;
+  avatar_url?: string;
+};
+
+export type AdminUserList = {
+  count: number;
+  users: AdminUser[];
+};
+
 export type Capabilities = {
   user_id: string;
   tenant_id: string;
@@ -107,7 +168,7 @@ export type AuthPayload = {
 
 export type TenantList = {
   count: number;
-  tenants: AuthTenant[];
+  tenants: TenantMembership[];
 };
 
 export type Member = {
@@ -118,6 +179,7 @@ export type Member = {
   created_at: number;
   user_email: string;
   user_display_name: string;
+  avatar_url?: string;
 };
 
 export type QuotaUsage = {
@@ -183,7 +245,10 @@ export type ProviderOption = {
   has_key: boolean;
   is_default: boolean;
   enabled?: boolean;
-  scope?: "user" | "server";
+  scope?: "user" | "server" | "shared";
+  shared_level?: "use" | "manage";
+  owner_name?: string;
+  can_manage?: boolean;
 };
 
 export type ProviderServerInfo = {
@@ -938,7 +1003,51 @@ export const api = {
 
   getMe: () => request<MeResponse>("/api/v1/auth/me"),
 
+  updateProfile: (payload: { display_name?: string; email?: string }) =>
+    request<{ user: AuthUser; tenants: TenantMembership[] }>("/api/v1/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  changePassword: (payload: { current_password: string; new_password: string }) =>
+    request<{ ok: boolean }>("/api/v1/auth/password", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  uploadAvatar: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<{ ok: boolean; avatar_url: string }>("/api/v1/auth/avatar", {
+      method: "PUT",
+      body: form,
+    });
+  },
+
   listTenants: () => request<TenantList>("/api/v1/tenants"),
+
+  createTenant: (payload: { name: string; kind: "personal" | "team" }) =>
+    request<{ tenant: TenantSummary; role: Role }>("/api/v1/tenants", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  renameTenant: (targetTenantId: string, name: string) =>
+    request<TenantSummary>(`/api/v1/tenants/${targetTenantId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+
+  deleteTenant: (targetTenantId: string) =>
+    request<{ ok: boolean }>(`/api/v1/tenants/${targetTenantId}`, {
+      method: "DELETE",
+    }),
+
+  transferTenant: (targetTenantId: string, userId: string) =>
+    request<{ ok: boolean; owner_user_id?: string }>(
+      `/api/v1/tenants/${targetTenantId}/transfer`,
+      { method: "POST", body: JSON.stringify({ user_id: userId }) },
+    ),
 
   listMembers: (tenantId: string) =>
     request<{ count: number; members: Member[] }>(
@@ -1180,4 +1289,45 @@ export const api = {
     }),
 
   storageInfo: () => request<StorageInfo>("/api/v1/storage/info"),
+
+  getLongformGrants: (longformId: string) =>
+    request<LongformGrants>(`/api/v1/longforms/${longformId}/grants`),
+
+  saveLongformGrants: (
+    longformId: string,
+    grants: { user_id: string; level: string }[],
+  ) =>
+    request<LongformGrants>(`/api/v1/longforms/${longformId}/grants`, {
+      method: "PUT",
+      body: JSON.stringify({ grants }),
+    }),
+
+  getProviderShares: (providerId: string) =>
+    request<ProviderShares>(`/api/v1/settings/providers/${providerId}/shares`),
+
+  saveProviderShares: (
+    providerId: string,
+    shares: { user_id: string; level: string }[],
+  ) =>
+    request<ProviderShares>(`/api/v1/settings/providers/${providerId}/shares`, {
+      method: "PUT",
+      body: JSON.stringify({ shares }),
+    }),
+
+  listAdminUsers: (status?: string) =>
+    request<AdminUserList>(
+      `/api/v1/admin/users${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+    ),
+
+  approveAdminUser: (userId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/admin/users/${userId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
+  rejectAdminUser: (userId: string, reason?: string) =>
+    request<{ ok?: boolean }>(`/api/v1/admin/users/${userId}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? "" }),
+    }),
 };

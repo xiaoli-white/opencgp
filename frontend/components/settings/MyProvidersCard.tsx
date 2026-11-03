@@ -10,6 +10,7 @@ import {
   Pencil,
   Plus,
   Save,
+  Share2,
   Star,
   Trash2,
   X,
@@ -17,6 +18,8 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { api, type ServerProviderPayload, type UserProvider } from "@/lib/api";
+import { useSession } from "@/components/auth/SessionProvider";
+import SharePanel, { type ShareMember } from "@/components/sharing/SharePanel";
 
 type Props = {
   canWrite: boolean;
@@ -84,6 +87,67 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
   const [rowError, setRowError] = useState<{ id: string; text: string } | null>(null);
   const [rowTest, setRowTest] = useState<Record<string, { ok: boolean; text: string }>>({});
   const [showKey, setShowKey] = useState(false);
+
+  const { tenant } = useSession();
+  const [shareItem, setShareItem] = useState<UserProvider | null>(null);
+  const [shareMembers, setShareMembers] = useState<ShareMember[]>([]);
+  const [shareLevels, setShareLevels] = useState<Record<string, string | null>>({});
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareSaving, setShareSaving] = useState(false);
+  const [shareError, setShareError] = useState("");
+
+  const openShare = useCallback(
+    async (item: UserProvider) => {
+      setShareItem(item);
+      setShareLoading(true);
+      setShareError("");
+      try {
+        const [memberList, shareList] = await Promise.all([
+          tenant ? api.listMembers(tenant) : Promise.resolve({ count: 0, members: [] }),
+          api.getProviderShares(item.id),
+        ]);
+        setShareMembers(
+          (memberList.members ?? []).map((member) => ({
+            user_id: member.user_id,
+            user_email: member.user_email,
+            user_display_name: member.user_display_name,
+            avatar_url: member.avatar_url,
+            note: "空间成员",
+          })),
+        );
+        const next: Record<string, string | null> = {};
+        for (const member of memberList.members ?? []) next[member.user_id] = null;
+        for (const share of shareList.shares ?? []) {
+          next[share.user_id] = share.level === "manage" ? "manage" : "use";
+        }
+        setShareLevels(next);
+      } catch (err) {
+        setShareError(err instanceof Error ? err.message : "共享信息加载失败");
+      } finally {
+        setShareLoading(false);
+      }
+    },
+    [tenant],
+  );
+
+  const saveShare = useCallback(
+    async (entries: { user_id: string; level: string }[]) => {
+      if (!shareItem) return;
+      setShareSaving(true);
+      setShareError("");
+      try {
+        await api.saveProviderShares(shareItem.id, entries);
+        onNotice("通道共享已保存");
+        setShareItem(null);
+        notifyChanged();
+      } catch (err) {
+        setShareError(err instanceof Error ? err.message : "保存失败");
+      } finally {
+        setShareSaving(false);
+      }
+    },
+    [onNotice, shareItem],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -443,6 +507,15 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
                   </button>
                   <button
                     type="button"
+                    onClick={() => void openShare(item)}
+                    className="btn-quiet px-2 py-1 text-[10.5px]"
+                    title="共享给空间成员"
+                  >
+                    <Share2 size={11} />
+                    共享
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void runTest(item)}
                     disabled={rowBusy === item.id}
                     className="btn-quiet px-2 py-1 text-[10.5px]"
@@ -523,6 +596,27 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
           })
         )}
       </div>
+
+      <SharePanel
+        open={Boolean(shareItem)}
+        title="共享我的通道"
+        subtitle={shareItem?.name}
+        note="被共享的成员可在「我的模型」里看到该通道；「可管理」还会允许其修改通道配置与共享。"
+        members={shareMembers}
+        value={shareLevels}
+        options={[
+          { value: "use", label: "可使用", desc: "可用该通道与模型" },
+          { value: "manage", label: "可管理", desc: "还可修改通道配置" },
+        ]}
+        loading={shareLoading}
+        saving={shareSaving}
+        error={shareError}
+        onClose={() => setShareItem(null)}
+        onChange={(userId, level) =>
+          setShareLevels((prev) => ({ ...prev, [userId]: level }))
+        }
+        onSave={saveShare}
+      />
     </motion.section>
   );
 }

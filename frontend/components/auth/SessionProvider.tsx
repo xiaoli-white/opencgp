@@ -43,6 +43,7 @@ type SessionValue = {
   tenant: string;
   tenantName: string;
   tenants: TenantOption[];
+  avatarUrl: string;
   authMode: AuthMode;
   can: (action: RoleAction) => boolean;
   switchTenant: (tenant: string) => void;
@@ -124,6 +125,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         name: tenantName(item.tenant),
         role: item.role,
       })),
+      avatarUrl: me?.user?.avatar_url || me?.avatar_url || "",
       authMode: me?.auth_mode ?? "disabled",
       can: (action: RoleAction) => {
         if (actions.length > 0) return actions.includes(action);
@@ -155,6 +157,7 @@ export function useSession(): SessionValue {
     tenant: "",
     tenantName: "",
     tenants: [],
+    avatarUrl: "",
     authMode: "disabled",
     can: () => true,
     switchTenant: () => {},

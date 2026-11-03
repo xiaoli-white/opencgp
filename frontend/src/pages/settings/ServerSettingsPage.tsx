@@ -15,6 +15,7 @@ import clsx from "clsx";
 import { api, type Health } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
 import ServerProvidersCard from "@/components/settings/ServerProvidersCard";
+import UserReviewCard from "@/components/settings/UserReviewCard";
 import SettingsBreadcrumb from "@/components/settings/SettingsBreadcrumb";
 
 export default function ServerSettingsPage() {
@@ -107,6 +108,17 @@ export default function ServerSettingsPage() {
           {notice}
         </div>
       ) : null}
+
+      <UserReviewCard
+        onNotice={(message) => {
+          setError("");
+          setNotice(message);
+        }}
+        onError={(message) => {
+          setNotice("");
+          setError(message);
+        }}
+      />
 
       <ServerProvidersCard
         canManage={canServer}

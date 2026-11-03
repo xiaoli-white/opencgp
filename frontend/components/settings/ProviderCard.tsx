@@ -53,20 +53,25 @@ function optionLabel(item: ProviderOption): string {
   const prefix = item.scope === "user" ? "我的" : "";
   const star = item.is_default ? " · 默认" : "";
   const off = item.enabled === false ? " · 已停用" : "";
-  return `${prefix}${item.name}（${item.kind}）${star}${off}`;
+  const shared =
+    item.scope === "shared"
+      ? ` · 共享自 ${item.owner_name || "他人"}${item.can_manage ? " · 可管理" : ""}`
+      : "";
+  return `${prefix}${item.name}（${item.kind}）${star}${off}${shared}`;
 }
 
 type PickerProps = {
   value: string;
   mine: ProviderOption[];
   server: ProviderOption[];
+  shared: ProviderOption[];
   disabled: boolean;
   onChange: (id: string) => void;
 };
 
-function ProviderPicker({ value, mine, server, disabled, onChange }: PickerProps) {
+function ProviderPicker({ value, mine, server, shared, disabled, onChange }: PickerProps) {
   const [open, setOpen] = useState(false);
-  const all = [...mine, ...server];
+  const all = [...mine, ...server, ...shared];
   const current = all.find((item) => item.id === value);
 
   useEffect(() => {
@@ -76,6 +81,7 @@ function ProviderPicker({ value, mine, server, disabled, onChange }: PickerProps
   const groups: { label: string; items: ProviderOption[] }[] = [
     { label: "我的通道", items: mine },
     { label: "服务器通道", items: server },
+    ...(shared.length > 0 ? [{ label: "共享给我的", items: shared }] : []),
   ];
 
   return (
@@ -189,7 +195,11 @@ export default function ProviderCard({
     [providers],
   );
   const serverList = useMemo(
-    () => providers.filter((item) => item.scope !== "user"),
+    () => providers.filter((item) => item.scope === "server" || !item.scope),
+    [providers],
+  );
+  const sharedList = useMemo(
+    () => providers.filter((item) => item.scope === "shared"),
     [providers],
   );
 
@@ -347,11 +357,13 @@ export default function ProviderCard({
                 value={form.provider_id}
                 mine={mine}
                 server={serverList}
+                shared={sharedList}
                 disabled={disabled}
                 onChange={pickProvider}
               />
               <span className="mt-1 block text-[10px] text-slate-400">
                 我的通道 {mine.length} 个 · 服务器通道 {serverList.length} 个
+                {sharedList.length > 0 ? ` · 共享给我 ${sharedList.length} 个` : ""}
               </span>
             </div>
             <label className="block">
