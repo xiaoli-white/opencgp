@@ -6,6 +6,8 @@
   并保证 user / assistant 两条消息都落库（即使没有真实 key）。
 - ``amend``：按自然语言指令重写正文，走 Sprint 3 的追加式版本机制落新版本，
   指令原文写入版本 note，历史版本永不覆盖。
+- ``amend`` 支持 ``strict`` / ``loose`` 两种模式：loose 允许模型基于自身知识自由改写，
+  但正文首行强制保留「由大模型编写」声明。
 - ``drilldown``：把某次追问的回答沉淀为正文新章节，同样追加新版本（note=drilldown）。
 
 幻觉抑制沿用生成期的约定：只允许使用正文与证据，覆盖不到就显式说明。
@@ -20,6 +22,7 @@ from typing import Sequence
 
 from app.models.citation import Citation
 from app.models.course import Course, Lesson
+from app.models.mode import LOOSE_BANNER, GenerationMode, with_loose_notice
 from app.models.thread import (
     AmendResult,
     AskResult,
@@ -98,34 +101,48 @@ class ConversationService:
         )
 
     async def amend(
-        self, lesson_id: str, instruction: str, target: str | None = None
+        self,
+        lesson_id: str,
+        instruction: str,
+        target: str | None = None,
+        mode: str | None = None,
     ) -> AmendResult:
         lesson, course, citations = self._context(lesson_id)
         current_content = lesson.content.strip()
         if not current_content:
             raise LessonContentEmptyError(lesson_id)
+        resolved_mode = GenerationMode.normalize(mode)
         resolved_target = (target or "").strip()
         prompt = self._build_amend_prompt(
-            course, lesson, current_content, citations, instruction, resolved_target
+            course,
+            lesson,
+            current_content,
+            citations,
+            instruction,
+            resolved_target,
+            resolved_mode,
         )
 
         provider = type(self.llm).__name__
         if getattr(self.llm, "is_placeholder", False):
             new_content = self._placeholder_amend(
-                current_content, instruction, resolved_target
+                current_content, instruction, resolved_target, resolved_mode
             )
         else:
             new_content = (await self.llm.complete(prompt)).strip()
             if not new_content:
                 raise EmptyLLMResponseError("模型未返回修改后的正文")
+        if resolved_mode is GenerationMode.loose:
+            new_content = with_loose_notice(new_content)
 
-        note = self._amend_note(instruction, resolved_target)
+        note = self._amend_note(instruction, resolved_target, resolved_mode)
         applied = self.repository.append_version(
             lesson_id,
             content=new_content,
             citations=citations,
             note=note,
             status="amended",
+            mode=resolved_mode.value,
         )
         if applied is None:
             raise LessonNotFoundError(lesson_id)
@@ -134,12 +151,12 @@ class ConversationService:
         thread = self._lesson_thread(lesson)
         scope = f"[{resolved_target}] " if resolved_target else ""
         self.conversations.append_message(
-            thread.id, "user", f"[amend] {scope}{instruction.strip()}"
+            thread.id, "user", f"[amend:{resolved_mode.value}] {scope}{instruction.strip()}"
         )
         self.conversations.append_message(
             thread.id,
             "assistant",
-            f"已按指令生成第 {record.version} 版正文。\n\n{updated.content}",
+            f"已按指令生成第 {record.version} 版正文（{resolved_mode.value} 模式）。\n\n{updated.content}",
             citations,
         )
 
@@ -149,6 +166,7 @@ class ConversationService:
             target=resolved_target,
             version=record.version,
             previous_version=lesson.current_version,
+            mode=resolved_mode.value,
             content=updated.content,
             citations=citations,
             note=record.note,
@@ -183,6 +201,7 @@ class ConversationService:
             citations=citations,
             note=DRILLDOWN_NOTE,
             status="amended",
+            mode=lesson.last_mode,
         )
         if applied is None:
             raise LessonNotFoundError(lesson_id)
@@ -302,9 +321,12 @@ class ConversationService:
         citations: Sequence[Citation],
         instruction: str,
         target: str,
+        mode: GenerationMode = GenerationMode.strict,
     ) -> str:
         lines: list[str] = [
-            "你是严谨的课程编辑，负责按读者的自然语言指令对一讲正文做局部修改。",
+            "你是严谨的课程编辑，负责按读者的自然语言指令对一讲正文做局部修改。"
+            if mode is GenerationMode.strict
+            else "你是经验丰富的课程编辑，负责按读者的自然语言指令修改一讲正文。",
             "",
             "## 讲次",
             f"- 课程：{course.title if course else '未命名课程'}",
@@ -332,19 +354,34 @@ class ConversationService:
         else:
             lines.extend(["（无引用证据）", ""])
 
-        lines.extend(
-            [
-                "## 修改约束",
-                "1. 只改与指令相关的部分，其余章节、引用标记 [E1]、标题层级与列表结构保持原样。",
-                "2. 不得引入正文与证据之外的新事实、数据、案例或结论；确实需要补充时写"
-                "「资料不足：<缺口说明>」。",
-                "3. 保留 Markdown 结构（标题、列表、代码块围栏及其语言标注）。",
-                "4. 输出修改后的完整正文，不要输出 diff、解释或前后缀。",
-                "",
-                "## 输出",
-                "只输出修改后的完整正文 Markdown。",
-            ]
-        )
+        if mode is GenerationMode.loose:
+            lines.extend(
+                [
+                    "## 修改约束（自由写作模式）",
+                    "1. 允许基于自身通用知识补充、扩写或重写与指令相关的部分，不强制逐段引用证据。",
+                    f"2. 正文第一行必须保留声明：「{LOOSE_BANNER}」。",
+                    "3. 其余章节的顺序与标题层级保持原样，除非指令明确要求调整。",
+                    "4. 对时效性或争议性结论标注「建议核实」，不要伪装成已核实事实。",
+                    "5. 输出修改后的完整正文，不要输出 diff、解释或前后缀。",
+                    "",
+                    "## 输出",
+                    "只输出修改后的完整正文 Markdown。",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "## 修改约束",
+                    "1. 只改与指令相关的部分，其余章节、引用标记 [E1]、标题层级与列表结构保持原样。",
+                    "2. 不得引入正文与证据之外的新事实、数据、案例或结论；确实需要补充时写"
+                    "「资料不足：<缺口说明>」。",
+                    "3. 保留 Markdown 结构（标题、列表、代码块围栏及其语言标注）。",
+                    "4. 输出修改后的完整正文，不要输出 diff、解释或前后缀。",
+                    "",
+                    "## 输出",
+                    "只输出修改后的完整正文 Markdown。",
+                ]
+            )
         return "\n".join(lines)
 
     def _placeholder_answer(
@@ -389,24 +426,35 @@ class ConversationService:
         )
         return "\n".join(lines)
 
-    def _placeholder_amend(self, content: str, instruction: str, target: str) -> str:
+    def _placeholder_amend(
+        self,
+        content: str,
+        instruction: str,
+        target: str,
+        mode: GenerationMode = GenerationMode.strict,
+    ) -> str:
+        label = "非严格（自由写作）" if mode is GenerationMode.loose else "严格"
         lines: list[str] = [
             content,
             "",
             "## 待应用修改（占位）",
             "",
-            "> 占位修改（未配置 LLM API key）：指令已记录在该版本 note 中，"
+            f"> 占位修改（未配置 LLM API key，{label}模式）：指令已记录在该版本 note 中，"
             "配置真实模型后由模型按同一指令重写正文。",
             "",
             f"- 修改指令：{instruction.strip()}",
             f"- 修改范围：{target or '整讲正文'}",
         ]
+        if mode is GenerationMode.loose:
+            lines.append("- 写作模式：loose（允许模型基于自身知识自由写作，需保留声明行）")
         return "\n".join(lines)
 
     @staticmethod
-    def _amend_note(instruction: str, target: str) -> str:
+    def _amend_note(
+        instruction: str, target: str, mode: GenerationMode = GenerationMode.strict
+    ) -> str:
         head = f"amend[{target}]" if target else "amend"
-        return f"{head}: {instruction.strip()}"
+        return f"{head}[{mode.value}]: {instruction.strip()}"
 
     @staticmethod
     def _clip(text: str, limit: int) -> str:

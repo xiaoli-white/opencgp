@@ -43,6 +43,7 @@ SCHEMA: tuple[str, ...] = (
         content TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'draft',
         current_version INTEGER NOT NULL DEFAULT 0,
+        last_mode TEXT NOT NULL DEFAULT '',
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
     )
@@ -55,12 +56,18 @@ SCHEMA: tuple[str, ...] = (
         version INTEGER NOT NULL,
         content TEXT NOT NULL DEFAULT '',
         citations_json TEXT NOT NULL DEFAULT '[]',
+        mode TEXT NOT NULL DEFAULT '',
         note TEXT NOT NULL DEFAULT '',
         created_at REAL NOT NULL,
         UNIQUE (lesson_id, version)
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_lesson_versions_lesson ON lesson_versions(lesson_id, version)",
+)
+
+COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("lessons", "last_mode", "TEXT NOT NULL DEFAULT ''"),
+    ("lesson_versions", "mode", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -74,6 +81,13 @@ class DatabaseCourseRepository(CourseRepository):
             return
         for statement in SCHEMA:
             self.database.execute(statement)
+        for table, column, ddl in COLUMN_MIGRATIONS:
+            columns = {
+                str(row["name"])
+                for row in self.database.fetchall(f"PRAGMA table_info({table})")
+            }
+            if column not in columns:
+                self.database.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         self._schema_ready = True
 
     def create_course(
@@ -224,6 +238,7 @@ class DatabaseCourseRepository(CourseRepository):
         citations: Sequence[Citation] | None = None,
         note: str = "",
         status: str | None = None,
+        mode: str = "",
     ) -> tuple[Lesson, LessonVersion] | None:
         self.ensure_schema()
         lesson = self.get_lesson(lesson_id)
@@ -237,29 +252,32 @@ class DatabaseCourseRepository(CourseRepository):
             version=version,
             content=content,
             citations=list(citations or []),
+            mode=mode,
             note=note,
             created_at=now,
         )
         self.database.execute(
             "INSERT INTO lesson_versions (id, lesson_id, version, content, citations_json,"
-            " note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " mode, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.id,
                 record.lesson_id,
                 record.version,
                 record.content,
                 _dump_list([citation.model_dump() for citation in record.citations]),
+                record.mode,
                 record.note,
                 record.created_at,
             ),
         )
         self.database.execute(
-            "UPDATE lessons SET content = ?, current_version = ?, status = ?, updated_at = ?"
-            " WHERE id = ?",
+            "UPDATE lessons SET content = ?, current_version = ?, status = ?, last_mode = ?,"
+            " updated_at = ? WHERE id = ?",
             (
                 content,
                 version,
                 status or lesson.status,
+                mode or lesson.last_mode,
                 now,
                 lesson_id,
             ),
@@ -297,6 +315,7 @@ class DatabaseCourseRepository(CourseRepository):
             citations=target.citations,
             note=resolved_note,
             status="reverted",
+            mode=target.mode,
         )
 
     def _next_order_index(self, course_id: str) -> int:
@@ -353,6 +372,7 @@ def _to_lesson(row: Mapping[str, Any]) -> Lesson:
         content=str(row["content"] or ""),
         status=str(row["status"] or "draft"),
         current_version=int(row["current_version"]),
+        last_mode=str(row.get("last_mode") or ""),
         created_at=float(row["created_at"]),
         updated_at=float(row["updated_at"]),
     )
@@ -366,6 +386,7 @@ def _to_version(row: Mapping[str, Any]) -> LessonVersion:
         version=int(row["version"]),
         content=str(row["content"] or ""),
         citations=citations,
+        mode=str(row.get("mode") or ""),
         note=str(row["note"] or ""),
         created_at=float(row["created_at"]),
     )

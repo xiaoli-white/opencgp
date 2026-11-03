@@ -26,6 +26,7 @@ class Lesson(BaseModel):
     content: str = ""
     status: str = "draft"
     current_version: int = 0
+    last_mode: str = ""
     created_at: float
     updated_at: float
 
@@ -36,5 +37,6 @@ class LessonVersion(BaseModel):
     version: int
     content: str
     citations: list[Citation] = Field(default_factory=list)
+    mode: str = ""
     note: str = ""
     created_at: float

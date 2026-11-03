@@ -20,6 +20,8 @@ export type Evidence = {
   citation: Citation;
 };
 
+export type GenerationMode = "strict" | "loose";
+
 export type Course = {
   id: string;
   title: string;
@@ -41,6 +43,7 @@ export type Lesson = {
   content: string;
   status: string;
   current_version: number;
+  last_mode: GenerationMode | "";
   created_at: number;
   updated_at: number;
 };
@@ -51,6 +54,7 @@ export type LessonVersion = {
   version: number;
   content: string;
   citations: Citation[];
+  mode: GenerationMode | "";
   note: string;
   created_at: number;
 };
@@ -79,6 +83,7 @@ export type GenerationResult = {
   version: number;
   topic: string;
   top_k: number;
+  mode: GenerationMode;
   content: string;
   citations: Citation[];
   evidence: Evidence[];
@@ -106,6 +111,7 @@ export type AmendResult = {
   target: string;
   version: number;
   previous_version: number;
+  mode: GenerationMode;
   content: string;
   citations: Citation[];
   note: string;
@@ -243,6 +249,7 @@ export const api = {
       top_k?: number;
       note?: string;
       source_ids?: string[];
+      mode?: GenerationMode;
     } = {},
   ) =>
     request<GenerationResult>(`/api/v1/lessons/${lessonId}/generate`, {
@@ -278,10 +285,15 @@ export const api = {
       }),
     }),
 
-  amendLesson: (lessonId: string, instruction: string, target?: string) =>
+  amendLesson: (
+    lessonId: string,
+    instruction: string,
+    target?: string,
+    mode: GenerationMode = "strict",
+  ) =>
     request<AmendResult>(`/api/v1/lessons/${lessonId}/amend`, {
       method: "POST",
-      body: JSON.stringify({ instruction, target: target ?? null }),
+      body: JSON.stringify({ instruction, target: target ?? null, mode }),
     }),
 
   getThread: (lessonId: string) =>

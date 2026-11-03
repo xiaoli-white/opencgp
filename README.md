@@ -140,16 +140,27 @@ npm run dev
 | POST | `/api/v1/courses/{course_id}/lessons` | 创建讲次 |
 | GET | `/api/v1/courses/{course_id}/lessons` | 讲次列表 |
 | GET | `/api/v1/lessons/{lesson_id}` | 讲次详情（当前正文与版本号） |
-| POST | `/api/v1/lessons/{lesson_id}/generate` | 带引用的单讲生成（落 vN） |
+| POST | `/api/v1/lessons/{lesson_id}/generate` | 单讲生成（`mode=strict` 带引用 / `loose` 大模型自由写作，落 vN） |
 | GET | `/api/v1/lessons/{lesson_id}/versions` | 版本历史 |
 | POST | `/api/v1/lessons/{lesson_id}/revert` | 回滚到指定版本（追加新版本） |
 | POST | `/api/v1/lessons/{lesson_id}/ask` | 追问：基于正文 + 证据 + 对话线作答 |
-| POST | `/api/v1/lessons/{lesson_id}/amend` | 局部修改：按自然语言指令落新版本 |
+| POST | `/api/v1/lessons/{lesson_id}/amend` | 局部修改（支持 `mode=strict/loose`）：按自然语言指令落新版本 |
 | POST | `/api/v1/lessons/{lesson_id}/drilldown` | 沉淀：把某次追问回答追加进该讲 |
 | GET | `/api/v1/lessons/{lesson_id}/thread` | 该讲对话线（消息 + 证据） |
 | GET | `/api/v1/threads/{thread_id}` | 按对话线 ID 读取消息 |
 
 追问 / 修改 / 沉淀都复用追加式版本机制：正文变更只新增 `lesson_versions`，指令原文写入版本 `note`，历史可 diff、可回滚。
+
+### 生成模式（strict / loose）
+
+`generate` 与 `amend` 都接受可选字段 `mode`，默认 `strict`：
+
+| 模式 | 行为 | 版本记录 |
+|---|---|---|
+| `strict`（默认） | 只基于检索证据写作，每段带 `[En]` 引用；检索不到证据直接返回「资料不足」，不硬写 | `lesson_versions.mode='strict'` |
+| `loose` | 允许模型基于自身通用知识自由写作，证据仅作可选参考；正文首行强制注入「⚠️ 本文由大模型编写，未经知识库证据核实」声明 | `lesson_versions.mode='loose'` |
+
+`lessons.last_mode` 跟随最近一次生成模式，`generate` / `amend` 的返回体都带 `mode`，便于前端提示当前正文的可信度来源。
 
 ---
 

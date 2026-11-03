@@ -15,6 +15,7 @@ class GenerationResult(BaseModel):
     version: int
     topic: str
     top_k: int
+    mode: str = "strict"
     content: str
     citations: list[Citation] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)

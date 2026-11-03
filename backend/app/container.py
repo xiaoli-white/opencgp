@@ -159,6 +159,7 @@ class Container:
                 default_top_k=self.settings.generation.top_k,
                 evidence_char_limit=self.settings.generation.evidence_char_limit,
                 max_evidence=self.settings.generation.max_evidence,
+                default_mode=self.settings.generation.default_mode,
             )
 
         return self._get_or_build("generation", build)

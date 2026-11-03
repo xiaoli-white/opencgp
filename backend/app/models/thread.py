@@ -50,6 +50,7 @@ class AmendResult(BaseModel):
     target: str = ""
     version: int
     previous_version: int
+    mode: str = "strict"
     content: str
     citations: list[Citation] = Field(default_factory=list)
     note: str = ""

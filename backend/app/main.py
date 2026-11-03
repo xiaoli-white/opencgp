@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.container import get_container
 from app.models.citation import Citation
 from app.models.course import Course, Lesson
+from app.models.mode import GenerationMode
 from app.models.thread import LessonThreadView
 from app.services.errors import (
     EmptyLLMResponseError,
@@ -165,6 +166,7 @@ class LessonGenerateRequest(BaseModel):
     top_k: int | None = Field(default=None, ge=1, le=20)
     note: str = ""
     source_ids: list[str] | None = None
+    mode: GenerationMode = GenerationMode.strict
 
 
 class LessonRevertRequest(BaseModel):
@@ -180,6 +182,7 @@ class LessonAskRequest(BaseModel):
 class LessonAmendRequest(BaseModel):
     instruction: str = Field(min_length=1)
     target: str | None = None
+    mode: GenerationMode = GenerationMode.strict
 
 
 class LessonDrilldownRequest(BaseModel):
@@ -285,6 +288,7 @@ async def generate_lesson(
             top_k=payload.top_k,
             note=payload.note,
             source_ids=payload.source_ids,
+            mode=payload.mode.value,
         )
     except LessonNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
@@ -347,7 +351,7 @@ async def amend_lesson(lesson_id: str, req: LessonAmendRequest) -> dict[str, Any
         raise HTTPException(status_code=400, detail="修改指令不能为空")
     try:
         result = await container.conversation().amend(
-            lesson_id, instruction, target=req.target
+            lesson_id, instruction, target=req.target, mode=req.mode.value
         )
     except LessonNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc

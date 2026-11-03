@@ -7,6 +7,8 @@
 - 版本号从 1 开始单调递增，同一 ``lesson_id`` 内唯一。
 - 每次内容变更（生成、回滚）都必须新增一条 ``LessonVersion``，不覆盖历史。
 - 回滚不删除历史，而是以目标版本内容追加一个新版本（类 git revert）。
+- 每个版本记录生成模式 ``mode``（``strict`` 严格引用 / ``loose`` 大模型自由写作 /
+  空串表示人工草稿），``lessons.last_mode`` 跟随最近一次生成模式。
 - 找不到实体时返回 ``None``，由上层决定错误语义。
 """
 
@@ -71,6 +73,7 @@ class CourseRepository(Protocol):
         citations: Sequence[Citation] | None = None,
         note: str = "",
         status: str | None = None,
+        mode: str = "",
     ) -> tuple[Lesson, LessonVersion] | None:
         ...
 
