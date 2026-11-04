@@ -65,12 +65,16 @@ def _env(key: str, default: str = "") -> str:
 class DatabaseConfig:
     backend: str = "sqlite"
     path: str = "data/course_studio.db"
+    dsn: str = ""
+    pool_size: int = 8
 
     @classmethod
     def from_env(cls) -> "DatabaseConfig":
         return cls(
             backend=_env("DATABASE_BACKEND", "sqlite"),
             path=_env("DATABASE_PATH", "data/course_studio.db"),
+            dsn=_env("DATABASE_DSN", ""),
+            pool_size=int(_env("DATABASE_POOL_SIZE", "8") or 8),
         )
 
 

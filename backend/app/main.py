@@ -124,6 +124,10 @@ container = get_container()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
+        container.auth_repository().ensure_schema()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[auth] 基础表初始化失败: {exc!r}")
+    try:
         container.profiles().ensure_builtin()
     except Exception as exc:  # noqa: BLE001
         print(f"[profiles] 内置预设播种失败: {exc!r}")
@@ -344,6 +348,10 @@ def health() -> dict[str, Any]:
             adapters[name] = {"ok": False, "error": str(exc)}
         else:
             adapters[name] = {"ok": ok}
+    try:
+        adapters["database"]["backend"] = (settings.database.backend or "sqlite").strip().lower()
+    except Exception:
+        pass
     try:
         adapters["storage"]["backend"] = (settings.storage.backend or "local").strip().lower()
         adapters["storage"]["bucket"] = settings.storage.bucket

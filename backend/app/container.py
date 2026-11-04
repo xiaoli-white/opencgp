@@ -80,11 +80,16 @@ class Container:
 
     def database(self) -> Database:
         def build() -> Database:
-            backend = self.settings.database.backend
-            if backend == "sqlite":
+            settings = self.settings.database
+            backend = (settings.backend or "sqlite").strip().lower()
+            if backend in ("sqlite", ""):
                 from app.adapters.database.sqlite import SQLiteDatabase
 
-                return SQLiteDatabase(path=self.settings.database.path)
+                return SQLiteDatabase(path=settings.path)
+            if backend in ("postgres", "postgresql", "pg"):
+                from app.adapters.database.postgres import PostgresDatabase
+
+                return PostgresDatabase(dsn=settings.dsn, pool_size=settings.pool_size)
             raise ValueError(f"不支持的 database backend: {backend!r}")
 
         return self._get_or_build("database", build)
