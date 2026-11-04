@@ -1,0 +1,19 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opencgp.fullname" . }}-redis
+  labels:
+    {{- include "opencgp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  clusterIP: None
+  ports:
+    - name: redis
+      port: {{ .Values.redis.service.port }}
+      targetPort: redis
+      protocol: TCP
+  selector:
+    {{- include "opencgp.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+{{- end }}

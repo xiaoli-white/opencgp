@@ -1,0 +1,14 @@
+apiVersion: v2
+name: opencgp
+description: OpenCGP AI course studio chart with FastAPI backend, static frontend, Redis queue and rustfs object storage
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - opencgp
+  - course-studio
+  - ai
+  - fastapi
+  - rag
+annotations:
+  category: Application

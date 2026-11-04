@@ -1,0 +1,23 @@
+{{- if .Values.rustfs.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opencgp.fullname" . }}-rustfs
+  labels:
+    {{- include "opencgp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+spec:
+  clusterIP: None
+  ports:
+    - name: s3
+      port: {{ .Values.rustfs.service.port }}
+      targetPort: s3
+      protocol: TCP
+    - name: console
+      port: {{ .Values.rustfs.service.consolePort }}
+      targetPort: console
+      protocol: TCP
+  selector:
+    {{- include "opencgp.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+{{- end }}

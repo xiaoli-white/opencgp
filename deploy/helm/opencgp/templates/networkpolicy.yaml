@@ -1,0 +1,84 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $fullName := include "opencgp.fullname" . }}
+{{- $selector := include "opencgp.selectorLabels" . }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-backend
+  labels:
+    {{- include "opencgp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  podSelector:
+    matchLabels:
+      {{- $selector | nindent 6 }}
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $selector | nindent 14 }}
+              app.kubernetes.io/component: frontend
+        - namespaceSelector:
+            matchLabels:
+              {{ .Values.networkPolicy.monitoringNamespaceLabel.key }}: {{ .Values.networkPolicy.monitoringNamespaceLabel.value | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.backend.containerPort }}
+{{- if .Values.redis.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-redis
+  labels:
+    {{- include "opencgp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  podSelector:
+    matchLabels:
+      {{- $selector | nindent 6 }}
+      app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $selector | nindent 14 }}
+              app.kubernetes.io/component: backend
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.service.port }}
+{{- end }}
+{{- if .Values.rustfs.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-rustfs
+  labels:
+    {{- include "opencgp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+spec:
+  podSelector:
+    matchLabels:
+      {{- $selector | nindent 6 }}
+      app.kubernetes.io/component: rustfs
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $selector | nindent 14 }}
+              app.kubernetes.io/component: backend
+      ports:
+        - protocol: TCP
+          port: {{ .Values.rustfs.service.port }}
+        - protocol: TCP
+          port: {{ .Values.rustfs.service.consolePort }}
+{{- end }}
+{{- end }}

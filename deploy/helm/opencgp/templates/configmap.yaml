@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "opencgp.configMapName" . }}
+  labels:
+    {{- include "opencgp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+data:
+  COURSE_STUDIO_APP_NAME: {{ .Values.config.appName | quote }}
+  COURSE_STUDIO_ENV: {{ .Values.config.env | quote }}
+  COURSE_STUDIO_AUTH_MODE: {{ .Values.config.authMode | quote }}
+  COURSE_STUDIO_AUTH_TOKEN_TTL_HOURS: {{ .Values.config.authTokenTtlHours | quote }}
+  COURSE_STUDIO_REQUIRE_APPROVAL: {{ .Values.config.requireApproval | quote }}
+  COURSE_STUDIO_LOCK_TTL_SECONDS: {{ .Values.config.lockTtlSeconds | quote }}
+  COURSE_STUDIO_DATABASE_BACKEND: {{ .Values.config.databaseBackend | quote }}
+  COURSE_STUDIO_DATABASE_PATH: {{ .Values.config.databasePath | quote }}
+  COURSE_STUDIO_VECTORSTORE_BACKEND: {{ .Values.config.vectorstoreBackend | quote }}
+  COURSE_STUDIO_VECTORSTORE_PATH: {{ .Values.config.vectorstorePath | quote }}
+  COURSE_STUDIO_STORAGE_BACKEND: {{ .Values.config.storageBackend | quote }}
+  COURSE_STUDIO_STORAGE_ROOT: {{ .Values.config.storageRoot | quote }}
+  COURSE_STUDIO_S3_ENDPOINT: {{ include "opencgp.s3Endpoint" . | quote }}
+  COURSE_STUDIO_S3_BUCKET: {{ .Values.config.s3Bucket | quote }}
+  COURSE_STUDIO_S3_REGION: {{ .Values.config.s3Region | quote }}
+  COURSE_STUDIO_S3_PREFIX: {{ .Values.config.s3Prefix | quote }}
+  COURSE_STUDIO_QUEUE_BACKEND: {{ .Values.config.queueBackend | quote }}
+  COURSE_STUDIO_REDIS_URL: {{ include "opencgp.redisUrl" . | quote }}
+  COURSE_STUDIO_JOB_CONCURRENCY: {{ .Values.config.jobConcurrency | quote }}
+  COURSE_STUDIO_JOB_SSE_PING_SECONDS: {{ .Values.config.jobSsePingSeconds | quote }}
+  COURSE_STUDIO_EXECUTOR_BACKEND: {{ .Values.config.executorBackend | quote }}
+  COURSE_STUDIO_EXEC_TIMEOUT: {{ .Values.config.execTimeout | quote }}
+  COURSE_STUDIO_WEBSEARCH_BACKEND: {{ .Values.config.websearchBackend | quote }}
+  COURSE_STUDIO_WEBSEARCH_URL: {{ .Values.config.websearchUrl | quote }}
+  COURSE_STUDIO_WEBSEARCH_METHOD: {{ .Values.config.websearchMethod | quote }}
+  COURSE_STUDIO_WEBSEARCH_RESULT_PATH: {{ .Values.config.websearchResultPath | quote }}
+  COURSE_STUDIO_IMAGE_BACKEND: {{ .Values.config.imageBackend | quote }}
+  COURSE_STUDIO_IMAGE_BASE_URL: {{ .Values.config.imageBaseUrl | quote }}
+  COURSE_STUDIO_IMAGE_MODEL: {{ .Values.config.imageModel | quote }}
+  COURSE_STUDIO_LLM_BACKEND: {{ .Values.config.llmBackend | quote }}
+  COURSE_STUDIO_LLM_BASE_URL: {{ .Values.config.llmBaseUrl | quote }}
+  COURSE_STUDIO_LLM_MODEL: {{ .Values.config.llmModel | quote }}
+  COURSE_STUDIO_EMBEDDING_BACKEND: {{ .Values.config.embeddingBackend | quote }}
+  COURSE_STUDIO_EXPORTER_BACKEND: "builtin"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+  XDG_CACHE_HOME: "/tmp/.cache"
+  HOME: "/tmp"
+  TZ: "Asia/Shanghai"
+  {{- range $key, $value := .Values.config.extraEnv }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "opencgp.nginxConfigMapName" . }}
+  labels:
+    {{- include "opencgp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+data:
+  default.conf: |
+    server {
+        listen {{ .Values.frontend.containerPort }};
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+        client_max_body_size {{ .Values.frontend.clientMaxBodySize }};
+
+        location {{ .Values.frontend.apiPrefix }}/ {
+            proxy_pass http://{{ include "opencgp.backendHost" . }}:{{ .Values.backend.service.port }};
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "";
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_read_timeout {{ .Values.frontend.proxyReadTimeout }};
+            proxy_send_timeout {{ .Values.frontend.proxyReadTimeout }};
+        }
+
+        location = /health {
+            proxy_pass http://{{ include "opencgp.backendHost" . }}:{{ .Values.backend.service.port }}/health;
+            proxy_set_header Host $host;
+        }
+
+        location = /metrics {
+            deny all;
+            return 403;
+        }
+
+        location /assets/ {
+            expires 7d;
+            add_header Cache-Control "public, max-age=604800";
+            try_files $uri =404;
+        }
+
+        location / {
+            add_header Cache-Control "no-cache";
+            try_files $uri $uri/ /index.html;
+        }
+    }

@@ -1,0 +1,39 @@
+{{- $fullName := include "opencgp.fullname" . }}
+OpenCGP release {{ .Release.Name }} 已部署到命名空间 {{ .Release.Namespace }}。
+
+服务：
+  前端  {{ $fullName }}-frontend:{{ .Values.frontend.service.port }}   (nginx 静态站点 + /api 反向代理)
+  后端  {{ $fullName }}-backend:{{ .Values.backend.service.port }}   (FastAPI)
+  {{- if .Values.redis.enabled }}
+  Redis {{ $fullName }}-redis:{{ .Values.redis.service.port }} (headless)
+  {{- end }}
+  {{- if .Values.rustfs.enabled }}
+  rustfs {{ $fullName }}-rustfs:{{ .Values.rustfs.service.port }} (console {{ .Values.rustfs.service.consolePort }})
+  {{- end }}
+
+本机访问：
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ $fullName }}-frontend 8080:{{ .Values.frontend.service.port }}
+  然后打开 http://127.0.0.1:8080
+
+后端直连与健康检查：
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ $fullName }}-backend {{ .Values.backend.service.port }}:{{ .Values.backend.service.port }}
+  curl -s http://127.0.0.1:{{ .Values.backend.service.port }}/health
+  curl -s http://127.0.0.1:{{ .Values.backend.service.port }}/metrics | head
+
+{{- if .Values.ingress.enabled }}
+
+入口：
+  {{- range .Values.ingress.hosts }}
+  http://{{ .host }}
+  {{- end }}
+{{- end }}
+
+鉴权模式：{{ .Values.config.authMode }}{{ if eq .Values.config.authMode "required" }}（首个注册用户自动成为 owner 并激活，其余用户需管理员审核）{{ end }}
+
+读取自动生成的敏感配置：
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "opencgp.secretName" . }} -o jsonpath='{.data.COURSE_STUDIO_AUTH_SECRET}' | base64 -d
+
+重要提示：
+  backend.replicas 当前为 {{ .Values.backend.replicas }}；大于 1 时必须使用外部 PostgreSQL + 外部 Redis + 外部对象存储，
+  SQLite 与 ReadWriteOnce PVC 只能单副本。
+  queue backend = {{ .Values.config.queueBackend }}，storage backend = {{ .Values.config.storageBackend }}，executor = {{ .Values.config.executorBackend }}。
