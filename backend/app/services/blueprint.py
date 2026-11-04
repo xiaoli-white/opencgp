@@ -85,8 +85,9 @@ class BlueprintService:
             raise BlueprintNotFoundError(f"课程不存在: {course_id}")
         resolved_mode = GenerationMode.normalize(mode or self.default_mode)
         resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
+        lessons = self.course_repository.list_lessons(course_id)
         citations = await self.vectorstore.search(
-            self._build_query(course, focus),
+            self._build_query(course, focus, lessons),
             top_k=resolved_top_k,
             source_ids=source_ids,
             tenant_id=tenant_id,
@@ -272,9 +273,24 @@ class BlueprintService:
             return NODE_GENERATED
         return NODE_PLANNED
 
-    def _build_query(self, course: Course, focus: str) -> str:
+    def _build_query(self, course: Course, focus: str, lessons: Sequence[Any] | None = None) -> str:
         parts = [course.title, course.subtitle, course.audience, focus]
-        return " ".join(part.strip() for part in parts if part and part.strip())
+        for lesson in list(lessons or [])[:6]:
+            title = getattr(lesson, "title", "") or ""
+            if title and title not in course.title:
+                parts.append(title)
+            objectives = getattr(lesson, "learning_objectives", None) or []
+            for objective in list(objectives)[:2]:
+                parts.append(str(objective))
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for part in parts:
+            text = (part or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            ordered.append(text)
+        return " ".join(ordered)
 
     async def _request_payload(
         self,
