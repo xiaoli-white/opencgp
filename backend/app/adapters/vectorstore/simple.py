@@ -16,6 +16,9 @@ from app.ports.embedding import EmbeddingProvider
 from app.ports.vectorstore import VectorStore
 from app.services.textproc import coverage, index_tokens, make_snippet, query_terms
 
+COVERAGE_FLOOR = 0.15
+LIKE_MATCH_SCORE = 0.75
+
 _SCHEMA = (
     """
     CREATE TABLE IF NOT EXISTS sources (
@@ -122,6 +125,7 @@ class SimpleVectorStore(VectorStore):
         top_k: int = 5,
         source_ids: Sequence[str] | None = None,
         tenant_id: str = "",
+        min_score: float | None = None,
     ) -> list[Citation]:
         if not query or not query.strip() or top_k <= 0:
             return []
@@ -137,6 +141,7 @@ class SimpleVectorStore(VectorStore):
             scope or None,
             query_vector,
             tenant_id,
+            min_score,
         )
 
     async def delete_by_source(self, source_id: str, tenant_id: str = "") -> int:
@@ -304,6 +309,7 @@ class SimpleVectorStore(VectorStore):
         source_ids: Sequence[str] | None,
         query_vector: Sequence[float] | None,
         tenant_id: str = "",
+        min_score: float | None = None,
     ) -> list[Citation]:
         conn = self._connection()
         terms = query_terms(query)
@@ -311,17 +317,20 @@ class SimpleVectorStore(VectorStore):
         keyword_scores = self._keyword_scores(conn, terms, limit, source_ids)
         if not keyword_scores:
             keyword_scores = self._like_scores(conn, query, limit, source_ids)
-        keyword_norm = _normalize(keyword_scores)
         if query_vector is None:
-            scores = keyword_norm
+            scores = keyword_scores
         else:
             vector_scores = self._vector_scores(conn, query_vector, limit, source_ids)
-            scores = self._blend(keyword_norm, _normalize(vector_scores))
+            scores = self._blend(keyword_scores, _clip01(vector_scores))
         scores = self._scope_scores(conn, scores, tenant_id)
         ranked, covs = self._rank(conn, scores, terms)
-        return self._build_citations(
+        citations = self._build_citations(
             conn, self._select(ranked, covs, top_k), terms
         )
+        if min_score is not None:
+            threshold = float(min_score)
+            citations = [item for item in citations if item.score >= threshold]
+        return citations
 
     def _scope_scores(
         self,
@@ -403,7 +412,7 @@ class SimpleVectorStore(VectorStore):
             chunk_id = row["chunk_id"]
             body = texts.get(chunk_id, "")
             raw = max(-float(row["rank"]), 0.0)
-            scores[chunk_id] = raw * (0.5 + 0.5 * coverage(terms, body))
+            scores[chunk_id] = _absolute_score(raw, coverage(terms, body))
         return scores
 
     def _like_scores(
@@ -425,7 +434,7 @@ class SimpleVectorStore(VectorStore):
             rows = conn.execute(sql, params).fetchall()
         except sqlite3.Error:
             return {}
-        return {row["id"]: 1.0 / (1.0 + math.log1p(len(row["text"]))) for row in rows}
+        return {row["id"]: LIKE_MATCH_SCORE for row in rows}
 
     def _vector_scores(
         self,
@@ -458,14 +467,12 @@ class SimpleVectorStore(VectorStore):
     def _blend(
         self, keyword_scores: dict[str, float], vector_scores: dict[str, float]
     ) -> dict[str, float]:
-        keyword_norm = _normalize(keyword_scores)
-        vector_norm = _normalize(vector_scores)
         weight = self.keyword_weight
         merged: dict[str, float] = {}
-        for chunk_id in set(keyword_norm) | set(vector_norm):
-            merged[chunk_id] = weight * keyword_norm.get(chunk_id, 0.0) + (
+        for chunk_id in set(keyword_scores) | set(vector_scores):
+            merged[chunk_id] = weight * keyword_scores.get(chunk_id, 0.0) + (
                 1.0 - weight
-            ) * vector_norm.get(chunk_id, 0.0)
+            ) * vector_scores.get(chunk_id, 0.0)
         return merged
 
     def _texts(
@@ -546,13 +553,19 @@ def _load_meta(value: str | None) -> dict:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def _normalize(scores: dict[str, float]) -> dict[str, float]:
+def _absolute_score(raw_rank: float, term_coverage: float) -> float:
+    if raw_rank <= 0 or term_coverage <= 0:
+        return 0.0
+    gate = (term_coverage - COVERAGE_FLOOR) / (1.0 - COVERAGE_FLOOR)
+    if gate <= 0:
+        return 0.0
+    return min(1.0, gate) * (0.6 + 0.4 * (raw_rank / (1.0 + raw_rank)))
+
+
+def _clip01(scores: dict[str, float]) -> dict[str, float]:
     if not scores:
         return {}
-    top = max(scores.values())
-    if top <= 0:
-        return {key: 0.0 for key in scores}
-    return {key: value / top for key, value in scores.items()}
+    return {key: min(1.0, max(0.0, value)) for key, value in scores.items()}
 
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:

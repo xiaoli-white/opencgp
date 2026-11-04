@@ -58,6 +58,10 @@ class JobCanceled(Exception):
     pass
 
 
+class JobFailure(RuntimeError):
+    pass
+
+
 @dataclass
 class JobService:
     repository: Any
@@ -196,6 +200,12 @@ class JobService:
 
     def start(self) -> None:
         if self.queue is not None:
+            setter = getattr(self.queue, "set_job_repository", None)
+            if callable(setter):
+                try:
+                    setter(self.repository)
+                except Exception as exc:
+                    print(f"[jobs] 注入任务仓库到队列失败: {exc!r}")
             self.queue.start(self.handle)
 
     async def aclose(self) -> None:
@@ -234,10 +244,9 @@ class JobService:
             return
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
-            self._set_status(
-                job_id, STATUS_FAILED, None, str(exc)[:ERROR_MAX_CHARS] or type(exc).__name__
-            )
-            return
+            message = str(exc)[:ERROR_MAX_CHARS] or type(exc).__name__
+            self._set_status(job_id, STATUS_FAILED, None, message)
+            raise JobFailure(message) from exc
         if self.repository.has_cancel_request(job_id):
             self._set_status(job_id, STATUS_CANCELED, result, "已取消")
             return

@@ -51,6 +51,7 @@ from app.models.thread import LessonThreadView
 from app.models.longform import LongformProfile
 from app.models.research import ResearchRun
 from app.models.job import JOB_KINDS, JOB_STATUSES, Job
+from app.models.factcheck import FactCheckReport
 from app.services.jobs import JobContext
 from app.services.codecheck import CodeCheckService
 from app.services.media import detect_image_type
@@ -107,6 +108,7 @@ from app.services.errors import (
     CreationProfileNotFoundError,
     SourceNotFoundError,
     ThreadNotFoundError,
+    ProviderCallError,
 )
 
 settings = get_settings()
@@ -158,6 +160,13 @@ async def metrics_middleware(request: Request, call_next):
     get_metrics().inc_request(request.method, route, response.status_code)
     get_metrics().observe_duration(route, elapsed)
     return response
+
+
+@app.exception_handler(ProviderCallError)
+async def provider_call_error_handler(
+    request: Request, exc: ProviderCallError
+) -> JSONResponse:
+    return JSONResponse(status_code=502, content={"detail": str(exc)})
 
 
 app.add_middleware(
@@ -544,6 +553,11 @@ class LessonDrilldownRequest(BaseModel):
     question: str | None = None
 
 
+class LessonFactCheckRequest(BaseModel):
+    top_k: int | None = Field(default=None, ge=1, le=10)
+    claims: list[str] | None = None
+
+
 def _require_course(
     course_id: str, ctx: AuthContext | None = None, level: str = "read"
 ) -> Course:
@@ -690,6 +704,27 @@ async def generate_lesson(
     except VersionConflictError as exc:
         return _conflict(exc)
     return result.model_dump()
+
+
+@app.post("/api/v1/lessons/{lesson_id}/factcheck")
+async def factcheck_lesson(
+    lesson_id: str,
+    req: LessonFactCheckRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    lesson = _require_lesson(lesson_id, ctx)
+    payload = req or LessonFactCheckRequest()
+    service = container.factcheck()
+    explicit = [item.strip() for item in (payload.claims or []) if item and item.strip()]
+    claims = explicit or service.extract_claims(lesson.content or "")
+    results = await service.check(
+        claims,
+        top_k=payload.top_k,
+        tenant_id=_tenant_of(ctx),
+        llm=container.llm_for(ctx.user.id),
+    )
+    return FactCheckReport.build(results, lesson_id).model_dump()
 
 
 @app.get("/api/v1/lessons/{lesson_id}/versions")

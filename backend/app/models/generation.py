@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from app.models.citation import Citation
+from app.models.factcheck import CheckResult
 
 
 class Evidence(BaseModel):
@@ -19,6 +20,7 @@ class GenerationResult(BaseModel):
     content: str
     citations: list[Citation] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
+    factcheck: list[CheckResult] = Field(default_factory=list)
     grounded: bool = False
     provider: str = ""
     prompt: str = ""

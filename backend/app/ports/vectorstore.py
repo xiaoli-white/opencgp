@@ -37,6 +37,7 @@ class VectorStore(Protocol):
         top_k: int = 5,
         source_ids: Sequence[str] | None = None,
         tenant_id: str = "",
+        min_score: float | None = None,
     ) -> list[Citation]:
         """按查询检索最相关的 top_k 分块，结果按相关度降序。"""
         ...

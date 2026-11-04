@@ -22,12 +22,14 @@ from typing import Sequence
 
 from app.models.citation import Citation
 from app.models.course import Course, Lesson
+from app.models.factcheck import CheckResult
 from app.models.generation import Evidence, GenerationResult
 from app.models.mode import GenerationMode, with_loose_notice
 from app.ports.course_repository import CourseRepository
 from app.ports.llm import LLMProvider
 from app.ports.vectorstore import VectorStore
 from app.services.errors import LessonNotFoundError, VersionConflictError
+from app.services.factcheck import FactCheckService
 
 NO_EVIDENCE_NOTICE = (
     "资料不足：知识库中未检索到与本节主题相关的证据，暂不生成正文。\n\n"
@@ -46,6 +48,8 @@ class GenerationService:
         evidence_char_limit: int = 600,
         max_evidence: int = 8,
         default_mode: str = "strict",
+        min_score: float = 0.15,
+        factcheck: FactCheckService | None = None,
     ) -> None:
         self.repository = repository
         self.vectorstore = vectorstore
@@ -54,6 +58,8 @@ class GenerationService:
         self.evidence_char_limit = evidence_char_limit
         self.max_evidence = max_evidence
         self.default_mode = GenerationMode.normalize(default_mode).value
+        self.min_score = float(min_score)
+        self.factcheck = factcheck
 
     async def generate_lesson(
         self,
@@ -77,11 +83,13 @@ class GenerationService:
 
         resolved_topic = (topic or lesson.title).strip()
         resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
+        is_strict = resolved_mode is GenerationMode.strict
         citations = await self.vectorstore.search(
             self._build_query(resolved_topic, lesson),
             top_k=resolved_top_k,
             source_ids=source_ids,
             tenant_id=tenant_id,
+            min_score=self.min_score if is_strict else None,
         )
         citations = citations[: self.max_evidence]
         evidence = [
@@ -99,11 +107,16 @@ class GenerationService:
                 course, lesson, resolved_topic, evidence, provider
             )
 
+        checks = await self._run_factcheck(content, tenant_id, provider, is_strict)
+        note_value = note or self._default_note(resolved_mode, evidence)
+        if checks:
+            note_value = f"{note_value};factcheck:{self.factcheck.summarize(checks)}"
+
         applied = self.repository.append_version(
             lesson_id,
             content=content,
             citations=citations,
-            note=note or self._default_note(resolved_mode, evidence),
+            note=note_value,
             status="generated"
             if resolved_mode is GenerationMode.loose or evidence
             else lesson.status,
@@ -124,7 +137,25 @@ class GenerationService:
             grounded=grounded,
             provider=provider_name,
             prompt=prompt,
+            factcheck=checks,
         )
+
+    async def _run_factcheck(
+        self,
+        content: str,
+        tenant_id: str,
+        provider: LLMProvider,
+        is_strict: bool,
+    ) -> list[CheckResult]:
+        if not is_strict or self.factcheck is None or not content:
+            return []
+        claims = self.factcheck.extract_claims(content)
+        if not claims:
+            return []
+        try:
+            return await self.factcheck.check(claims, tenant_id=tenant_id)
+        except Exception:
+            return []
 
     async def _write_strict(
         self,

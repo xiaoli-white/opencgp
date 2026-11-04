@@ -3,6 +3,8 @@ from __future__ import annotations
 import datetime
 import hashlib
 import hmac
+import time
+import xml.etree.ElementTree as ET
 from typing import Any, Optional
 from urllib.parse import quote, urlparse
 
@@ -12,6 +14,10 @@ from app.ports.storage import StorageBackend
 
 EMPTY_PAYLOAD_HASH = hashlib.sha256(b"").hexdigest()
 UNRESERVED = "-_.~"
+RETRY_DELAYS = (0.2, 0.5, 1.2)
+RETRYABLE_STATUS = 500
+MULTIPART_THRESHOLD = 8 * 1024 * 1024
+PART_SIZE = 8 * 1024 * 1024
 
 
 class S3StorageBackend(StorageBackend):
@@ -36,6 +42,9 @@ class S3StorageBackend(StorageBackend):
         self.host = parsed.netloc or parsed.path
         self._bucket_ready = False
         self.last_error = ""
+        self.retries = 0
+        self.multipart_threshold = MULTIPART_THRESHOLD
+        self.part_size = PART_SIZE
 
     def _encode_path(self, path: str) -> str:
         return "/".join(quote(part, safe=UNRESERVED) for part in path.split("/"))
@@ -95,6 +104,45 @@ class S3StorageBackend(StorageBackend):
         headers: dict[str, str] | None = None,
         bucket_level: bool = False,
     ) -> httpx.Response:
+        attempt = 0
+        while True:
+            try:
+                resp = self._send(method, key, query, body, headers, bucket_level)
+            except httpx.HTTPError as exc:
+                self.last_error = f"{method} 网络异常: {exc!r}"
+                if attempt >= len(RETRY_DELAYS):
+                    raise
+                delay = RETRY_DELAYS[attempt]
+                attempt += 1
+                self.retries += 1
+                print(
+                    f"[s3] {method} {key or self.bucket} 网络异常，第 {attempt} 次重试（{delay}s）: {exc!r}"
+                )
+                time.sleep(delay)
+                continue
+            if resp.status_code < RETRYABLE_STATUS:
+                return resp
+            self.last_error = f"{method} {resp.status_code}: {resp.text[:200]}"
+            if attempt >= len(RETRY_DELAYS):
+                return resp
+            delay = RETRY_DELAYS[attempt]
+            attempt += 1
+            self.retries += 1
+            print(
+                f"[s3] {method} {key or self.bucket} 返回 {resp.status_code}，"
+                f"第 {attempt} 次重试（{delay}s）"
+            )
+            time.sleep(delay)
+
+    def _send(
+        self,
+        method: str,
+        key: str = "",
+        query: dict[str, Any] | None = None,
+        body: bytes = b"",
+        headers: dict[str, str] | None = None,
+        bucket_level: bool = False,
+    ) -> httpx.Response:
         path = f"/{self.bucket}" if bucket_level else f"/{self.bucket}/{key.lstrip('/')}"
         if bucket_level and key:
             path = f"/{self.bucket}/{key.lstrip('/')}"
@@ -131,11 +179,96 @@ class S3StorageBackend(StorageBackend):
 
     def put(self, key: str, data: bytes, content_type: Optional[str] = None) -> str:
         self.ensure_bucket()
+        if len(data) > self.multipart_threshold:
+            return self._put_multipart(key, data, content_type)
         headers = {"content-type": content_type or "application/octet-stream"}
         resp = self._request("PUT", key=key, body=data, headers=headers)
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"S3 put 失败 {resp.status_code}: {resp.text[:200]}")
         return key
+
+    def _put_multipart(
+        self, key: str, data: bytes, content_type: Optional[str] = None
+    ) -> str:
+        upload_id = self.create_multipart_upload(key, content_type)
+        parts: list[tuple[int, str]] = []
+        try:
+            number = 1
+            for offset in range(0, len(data), self.part_size):
+                chunk = data[offset : offset + self.part_size]
+                parts.append((number, self.upload_part(key, upload_id, number, chunk)))
+                number += 1
+            self.complete_multipart_upload(key, upload_id, parts)
+        except Exception:
+            self.abort_multipart_upload(key, upload_id)
+            raise
+        return key
+
+    def create_multipart_upload(
+        self, key: str, content_type: Optional[str] = None
+    ) -> str:
+        headers = {"content-type": content_type or "application/octet-stream"}
+        resp = self._request(
+            "POST", key=key, query={"uploads": ""}, headers=headers
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(
+                f"S3 multipart 初始化失败 {resp.status_code}: {resp.text[:200]}"
+            )
+        try:
+            root = ET.fromstring(resp.text)
+        except Exception as exc:
+            raise RuntimeError(f"S3 multipart 响应无法解析: {exc!r}") from exc
+        for element in root.iter():
+            if element.tag.split("}")[-1] == "UploadId" and element.text:
+                return element.text
+        raise RuntimeError("S3 multipart 未返回 UploadId")
+
+    def upload_part(
+        self, key: str, upload_id: str, part_number: int, body: bytes
+    ) -> str:
+        resp = self._request(
+            "PUT",
+            key=key,
+            query={"partNumber": int(part_number), "uploadId": upload_id},
+            body=body,
+            headers={"content-type": "application/octet-stream"},
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(
+                f"S3 upload_part 失败 {resp.status_code}: {resp.text[:200]}"
+            )
+        return (resp.headers.get("etag") or "").strip('"')
+
+    def complete_multipart_upload(
+        self, key: str, upload_id: str, parts: list[tuple[int, str]]
+    ) -> None:
+        body = ["<CompleteMultipartUpload>"]
+        for number, etag in parts:
+            body.append(
+                f"<Part><PartNumber>{number}</PartNumber><ETag>\"{etag}\"</ETag></Part>"
+            )
+        body.append("</CompleteMultipartUpload>")
+        payload = "".join(body).encode()
+        resp = self._request(
+            "POST",
+            key=key,
+            query={"uploadId": upload_id},
+            body=payload,
+            headers={"content-type": "application/xml"},
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(
+                f"S3 multipart 完成失败 {resp.status_code}: {resp.text[:200]}"
+            )
+
+    def abort_multipart_upload(self, key: str, upload_id: str) -> None:
+        try:
+            self._request(
+                "DELETE", key=key, query={"uploadId": upload_id}
+            )
+        except Exception as exc:
+            print(f"[s3] multipart 中止失败 {key}: {exc!r}")
 
     def get(self, key: str) -> bytes:
         resp = self._request("GET", key=key)

@@ -202,3 +202,10 @@ class ExecLanguageError(ValueError):
 
 class MediaInvalidError(ValueError):
     pass
+
+
+class ProviderCallError(RuntimeError):
+    def __init__(self, detail: str = "") -> None:
+        reason = (detail or "未知原因").strip()[:120]
+        super().__init__(f"模型通道调用失败：{reason}")
+        self.detail = reason

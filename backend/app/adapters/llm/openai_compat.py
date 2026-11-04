@@ -6,6 +6,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from app.ports.llm import LLMProvider
+from app.services.errors import ProviderCallError
 
 
 class OpenAICompatLLM(LLMProvider):
@@ -57,13 +58,21 @@ class OpenAICompatLLM(LLMProvider):
         }
         payload = self._apply_defaults(payload)
         payload.update(kwargs)
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(
-                self._endpoint(), headers=self._headers(), json=payload
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(
+                    self._endpoint(), headers=self._headers(), json=payload
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPError as exc:
+            raise ProviderCallError(_describe(exc)) from exc
+        except (KeyError, IndexError, ValueError) as exc:
+            raise ProviderCallError(f"响应结构异常: {exc!r}") from exc
+        try:
+            return data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ProviderCallError(f"响应缺少正文: {exc!r}") from exc
 
     async def stream_complete(
         self, prompt: str, **kwargs: Any
@@ -74,28 +83,45 @@ class OpenAICompatLLM(LLMProvider):
             "stream": True,
         }
         payload.update(kwargs)
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            async with client.stream(
-                "POST", self._endpoint(), headers=self._headers(), json=payload
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    raw = line[5:].strip()
-                    if raw == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    token = delta.get("content")
-                    if token:
-                        yield token
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST", self._endpoint(), headers=self._headers(), json=payload
+                ) as resp:
+                    if resp.status_code >= 400:
+                        raise ProviderCallError(f"HTTP {resp.status_code}")
+                    async for line in resp.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        raw = line[5:].strip()
+                        if raw == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = chunk.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta") or {}
+                        token = delta.get("content")
+                        if token:
+                            yield token
+        except httpx.HTTPError as exc:
+            raise ProviderCallError(_describe(exc)) from exc
 
     def healthcheck(self) -> bool:
         return bool(self.api_key and self.base_url)
+
+
+def _describe(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        body = ""
+        try:
+            body = (exc.response.text or "").strip()
+        except Exception:
+            body = ""
+        return f"HTTP {exc.response.status_code} {body or exc.response.reason_phrase}"
+    if isinstance(exc, httpx.TimeoutException):
+        return f"请求超时 {exc}"
+    return f"{type(exc).__name__}: {exc}"

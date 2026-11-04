@@ -44,6 +44,7 @@ from app.services.auth import AuthService
 from app.services.conversation import ConversationService
 from app.services.blueprint import BlueprintService
 from app.services.generation import GenerationService
+from app.services.factcheck import FactCheckService
 from app.services.export import ExportService
 from app.services.ingest import IngestService
 from app.services.locks import LockService
@@ -225,9 +226,21 @@ class Container:
                 evidence_char_limit=self.settings.generation.evidence_char_limit,
                 max_evidence=self.settings.generation.max_evidence,
                 default_mode=self.settings.generation.default_mode,
+                min_score=self.settings.vectorstore.min_score,
+                factcheck=self.factcheck(),
             )
 
         return self._get_or_build("generation", build)
+
+    def factcheck(self) -> FactCheckService:
+        def build() -> FactCheckService:
+            return FactCheckService(
+                vectorstore=self.vectorstore(),
+                llm=self.llm(),
+                repository=self.course_repository(),
+            )
+
+        return self._get_or_build("factcheck", build)
 
     def blueprint_repository(self) -> BlueprintRepository:
         def build() -> BlueprintRepository:
@@ -250,6 +263,7 @@ class Container:
                 llm=self.llm(),
                 default_top_k=settings.top_k,
                 default_mode=default_mode,
+                min_score=self.settings.vectorstore.min_score,
             )
 
         return self._get_or_build("blueprint", build)
@@ -427,6 +441,7 @@ class Container:
                 vectorstore=self.vectorstore(),
                 llm=self.llm(),
                 web_search=self.web_search(),
+                min_score=self.settings.vectorstore.min_score,
             )
 
         return self._get_or_build("research", build)

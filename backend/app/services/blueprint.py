@@ -58,6 +58,7 @@ class BlueprintService:
         default_mode: str = "strict",
         max_evidence: int = 6,
         evidence_char_limit: int = 400,
+        min_score: float = 0.15,
     ) -> None:
         self.repository = repository
         self.course_repository = course_repository
@@ -67,6 +68,7 @@ class BlueprintService:
         self.default_mode = GenerationMode.normalize(default_mode).value
         self.max_evidence = max_evidence
         self.evidence_char_limit = evidence_char_limit
+        self.min_score = float(min_score)
 
     async def generate(
         self,
@@ -88,6 +90,7 @@ class BlueprintService:
             top_k=resolved_top_k,
             source_ids=source_ids,
             tenant_id=tenant_id,
+            min_score=self.min_score if resolved_mode is GenerationMode.strict else None,
         )
         citations = citations[: self.max_evidence]
         evidence = [

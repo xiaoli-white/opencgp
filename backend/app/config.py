@@ -122,12 +122,14 @@ class LLMConfig:
 class VectorStoreConfig:
     backend: str = "simple"
     path: str = "data/vectorstore"
+    min_score: float = 0.15
 
     @classmethod
     def from_env(cls) -> "VectorStoreConfig":
         return cls(
             backend=_env("VECTORSTORE_BACKEND", "simple"),
             path=_env("VECTORSTORE_PATH", "data/vectorstore"),
+            min_score=float(_env("SEARCH_MIN_SCORE", "0.15") or 0.15),
         )
 
 

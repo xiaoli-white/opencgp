@@ -50,6 +50,7 @@ class ResearchService:
         max_evidence: int = 16,
         web_limit: int = 3,
         evidence_char_limit: int = MAX_SECTION_CHARS,
+        min_score: float = 0.15,
     ) -> None:
         self.repository = repository
         self.vectorstore = vectorstore
@@ -59,6 +60,7 @@ class ResearchService:
         self.max_evidence = max_evidence
         self.web_limit = web_limit
         self.evidence_char_limit = evidence_char_limit
+        self.min_score = float(min_score)
 
     async def run(
         self,
@@ -163,6 +165,7 @@ class ResearchService:
                 top_k=top_k,
                 source_ids=source_ids,
                 tenant_id=tenant_id,
+                min_score=self.min_score,
             )
             for citation in found:
                 key = f"kb:{citation.source_id}:{citation.chunk_index}"
