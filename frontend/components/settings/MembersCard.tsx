@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { Loader2, Trash2, UserPlus, Users } from "lucide-react";
 import { api, type Member, type RoleRecord } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
 
 export default function MembersCard({
   onNotice,
@@ -12,6 +13,7 @@ export default function MembersCard({
   onError: (message: string) => void;
 }) {
   const { tenant, can, refresh } = useSession();
+  const { t } = useI18n();
   const canManage = can("manage_members");
 
   const [members, setMembers] = useState<Member[]>([]);
@@ -37,7 +39,7 @@ export default function MembersCard({
         setMembers(data.members ?? []);
       }
     } catch (err) {
-      onError(err instanceof Error ? err.message : "成员加载失败");
+      onError(err instanceof Error ? err.message : t("members.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -63,10 +65,10 @@ export default function MembersCard({
         role: newRole as Member["role"],
       });
       setEmail("");
-      onNotice("成员已添加");
+      onNotice(t("members.added"));
       await load();
     } catch (err) {
-      onError(err instanceof Error ? err.message : "添加失败");
+      onError(err instanceof Error ? err.message : t("members.addFailed"));
     } finally {
       setBusy(false);
     }
@@ -82,10 +84,10 @@ export default function MembersCard({
           item.user_id === userId ? { ...item, role: next as Member["role"] } : item,
         ),
       );
-      onNotice("角色已更新");
+      onNotice(t("members.updated"));
       await refresh();
     } catch (err) {
-      onError(err instanceof Error ? err.message : "更新失败");
+      onError(err instanceof Error ? err.message : t("members.updateFailed"));
     }
   };
 
@@ -95,9 +97,9 @@ export default function MembersCard({
     try {
       await api.removeMember(tenant, userId);
       setMembers((prev) => prev.filter((item) => item.user_id !== userId));
-      onNotice("成员已移除");
+      onNotice(t("members.removed"));
     } catch (err) {
-      onError(err instanceof Error ? err.message : "移除失败");
+      onError(err instanceof Error ? err.message : t("members.removeFailed"));
     }
   };
 
@@ -110,7 +112,7 @@ export default function MembersCard({
       <div className="flex flex-wrap items-center gap-2">
         <Users size={15} className="text-indigo-500 dark:text-indigo-300" />
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-          空间成员
+          {t("members.title")}
         </h2>
         <span className="chip-muted">{tenant || "default"}</span>
       </div>
@@ -119,7 +121,7 @@ export default function MembersCard({
         <input
           value={email}
           onChange={(event) => setEmail(event.target.value)}
-          placeholder="成员邮箱"
+          placeholder={t("members.emailLabel")}
           disabled={!canManage}
           className="input w-full sm:max-w-[240px]"
         />
@@ -139,19 +141,19 @@ export default function MembersCard({
           type="button"
           onClick={() => void addMember()}
           disabled={!canManage || busy || !email.trim()}
-          title={canManage ? "" : "当前角色无权管理成员"}
+          title={canManage ? "" : t("members.noManage")}
           className="btn btn-primary"
         >
           {busy ? <Loader2 size={13} className="animate-spin" /> : <UserPlus size={13} />}
-          添加成员
+          {t("members.add")}
         </button>
       </div>
 
       <div className="mt-4 space-y-1.5">
         {loading ? (
-          <p className="text-[11px] text-slate-400">加载中…</p>
+          <p className="text-[11px] text-slate-400">{t("members.loading")}</p>
         ) : members.length === 0 ? (
-          <p className="text-[11px] text-slate-400">暂无成员记录。</p>
+          <p className="text-[11px] text-slate-400">{t("members.empty")}</p>
         ) : (
           members.map((member) => (
             <div
@@ -185,7 +187,7 @@ export default function MembersCard({
                 type="button"
                 onClick={() => void removeMember(member.user_id)}
                 disabled={!canManage}
-                title={canManage ? "移除成员" : "当前角色无权管理成员"}
+                title={canManage ? t("members.remove") : t("members.noManage")}
                 className="btn-quiet px-1.5"
               >
                 <Trash2 size={13} />

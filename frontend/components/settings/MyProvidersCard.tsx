@@ -19,6 +19,7 @@ import {
 import clsx from "clsx";
 import { api, type ServerProviderPayload, type UserProvider } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
 import SharePanel, { type ShareMember } from "@/components/sharing/SharePanel";
 
 type Props = {
@@ -79,6 +80,7 @@ function notifyChanged() {
 }
 
 export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) {
+  const { t } = useI18n();
   const [items, setItems] = useState<UserProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<FormState | null>(null);
@@ -112,7 +114,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
             user_email: member.user_email,
             user_display_name: member.user_display_name,
             avatar_url: member.avatar_url,
-            note: "空间成员",
+            note: t("myProviders.memberNote"),
           })),
         );
         const next: Record<string, string | null> = {};
@@ -122,7 +124,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
         }
         setShareLevels(next);
       } catch (err) {
-        setShareError(err instanceof Error ? err.message : "共享信息加载失败");
+        setShareError(err instanceof Error ? err.message : t("myProviders.shareLoadFailed"));
       } finally {
         setShareLoading(false);
       }
@@ -137,11 +139,11 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
       setShareError("");
       try {
         await api.saveProviderShares(shareItem.id, entries);
-        onNotice("通道共享已保存");
+        onNotice(t("myProviders.shareSaved"));
         setShareItem(null);
         notifyChanged();
       } catch (err) {
-        setShareError(err instanceof Error ? err.message : "保存失败");
+        setShareError(err instanceof Error ? err.message : t("myProviders.saveFailed"));
       } finally {
         setShareSaving(false);
       }
@@ -155,7 +157,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
       const data = await api.listMyProviders();
       setItems(data.providers ?? []);
     } catch (err) {
-      onError(err instanceof Error ? err.message : "我的通道加载失败");
+      onError(err instanceof Error ? err.message : t("myProviders.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -171,7 +173,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
   const save = useCallback(async () => {
     if (!form) return;
     if (!form.name.trim()) {
-      setRowError({ id: form.id || "new", text: "通道名称不能为空" });
+      setRowError({ id: form.id || "new", text: t("myProviders.nameRequired") });
       return;
     }
     setBusy(true);
@@ -188,10 +190,10 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
       if (form.api_key.trim()) payload.api_key = form.api_key.trim();
       if (form.id) {
         await api.updateMyProvider(form.id, payload);
-        onNotice("我的通道已更新");
+        onNotice(t("myProviders.updated"));
       } else {
         await api.createMyProvider(payload);
-        onNotice("我的通道已创建");
+        onNotice(t("myProviders.created"));
       }
       setForm(null);
       setShowKey(false);
@@ -200,7 +202,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
     } catch (err) {
       setRowError({
         id: form.id || "new",
-        text: err instanceof Error ? err.message : "保存失败",
+        text: err instanceof Error ? err.message : t("myProviders.saveFailed"),
       });
     } finally {
       setBusy(false);
@@ -213,12 +215,12 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
       setRowError(null);
       try {
         await api.deleteMyProvider(id);
-        onNotice("我的通道已删除");
+        onNotice(t("myProviders.deleted"));
         if (form?.id === id) setForm(null);
         await load();
         notifyChanged();
       } catch (err) {
-        setRowError({ id, text: err instanceof Error ? err.message : "删除失败" });
+        setRowError({ id, text: err instanceof Error ? err.message : t("myProviders.deleteFailed") });
       } finally {
         setRowBusy("");
       }
@@ -240,8 +242,11 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
         [item.id]: {
           ok: result.ok,
           text: result.ok
-            ? `连接正常 · ${result.latency_ms}ms · ${result.model || item.models?.[0] || "默认模型"}`
-            : result.detail || "连接失败",
+            ? t("providers.testOk", {
+          latency: result.latency_ms,
+          model: result.model || item.models?.[0] || t("providers.defaultModel"),
+        })
+            : result.detail || t("providers.testFail"),
         },
       }));
     } catch (err) {
@@ -249,7 +254,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
         ...prev,
         [item.id]: {
           ok: false,
-          text: err instanceof Error ? err.message : "测试失败",
+          text: err instanceof Error ? err.message : t("myProviders.testFailed"),
         },
       }));
     } finally {
@@ -267,9 +272,9 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
           prev.map((row) => (row.id === item.id ? { ...row, enabled: !row.enabled } : row)),
         );
         notifyChanged();
-        onNotice(item.enabled ? "通道已停用" : "通道已启用");
+        onNotice(item.enabled ? t("myProviders.disabledNotice") : t("myProviders.enabledNotice"));
       } catch (err) {
-        setRowError({ id: item.id, text: err instanceof Error ? err.message : "更新失败" });
+        setRowError({ id: item.id, text: err instanceof Error ? err.message : t("myProviders.updateFailed") });
       } finally {
         setRowBusy("");
       }
@@ -288,9 +293,9 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
       <div className="flex flex-wrap items-center gap-2">
         <KeyRound size={15} className="text-indigo-500 dark:text-indigo-300" />
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-          我的模型通道
+          {t("myProviders.title")}
         </h2>
-        <span className="chip-muted">{items.length} 个</span>
+        <span className="chip-muted">{t("common.count", { count: items.length })}</span>
         <span className="flex-1" />
         <button
           type="button"
@@ -300,21 +305,21 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
             setForm({ ...EMPTY_FORM });
           }}
           disabled={!canWrite}
-          title={canWrite ? "" : "当前角色只读"}
+          title={canWrite ? "" : t("common.readOnlyRole")}
           className="btn btn-primary px-3 py-1.5 text-[11px]"
         >
           <Plus size={12} />
-          新增通道
+          {t("myProviders.add")}
         </button>
       </div>
 
       <p className="mt-1.5 text-[10px] text-slate-400">
-        个人通道仅你自己可见，可与服务器通道一起在「我的模型」里切换；未指定时使用服务器默认。
+        {t("myProviders.hint")}
       </p>
 
       {!canWrite ? (
         <p className="mt-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[10.5px] text-amber-700 dark:text-amber-300">
-          当前角色只读，我的通道仅可查看。
+          {t("myProviders.readOnlyHint")}
         </p>
       ) : null}
 
@@ -322,14 +327,14 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
         <div className="mt-3 rounded-2xl border border-indigo-400/25 bg-indigo-500/[0.04] p-3">
           <div className="flex items-center gap-2">
             <h3 className="text-[11.5px] font-semibold text-slate-800 dark:text-slate-100">
-              {form.id ? "编辑我的通道" : "新增我的通道"}
+              {form.id ? t("myProviders.editTitle") : t("myProviders.addTitle")}
             </h3>
             <span className="flex-1" />
             <button
               type="button"
               onClick={() => setForm(null)}
               className="text-slate-400 transition hover:text-slate-600"
-              aria-label="取消"
+              aria-label={t("common.cancel")}
             >
               <X size={13} />
             </button>
@@ -337,18 +342,18 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             <label className="block">
               <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
-                名称
+                {t("myProviders.name")}
               </span>
               <input
                 value={form.name}
                 onChange={(event) => patchForm({ name: event.target.value })}
-                placeholder="例如 本地 Ollama"
+                placeholder={t("myProviders.namePlaceholder")}
                 className="input"
               />
             </label>
             <label className="block">
               <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
-                类型 kind
+                {t("myProviders.kind")}
               </span>
               <select
                 value={form.kind}
@@ -375,7 +380,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
             </label>
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
-                API Key（留空沿用旧值）
+                {t("myProviders.apiKey")}
               </span>
               <span className="relative block">
                 <input
@@ -384,7 +389,9 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
                   onChange={(event) => patchForm({ api_key: event.target.value })}
                   placeholder={
                     form.id && items.find((row) => row.id === form.id)?.has_key
-                      ? `${items.find((row) => row.id === form.id)?.api_key_masked || "已配置"}（留空沿用）`
+                      ? t("myProviders.keyMasked", {
+          masked: items.find((row) => row.id === form.id)?.api_key_masked || t("myProviders.keyConfigured"),
+        })
                       : "sk-..."
                   }
                   autoComplete="off"
@@ -394,7 +401,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
                   type="button"
                   onClick={() => setShowKey((prev) => !prev)}
                   className="absolute right-1 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-lg text-slate-400 transition hover:text-indigo-500"
-                  aria-label={showKey ? "隐藏密钥" : "显示密钥"}
+                  aria-label={showKey ? t("myProviders.hideKey") : t("myProviders.showKey")}
                 >
                   {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
                 </button>
@@ -402,7 +409,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
             </label>
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
-                模型列表（逗号或换行分隔）
+                {t("myProviders.models")}
               </span>
               <textarea
                 value={form.models}
@@ -421,7 +428,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
                 onChange={(event) => patchForm({ is_default: event.target.checked })}
                 className="h-3.5 w-3.5 accent-indigo-500"
               />
-              设为默认通道
+              {t("myProviders.setDefault")}
             </label>
             <label className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300">
               <input
@@ -430,7 +437,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
                 onChange={(event) => patchForm({ enabled: event.target.checked })}
                 className="h-3.5 w-3.5 accent-indigo-500"
               />
-              启用
+              {t("myProviders.enabled")}
             </label>
             <span className="flex-1" />
             <button
@@ -440,7 +447,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
               className="btn btn-primary px-3 py-1.5 text-[11px]"
             >
               {busy ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-              保存
+              {t("common.save")}
             </button>
           </div>
           {rowError && rowError.id === (form.id || "new") ? (
@@ -454,10 +461,10 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
 
       <div className="mt-3 space-y-1.5">
         {loading ? (
-          <p className="text-[11px] text-slate-400">加载中…</p>
+          <p className="text-[11px] text-slate-400">{t("common.loading")}</p>
         ) : items.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-white/60 bg-white/40 px-3 py-3 text-[11px] text-slate-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-400">
-            你还没有个人通道，可新增；也可直接使用服务器通道。
+            {t("myProviders.empty")}
           </p>
         ) : (
           items.map((item) => {
@@ -479,16 +486,20 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
                   {item.is_default ? (
                     <span className="flex items-center gap-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-1.5 py-0.5 text-[9.5px] font-medium text-white">
                       <Star size={8} />
-                      默认
+                      {t("common.default")}
                     </span>
                   ) : null}
                   {!item.enabled ? (
                     <span className="rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[9.5px] text-amber-700 dark:text-amber-300">
-                      已停用
+                      {t("common.disabledTag")}
                     </span>
                   ) : null}
                   <span className="text-[10px] text-slate-400">
-                    {item.has_key ? `密钥 ${item.api_key_masked || "已配置"}` : "无密钥"}
+                    {item.has_key
+                        ? t("myProviders.keyMaskedShort", {
+                            masked: item.api_key_masked || t("myProviders.keyConfigured"),
+                          })
+                        : t("myProviders.noKey")}
                   </span>
                   <span className="flex-1" />
                   <button
@@ -499,20 +510,20 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
                       setForm(toForm(item));
                     }}
                     disabled={!canWrite}
-                    title={canWrite ? "编辑通道" : "当前角色只读"}
+                    title={canWrite ? t("myProviders.edit") : t("common.readOnlyRole")}
                     className="btn-quiet px-2 py-1 text-[10.5px]"
                   >
                     <Pencil size={11} />
-                    编辑
+                    {t("common.edit")}
                   </button>
                   <button
                     type="button"
                     onClick={() => void openShare(item)}
                     className="btn-quiet px-2 py-1 text-[10.5px]"
-                    title="共享给空间成员"
+                    title={t("myProviders.shareTitle")}
                   >
                     <Share2 size={11} />
-                    共享
+                    {t("myProviders.share")}
                   </button>
                   <button
                     type="button"
@@ -525,17 +536,17 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
                     ) : (
                       <Zap size={11} />
                     )}
-                    测试
+                    {t("common.test")}
                   </button>
                   <button
                     type="button"
                     onClick={() => void remove(item.id)}
                     disabled={!canWrite || rowBusy === item.id}
-                    title={canWrite ? "删除通道" : "当前角色只读"}
+                    title={canWrite ? t("myProviders.deleteTitle") : t("common.readOnlyRole")}
                     className="btn-quiet px-2 py-1 text-[10.5px] text-rose-500"
                   >
                     <Trash2 size={11} />
-                    删除
+                    {t("common.delete")}
                   </button>
                   <label className="flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400">
                     <input
@@ -545,7 +556,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
                       disabled={!canWrite}
                       className="h-3.5 w-3.5 accent-indigo-500"
                     />
-                    启用
+                    {t("myProviders.enabled")}
                   </label>
                 </div>
                 {item.base_url ? (
@@ -555,7 +566,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
                 ) : null}
                 <div className="mt-1 flex flex-wrap items-center gap-1">
                   {shown.length === 0 ? (
-                    <span className="text-[10px] text-slate-400">未登记模型，使用自定义输入</span>
+                    <span className="text-[10px] text-slate-400">{t("myProviders.disabledHint")}</span>
                   ) : (
                     shown.map((model) => (
                       <span
@@ -599,14 +610,14 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
 
       <SharePanel
         open={Boolean(shareItem)}
-        title="共享我的通道"
+        title={t("myProviders.shareDialogTitle")}
         subtitle={shareItem?.name}
-        note="被共享的成员可在「我的模型」里看到该通道；「可管理」还会允许其修改通道配置与共享。"
+        note={t("myProviders.shareDialogNote")}
         members={shareMembers}
         value={shareLevels}
         options={[
-          { value: "use", label: "可使用", desc: "可用该通道与模型" },
-          { value: "manage", label: "可管理", desc: "还可修改通道配置" },
+          { value: "use", label: t("myProviders.shareUse"), desc: t("myProviders.shareUseDesc") },
+          { value: "manage", label: t("myProviders.shareManage"), desc: t("myProviders.shareManageDesc") },
         ]}
         loading={shareLoading}
         saving={shareSaving}

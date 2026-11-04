@@ -5,11 +5,14 @@ import { AlertCircle, ArrowRight, Loader2, LogIn, Sparkles, UserPlus } from "luc
 import clsx from "clsx";
 import { api, tenantId, type AuthMode } from "@/lib/api";
 import { setTenantId, setToken } from "@/lib/session";
+import { useI18n } from "@/i18n/I18nProvider";
+import LocaleToggle from "@/components/i18n/LocaleToggle";
 
 type Tab = "login" | "register";
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const [params] = useSearchParams();
   const redirect = params.get("redirect") || "/";
 
@@ -45,15 +48,15 @@ export default function LoginPage() {
   const submit = useCallback(async () => {
     setError("");
     if (!email.trim() || !password) {
-      setError("请填写邮箱与密码");
+      setError(t("auth.emailPasswordRequired"));
       return;
     }
     if (tab === "register" && password.length < 8) {
-      setError("密码至少 8 位");
+      setError(t("auth.passwordTooShort"));
       return;
     }
     if (tab === "register" && !displayName.trim()) {
-      setError("请填写显示名");
+      setError(t("auth.displayNameRequired"));
       return;
     }
     setBusy(true);
@@ -72,14 +75,17 @@ export default function LoginPage() {
       window.dispatchEvent(new Event("course-studio:refresh"));
       go();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "操作失败，请重试");
+      setError(err instanceof Error ? err.message : t("auth.genericError"));
     } finally {
       setBusy(false);
     }
-  }, [tab, email, password, displayName, go]);
+  }, [tab, email, password, displayName, go, t]);
 
   return (
     <div className="mx-auto flex min-h-[calc(100vh-8rem)] w-full max-w-md flex-col justify-center px-1 py-6">
+      <div className="mb-3 flex justify-end">
+        <LocaleToggle />
+      </div>
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -92,12 +98,10 @@ export default function LoginPage() {
           </span>
           <div className="min-w-0">
             <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-white">
-              进入 OpenCGP
+              {t("auth.title")}
             </h1>
             <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-              {authMode === "disabled"
-                ? "当前为单用户本地模式（AUTH_MODE=disabled）"
-                : "当前为多用户模式，需要登录后访问"}
+              {authMode === "disabled" ? t("auth.subtitleDisabled") : t("auth.subtitleRequired")}
             </p>
           </div>
         </div>
@@ -105,8 +109,8 @@ export default function LoginPage() {
         <div className="mt-5 inline-flex items-center gap-0.5 rounded-full border border-slate-200/70 bg-white/50 p-0.5 backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.05]">
           {(
             [
-              { value: "login" as Tab, label: "登录", icon: LogIn },
-              { value: "register" as Tab, label: "注册", icon: UserPlus },
+              { value: "login" as Tab, label: t("auth.login"), icon: LogIn },
+              { value: "register" as Tab, label: t("auth.register"), icon: UserPlus },
             ]
           ).map((item) => {
             const active = tab === item.value;
@@ -142,7 +146,7 @@ export default function LoginPage() {
         >
           <label className="block">
             <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              邮箱
+              {t("auth.email")}
             </span>
             <input
               type="email"
@@ -156,14 +160,14 @@ export default function LoginPage() {
 
           <label className="block">
             <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              密码
+              {t("auth.password")}
             </span>
             <input
               type="password"
               autoComplete={tab === "login" ? "current-password" : "new-password"}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder={tab === "register" ? "至少 8 位" : "••••••••"}
+              placeholder={tab === "register" ? t("auth.passwordHint") : "••••••••"}
               className="input"
             />
           </label>
@@ -177,13 +181,13 @@ export default function LoginPage() {
                 className="block overflow-hidden"
               >
                 <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  显示名
+                  {t("auth.displayName")}
                 </span>
                 <input
                   type="text"
                   value={displayName}
                   onChange={(event) => setDisplayName(event.target.value)}
-                  placeholder="课程编辑者"
+                  placeholder={t("auth.displayNamePlaceholder")}
                   className="input"
                 />
               </motion.label>
@@ -209,21 +213,21 @@ export default function LoginPage() {
             ) : (
               <UserPlus size={14} />
             )}
-            {tab === "login" ? "登录" : "注册并进入"}
+            {tab === "login" ? t("auth.login") : t("auth.registerAndEnter")}
           </button>
         </form>
 
         {authMode === "disabled" ? (
           <div className="mt-4 rounded-2xl border border-indigo-400/25 bg-indigo-500/8 px-3.5 py-3">
             <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
-              当前为单用户本地模式，可直接进入工作台。
+              {t("auth.disabledHint")}
             </p>
             <button
               type="button"
               onClick={go}
               className="btn btn-ghost mt-2.5 w-full"
             >
-              直接进入
+              {t("auth.directEnter")}
               <ArrowRight size={13} />
             </button>
           </div>

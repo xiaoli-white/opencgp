@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Route, Routes, useLocation } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { SessionProvider } from "@/components/auth/SessionProvider";
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 const HomePage = lazy(() => import("./pages/HomePage"));
 const CoursePage = lazy(() => import("./pages/CoursePage"));
@@ -30,7 +31,7 @@ function GlassSkeleton() {
   );
 }
 
-export default function App() {
+function AppRoutes() {
   const location = useLocation();
 
   if (location.pathname.startsWith("/read/")) {
@@ -66,5 +67,13 @@ export default function App() {
         </Suspense>
       </AppShell>
     </SessionProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <I18nProvider>
+      <AppRoutes />
+    </I18nProvider>
   );
 }

@@ -4,24 +4,25 @@ import { KeyRound, Loader2, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import clsx from "clsx";
 import { api, type RoleRecord, type RoleScope } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
 import type { RoleAction } from "@/lib/session";
 
-const ACTIONS: { value: RoleAction; label: string }[] = [
-  { value: "read", label: "读取" },
-  { value: "write", label: "写作" },
-  { value: "review", label: "审核" },
-  { value: "manage_members", label: "成员管理" },
-  { value: "manage_quota", label: "配额管理" },
-  { value: "manage_server", label: "服务器管理" },
+const ACTIONS: { value: RoleAction; labelKey: string }[] = [
+  { value: "read", labelKey: "roles.actionRead" },
+  { value: "write", labelKey: "roles.actionWrite" },
+  { value: "review", labelKey: "roles.actionReview" },
+  { value: "manage_members", labelKey: "roles.actionMembers" },
+  { value: "manage_quota", labelKey: "roles.actionQuota" },
+  { value: "manage_server", labelKey: "roles.actionServer" },
 ];
 
-const ACTION_LABEL: Record<string, string> = {
-  read: "读取",
-  write: "写作",
-  review: "审核",
-  manage_members: "成员管理",
-  manage_quota: "配额管理",
-  manage_server: "服务器管理",
+const ACTION_LABEL_KEY: Record<string, string> = {
+  read: "roles.actionRead",
+  write: "roles.actionWrite",
+  review: "roles.actionReview",
+  manage_members: "roles.actionMembers",
+  manage_quota: "roles.actionQuota",
+  manage_server: "roles.actionServer",
 };
 
 type RoleForm = {
@@ -50,6 +51,7 @@ export default function RolesCard({
   onRolesChange?: (roles: RoleRecord[]) => void;
 }) {
   const { can, refresh } = useSession();
+  const { t } = useI18n();
   const canManage = can("manage_members");
 
   const [roles, setRoles] = useState<RoleRecord[]>([]);
@@ -65,11 +67,11 @@ export default function RolesCard({
       setRoles(next);
       onRolesChange?.(next);
     } catch (err) {
-      onError(err instanceof Error ? err.message : "角色加载失败");
+      onError(err instanceof Error ? err.message : t("roles.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [onError, onRolesChange]);
+  }, [onError, onRolesChange, t]);
 
   useEffect(() => {
     void load();
@@ -87,20 +89,20 @@ export default function RolesCard({
           scope: form.scope,
           ...(form.builtin ? {} : { actions: form.actions }),
         });
-        onNotice("角色已更新");
+        onNotice(t("roles.updated"));
       } else {
         await api.createRole({
           name: form.name.trim(),
           actions: form.actions,
           scope: form.scope,
         });
-        onNotice("角色已创建");
+        onNotice(t("roles.created"));
       }
       setForm(null);
       await load();
       await refresh();
     } catch (err) {
-      onError(err instanceof Error ? err.message : "保存失败");
+      onError(err instanceof Error ? err.message : t("roles.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -111,10 +113,10 @@ export default function RolesCard({
     onNotice("");
     try {
       await api.deleteRole(roleId);
-      onNotice("角色已删除");
+      onNotice(t("roles.deleted"));
       await load();
     } catch (err) {
-      onError(err instanceof Error ? err.message : "删除失败");
+      onError(err instanceof Error ? err.message : t("roles.deleteFailed"));
     }
   };
 
@@ -127,25 +129,25 @@ export default function RolesCard({
       <div className="flex flex-wrap items-center gap-2">
         <KeyRound size={15} className="text-indigo-500 dark:text-indigo-300" />
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-          角色
+          {t("roles.title")}
         </h2>
-        <span className="chip-muted">{roles.length} 个</span>
+        <span className="chip-muted">{t("common.count", { count: roles.length })}</span>
         <span className="flex-1" />
         <button
           type="button"
           onClick={() => setForm({ ...EMPTY_FORM })}
           disabled={!canManage}
-          title={canManage ? "" : "当前角色无权管理成员"}
+          title={canManage ? "" : t("roles.noManage")}
           className="btn btn-primary px-3 py-1.5 text-[11px]"
         >
           <Plus size={12} />
-          新建角色
+          {t("roles.new")}
         </button>
       </div>
 
       <div className="mt-3 space-y-1.5">
         {loading ? (
-          <p className="text-[11px] text-slate-400">加载中…</p>
+          <p className="text-[11px] text-slate-400">{t("roles.loading")}</p>
         ) : (
           roles.map((item) => (
             <div
@@ -157,7 +159,7 @@ export default function RolesCard({
                   {item.name}
                 </span>
                 <span className="chip-muted">{item.key}</span>
-                {item.builtin ? <span className="chip">内置</span> : null}
+                {item.builtin ? <span className="chip">{t("roles.builtin")}</span> : null}
                 <span
                   className={clsx(
                     "rounded-full px-2 py-0.5 text-[10px] font-medium",
@@ -166,9 +168,11 @@ export default function RolesCard({
                       : "bg-indigo-500/12 text-indigo-600 dark:text-indigo-300",
                   )}
                 >
-                  {item.scope === "assigned" ? "指定课程" : "全部课程"}
+                  {item.scope === "assigned" ? t("roles.scopeAssigned") : t("roles.scopeAll")}
                 </span>
-                <span className="text-[10px] text-slate-400">{item.member_count} 人</span>
+                <span className="text-[10px] text-slate-400">
+                  {item.member_count} {t("roles.memberUnit")}
+                </span>
                 <span className="flex-1" />
                 <button
                   type="button"
@@ -182,7 +186,7 @@ export default function RolesCard({
                     })
                   }
                   disabled={!canManage}
-                  title={canManage ? "编辑角色" : "当前角色无权管理成员"}
+                  title={canManage ? t("roles.edit") : t("roles.noManage")}
                   className="btn-quiet px-1.5"
                 >
                   <Pencil size={12} />
@@ -191,7 +195,7 @@ export default function RolesCard({
                   type="button"
                   onClick={() => void deleteRole(item.id)}
                   disabled={!canManage || Boolean(item.builtin)}
-                  title={item.builtin ? "内置角色不可删除" : "删除角色"}
+                  title={item.builtin ? t("roles.builtinLocked") : t("roles.delete")}
                   className="btn-quiet px-1.5"
                 >
                   <Trash2 size={12} />
@@ -199,14 +203,14 @@ export default function RolesCard({
               </div>
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {item.actions.length === 0 ? (
-                  <span className="text-[10px] text-slate-400">无权限点</span>
+                  <span className="text-[10px] text-slate-400">{t("roles.noActions")}</span>
                 ) : (
                   item.actions.map((action) => (
                     <span
                       key={action}
                       className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] text-slate-600 ring-1 ring-slate-200/70 dark:bg-white/[0.06] dark:text-slate-300 dark:ring-white/10"
                     >
-                      {ACTION_LABEL[action] ?? action}
+                      {ACTION_LABEL_KEY[action] ? t(ACTION_LABEL_KEY[action]) : action}
                     </span>
                   ))
                 )}
@@ -220,14 +224,14 @@ export default function RolesCard({
         <div className="mt-3 rounded-2xl border border-white/60 bg-white/60 p-3.5 dark:border-white/10 dark:bg-white/[0.05]">
           <div className="flex items-center gap-2">
             <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">
-              {form.id ? "编辑角色" : "新建角色"}
+              {form.id ? t("roles.editTitle") : t("roles.addTitle")}
             </span>
             <span className="flex-1" />
             <button
               type="button"
               onClick={() => setForm(null)}
               className="btn-quiet px-1.5"
-              aria-label="取消"
+              aria-label={t("common.cancel")}
             >
               <X size={12} />
             </button>
@@ -235,21 +239,22 @@ export default function RolesCard({
           <div className="mt-2.5 space-y-2.5">
             <label className="block">
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                角色名称
+                {t("roles.name")}
               </span>
               <input
                 value={form.name}
                 onChange={(event) =>
                   setForm((prev) => (prev ? { ...prev, name: event.target.value } : prev))
                 }
-                placeholder="如：评审员"
+                placeholder={t("roles.namePlaceholder")}
                 className="input"
               />
             </label>
 
             <div>
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                权限点{form.builtin ? "（内置角色不可修改）" : ""}
+                {t("roles.actionsLabel")}
+                {form.builtin ? t("roles.builtinSuffix") : ""}
               </span>
               <div className="flex flex-wrap gap-1.5">
                 {ACTIONS.map((action) => {
@@ -276,7 +281,7 @@ export default function RolesCard({
                         form.builtin && "opacity-60",
                       )}
                     >
-                      {action.label}
+                      {t(action.labelKey)}
                     </button>
                   );
                 })}
@@ -285,12 +290,12 @@ export default function RolesCard({
 
             <div>
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                可见范围
+                {t("roles.scopeLabel")}
               </span>
               <div className="flex flex-wrap gap-1.5">
                 {[
-                  { value: "all" as RoleScope, label: "全部课程" },
-                  { value: "assigned" as RoleScope, label: "仅授权课程" },
+                  { value: "all" as RoleScope, label: t("roles.scopeAll") },
+                  { value: "assigned" as RoleScope, label: t("roles.scopeAssignedOnly") },
                 ].map((option) => (
                   <button
                     key={option.value}
@@ -318,7 +323,7 @@ export default function RolesCard({
               className="btn btn-primary"
             >
               {busy ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-              保存角色
+              {t("roles.save")}
             </button>
           </div>
         </div>

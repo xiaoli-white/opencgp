@@ -6,7 +6,10 @@ const rootDir = new URL("./", import.meta.url).pathname;
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: [{ find: /^@\//, replacement: rootDir }],
+    alias: [
+      { find: /^@\/i18n\//, replacement: `${rootDir}src/i18n/` },
+      { find: /^@\//, replacement: rootDir },
+    ],
   },
   server: {
     host: "127.0.0.1",

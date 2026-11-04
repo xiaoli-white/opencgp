@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { AlertCircle, Loader2, RefreshCcw, TrendingUp } from "lucide-react";
 import { api, type QuotaHistory } from "@/lib/api";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type Point = {
   date: string;
@@ -10,6 +11,7 @@ type Point = {
 };
 
 export default function QuotaTrendCard({ days = 30 }: { days?: number }) {
+  const { t } = useI18n();
   const [data, setData] = useState<QuotaHistory | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -21,11 +23,11 @@ export default function QuotaTrendCard({ days = 30 }: { days?: number }) {
     try {
       setData(await api.getQuotaHistory(days));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "用量趋势加载失败");
+      setError(err instanceof Error ? err.message : t("quotas.trendLoadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [days]);
+  }, [days, t]);
 
   useEffect(() => {
     void load();
@@ -67,37 +69,41 @@ export default function QuotaTrendCard({ days = 30 }: { days?: number }) {
       <div className="flex flex-wrap items-center gap-2">
         <TrendingUp size={15} className="text-indigo-500 dark:text-indigo-300" />
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-          用量趋势
+          {t("quotas.trendTitle")}
         </h2>
-        <span className="chip-muted">最近 {days} 天</span>
+        <span className="chip-muted">{t("quotas.trendRecent", { days })}</span>
         <span className="flex-1" />
         <button
           type="button"
           onClick={() => void load()}
           disabled={loading}
           className="btn-quiet px-2 py-1 text-[10.5px]"
-          title="刷新"
+          title={t("common.refresh")}
         >
           {loading ? (
             <Loader2 size={11} className="animate-spin" />
           ) : (
             <RefreshCcw size={11} />
           )}
-          刷新
+          {t("common.refresh")}
         </button>
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px]">
         <span className="rounded-full bg-indigo-500/12 px-2 py-0.5 font-medium text-indigo-700 dark:bg-indigo-400/15 dark:text-indigo-300">
-          近 {days} 天生成 {totals.generations}
+          {t("quotas.trendGenerated", { days, count: totals.generations })}
         </span>
         <span className="rounded-full bg-violet-500/12 px-2 py-0.5 font-medium text-violet-700 dark:bg-violet-400/15 dark:text-violet-300">
-          上传 {totals.uploads}
+          {t("quotas.trendUploads", { count: totals.uploads })}
         </span>
         <span className="text-slate-400 dark:text-slate-500">
           {active
-            ? `${active.date} · 生成 ${active.generations} · 上传 ${active.uploads}`
-            : "悬停柱状图查看每日明细"}
+            ? t("quotas.trendDay", {
+                date: active.date,
+                gen: active.generations,
+                up: active.uploads,
+              })
+            : t("quotas.trendHover")}
         </span>
       </div>
 
@@ -112,7 +118,7 @@ export default function QuotaTrendCard({ days = 30 }: { days?: number }) {
         <div className="mt-3 h-32 animate-pulse rounded-2xl bg-slate-200/50 dark:bg-white/5" />
       ) : points.length === 0 ? (
         <p className="mt-3 rounded-2xl border border-dashed border-white/60 bg-white/40 px-3 py-6 text-center text-[11px] text-slate-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-400">
-          暂无用量
+          {t("quotas.trendEmpty")}
         </p>
       ) : (
         <div className="mt-3">
@@ -126,7 +132,11 @@ export default function QuotaTrendCard({ days = 30 }: { days?: number }) {
                   className="group relative flex h-full flex-1 cursor-default flex-col justify-end"
                   onMouseEnter={() => setHover(index)}
                   onMouseLeave={() => setHover(null)}
-                  title={`${item.date} · 生成 ${item.generations} · 上传 ${item.uploads}`}
+                  title={t("quotas.trendDay", {
+                    date: item.date,
+                    gen: item.generations,
+                    up: item.uploads,
+                  })}
                 >
                   <div
                     className={
@@ -148,7 +158,7 @@ export default function QuotaTrendCard({ days = 30 }: { days?: number }) {
       )}
 
       <p className="mt-2 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
-        数据来自租户用量记录，包含生成与上传次数；存储用量见上方配额卡。
+        {t("quotas.trendFooter")}
       </p>
     </motion.section>
   );

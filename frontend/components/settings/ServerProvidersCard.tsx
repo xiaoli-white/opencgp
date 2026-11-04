@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { api, type ServerProvider, type ServerProviderPayload } from "@/lib/api";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type Props = {
   canManage: boolean;
@@ -70,6 +71,7 @@ function toForm(item: ServerProvider): FormState {
 }
 
 export default function ServerProvidersCard({ canManage, onNotice, onError }: Props) {
+  const { t } = useI18n();
   const [items, setItems] = useState<ServerProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<FormState | null>(null);
@@ -86,7 +88,7 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
       const data = await api.listAdminProviders();
       setItems(data.providers ?? []);
     } catch (err) {
-      onError(err instanceof Error ? err.message : "服务器模型通道加载失败");
+      onError(err instanceof Error ? err.message : t("serverProviders.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -102,7 +104,7 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
   const save = useCallback(async () => {
     if (!form) return;
     if (!form.name.trim()) {
-      setRowError({ id: form.id || "new", text: "通道名称不能为空" });
+      setRowError({ id: form.id || "new", text: t("serverProviders.nameRequired") });
       return;
     }
     setBusy(true);
@@ -119,17 +121,17 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
       if (form.api_key.trim()) payload.api_key = form.api_key.trim();
       if (form.id) {
         await api.updateAdminProvider(form.id, payload);
-        onNotice("通道已更新");
+        onNotice(t("serverProviders.updated"));
       } else {
         await api.createAdminProvider(payload);
-        onNotice("通道已创建");
+        onNotice(t("serverProviders.created"));
       }
       setForm(null);
       await load();
     } catch (err) {
       setRowError({
         id: form.id || "new",
-        text: err instanceof Error ? err.message : "保存失败",
+        text: err instanceof Error ? err.message : t("serverProviders.saveFailed"),
       });
     } finally {
       setBusy(false);
@@ -142,13 +144,13 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
       setRowError(null);
       try {
         await api.deleteAdminProvider(id);
-        onNotice("通道已删除");
+        onNotice(t("serverProviders.deleted"));
         if (form?.id === id) setForm(null);
         await load();
       } catch (err) {
         setRowError({
           id,
-          text: err instanceof Error ? err.message : "删除失败",
+          text: err instanceof Error ? err.message : t("serverProviders.deleteFailed"),
         });
       } finally {
         setRowBusy("");
@@ -173,8 +175,11 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
         [item.id]: {
           ok: result.ok,
           text: result.ok
-            ? `连接正常 · ${result.latency_ms}ms · ${result.model || item.models?.[0] || "默认模型"}`
-            : result.detail || "连接失败",
+            ? t("providers.testOk", {
+          latency: result.latency_ms,
+          model: result.model || item.models?.[0] || t("providers.defaultModel"),
+        })
+            : result.detail || t("providers.testFail"),
         },
       }));
     } catch (err) {
@@ -182,7 +187,7 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
         ...prev,
         [item.id]: {
           ok: false,
-          text: err instanceof Error ? err.message : "测试失败",
+          text: err instanceof Error ? err.message : t("serverProviders.testFailed"),
         },
       }));
     } finally {
@@ -201,11 +206,11 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
             row.id === item.id ? { ...row, enabled: !row.enabled } : row,
           ),
         );
-        onNotice(item.enabled ? "通道已停用" : "通道已启用");
+        onNotice(item.enabled ? t("serverProviders.disabledNotice") : t("serverProviders.enabledNotice"));
       } catch (err) {
         setRowError({
           id: item.id,
-          text: err instanceof Error ? err.message : "更新失败",
+          text: err instanceof Error ? err.message : t("serverProviders.updateFailed"),
         });
       } finally {
         setRowBusy("");
@@ -225,9 +230,9 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
       <div className="flex flex-wrap items-center gap-2">
         <Server size={15} className="text-indigo-500 dark:text-indigo-300" />
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-          服务器模型通道
+          {t("serverProviders.title")}
         </h2>
-        <span className="chip-muted">{items.length} 个</span>
+        <span className="chip-muted">{t("common.count", { count: items.length })}</span>
         <span className="flex-1" />
         <button
           type="button"
@@ -236,30 +241,30 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
             setForm({ ...EMPTY_FORM });
           }}
           disabled={!canManage}
-          title={canManage ? "" : "当前角色无权管理服务器模型"}
+          title={canManage ? "" : t("serverProviders.noManage")}
           className="btn btn-primary px-3 py-1.5 text-[11px]"
         >
           <Plus size={12} />
-          新增通道
+          {t("serverProviders.add")}
         </button>
       </div>
 
       <p className="mt-1.5 text-[10px] text-slate-400">
-        通道为全局配置，所有空间共用；成员可在「我的模型」里用自己的密钥覆盖通道密钥。
+        {t("serverProviders.hint")}
       </p>
 
       {form ? (
         <div className="mt-3 rounded-2xl border border-indigo-400/25 bg-indigo-500/[0.04] p-3">
           <div className="flex items-center gap-2">
             <h3 className="text-[11.5px] font-semibold text-slate-800 dark:text-slate-100">
-              {form.id ? "编辑通道" : "新增通道"}
+              {form.id ? t("serverProviders.edit") : t("serverProviders.add")}
             </h3>
             <span className="flex-1" />
             <button
               type="button"
               onClick={() => setForm(null)}
               className="text-slate-400 transition hover:text-slate-600"
-              aria-label="取消"
+              aria-label={t("common.cancel")}
             >
               <X size={13} />
             </button>
@@ -267,18 +272,18 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             <label className="block">
               <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
-                名称
+                {t("common.name")}
               </span>
               <input
                 value={form.name}
                 onChange={(event) => patchForm({ name: event.target.value })}
-                placeholder="例如 主力 GPT 通道"
+                placeholder={t("serverProviders.namePlaceholder")}
                 className="input"
               />
             </label>
             <label className="block">
               <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
-                类型 kind
+                {t("common.type")}
               </span>
               <select
                 value={form.kind}
@@ -305,20 +310,20 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
             </label>
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
-                API Key（留空沿用旧值）
+                {t("serverProviders.apiKey")}
               </span>
               <input
                 type="password"
                 value={form.api_key}
                 onChange={(event) => patchForm({ api_key: event.target.value })}
-                placeholder="sk-...（留空沿用）"
+                placeholder={t("serverProviders.apiKeyPlaceholder")}
                 autoComplete="off"
                 className="input"
               />
             </label>
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
-                模型列表（逗号或换行分隔）
+                {t("serverProviders.models")}
               </span>
               <textarea
                 value={form.models}
@@ -337,7 +342,7 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
                 onChange={(event) => patchForm({ is_default: event.target.checked })}
                 className="h-3.5 w-3.5 accent-indigo-500"
               />
-              设为默认通道
+              {t("serverProviders.setDefault")}
             </label>
             <label className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300">
               <input
@@ -346,7 +351,7 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
                 onChange={(event) => patchForm({ enabled: event.target.checked })}
                 className="h-3.5 w-3.5 accent-indigo-500"
               />
-              启用
+              {t("common.enable")}
             </label>
             <span className="flex-1" />
             <button
@@ -356,7 +361,7 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
               className="btn btn-primary px-3 py-1.5 text-[11px]"
             >
               {busy ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-              保存
+              {t("common.save")}
             </button>
           </div>
           {rowError && rowError.id === (form.id || "new") ? (
@@ -370,9 +375,9 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
 
       <div className="mt-3 space-y-1.5">
         {loading ? (
-          <p className="text-[11px] text-slate-400">加载中…</p>
+          <p className="text-[11px] text-slate-400">{t("common.loading")}</p>
         ) : items.length === 0 ? (
-          <p className="text-[11px] text-slate-400">暂无服务器通道。</p>
+          <p className="text-[11px] text-slate-400">{t("serverProviders.empty")}</p>
         ) : (
           items.map((item) => {
             const shown = (item.models ?? []).slice(0, 4);
@@ -393,16 +398,20 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
                   {item.is_default ? (
                     <span className="flex items-center gap-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-1.5 py-0.5 text-[9.5px] font-medium text-white">
                       <Star size={8} />
-                      默认
+                      {t("common.default")}
                     </span>
                   ) : null}
                   {!item.enabled ? (
                     <span className="rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[9.5px] text-amber-700 dark:text-amber-300">
-                      已停用
+                      {t("common.disabledTag")}
                     </span>
                   ) : null}
                   <span className="text-[10px] text-slate-400">
-                    {item.has_key ? `密钥 ${item.api_key_masked || "已配置"}` : "无密钥"}
+                    {item.has_key
+                        ? t("myProviders.keyMaskedShort", {
+                            masked: item.api_key_masked || t("serverProviders.keyConfigured"),
+                          })
+                        : t("serverProviders.keyNone")}
                   </span>
                   <span className="flex-1" />
                   <button
@@ -412,11 +421,11 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
                       setForm(toForm(item));
                     }}
                     disabled={!canManage}
-                    title={canManage ? "编辑通道" : "当前角色无权管理服务器模型"}
+                    title={canManage ? t("serverProviders.edit") : t("serverProviders.noManage")}
                     className="btn-quiet px-2 py-1 text-[10.5px]"
                   >
                     <Pencil size={11} />
-                    编辑
+                    {t("common.edit")}
                   </button>
                   <button
                     type="button"
@@ -429,7 +438,7 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
                     ) : (
                       <Zap size={11} />
                     )}
-                    测试
+                    {t("common.test")}
                   </button>
                   <button
                     type="button"
@@ -437,15 +446,15 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
                     disabled={!canManage || item.is_default || rowBusy === item.id}
                     title={
                       !canManage
-                        ? "当前角色无权管理服务器模型"
+                        ? t("serverProviders.noManage")
                         : item.is_default
-                          ? "默认通道不可删除"
-                          : "删除通道"
+                          ? t("serverProviders.defaultUndeletable")
+                          : t("serverProviders.delete")
                     }
                     className="btn-quiet px-2 py-1 text-[10.5px] text-rose-500"
                   >
                     <Trash2 size={11} />
-                    删除
+                    {t("common.delete")}
                   </button>
                   <label className="flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400">
                     <input
@@ -455,7 +464,7 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
                       disabled={!canManage}
                       className="h-3.5 w-3.5 accent-indigo-500"
                     />
-                    启用
+                    {t("common.enable")}
                   </label>
                 </div>
                 {item.base_url ? (
@@ -465,7 +474,7 @@ export default function ServerProvidersCard({ canManage, onNotice, onError }: Pr
                 ) : null}
                 <div className="mt-1 flex flex-wrap items-center gap-1">
                   {shown.length === 0 ? (
-                    <span className="text-[10px] text-slate-400">未登记模型，使用自定义输入</span>
+                    <span className="text-[10px] text-slate-400">{t("myProviders.disabledHint")}</span>
                   ) : (
                     shown.map((model) => (
                       <span

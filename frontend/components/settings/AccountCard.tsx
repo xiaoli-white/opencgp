@@ -12,6 +12,7 @@ import {
 import clsx from "clsx";
 import { API_BASE, api } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
 
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 
@@ -25,6 +26,7 @@ export default function AccountCard({
   onError: (message: string) => void;
 }) {
   const { me, avatarUrl, refresh, roleName, roleKey } = useSession();
+  const { t } = useI18n();
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const [displayName, setDisplayName] = useState("");
@@ -45,7 +47,7 @@ export default function AccountCard({
   }, [me?.user.display_name, me?.user.email]);
 
   const initial = (displayName || email || "?").slice(0, 1).toUpperCase();
-  const roleText = roleName || roleKey || me?.role || "只读";
+  const roleText = roleName || roleKey || me?.role || t("common.readOnly");
 
   const pickAvatar = () => {
     if (!canWrite) return;
@@ -54,7 +56,7 @@ export default function AccountCard({
 
   const uploadAvatar = async (file: File) => {
     if (file.size > MAX_AVATAR_BYTES) {
-      onError("头像不能超过 2MB");
+      onError(t("account.avatarTooLarge"));
       return;
     }
     setUploading(true);
@@ -63,9 +65,9 @@ export default function AccountCard({
     try {
       await api.uploadAvatar(file);
       await refresh();
-      onNotice("头像已更新");
+      onNotice(t("account.avatarUpdated"));
     } catch (err) {
-      onError(err instanceof Error ? err.message : "头像上传失败");
+      onError(err instanceof Error ? err.message : t("account.avatarFailed"));
     } finally {
       setUploading(false);
     }
@@ -79,14 +81,14 @@ export default function AccountCard({
     if (nextEmail !== (me?.user.email ?? "")) {
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(nextEmail)) {
         onNotice("");
-        onError("邮箱格式不正确");
+        onError(t("account.emailInvalid"));
         return;
       }
       payload.email = nextEmail;
     }
     if (!Object.keys(payload).length) {
       onError("");
-      onNotice("没有需要保存的改动");
+      onNotice(t("account.noChanges"));
       return;
     }
     setSaving(true);
@@ -95,9 +97,9 @@ export default function AccountCard({
     try {
       await api.updateProfile(payload);
       await refresh();
-      onNotice("账号信息已更新");
+      onNotice(t("account.updated"));
     } catch (err) {
-      onError(err instanceof Error ? err.message : "保存失败");
+      onError(err instanceof Error ? err.message : t("account.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -107,11 +109,11 @@ export default function AccountCard({
     setPwError("");
     setPwNotice("");
     if (newPassword.length < 8) {
-      setPwError("新密码至少 8 位");
+      setPwError(t("account.passwordTooShort"));
       return;
     }
     if (newPassword !== confirmPassword) {
-      setPwError("两次输入的新密码不一致");
+      setPwError(t("account.passwordMismatch"));
       return;
     }
     setPwBusy(true);
@@ -123,9 +125,9 @@ export default function AccountCard({
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      setPwNotice("密码已更新");
+      setPwNotice(t("account.passwordUpdated"));
     } catch (err) {
-      setPwError(err instanceof Error ? err.message : "密码修改失败");
+      setPwError(err instanceof Error ? err.message : t("account.passwordFailed"));
     } finally {
       setPwBusy(false);
     }
@@ -140,7 +142,7 @@ export default function AccountCard({
       <div className="flex items-center gap-2">
         <UserRound size={15} className="text-indigo-500 dark:text-indigo-300" />
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-          账号
+          {t("account.title")}
         </h2>
         <span className="chip-muted">{roleText}</span>
       </div>
@@ -151,13 +153,13 @@ export default function AccountCard({
             type="button"
             onClick={pickAvatar}
             disabled={!canWrite || uploading}
-            title={canWrite ? "点击上传头像" : "当前角色只读"}
+            title={canWrite ? t("account.uploadAvatar") : t("common.readOnlyRole")}
             className="group relative grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-full ring-2 ring-white/60 transition hover:ring-indigo-400/60 dark:ring-white/10"
           >
             {avatarUrl ? (
               <img
                 src={`${API_BASE}${avatarUrl}`}
-                alt="头像"
+                alt={t("account.avatarAlt")}
                 className="h-full w-full object-cover"
               />
             ) : (
@@ -197,19 +199,19 @@ export default function AccountCard({
         <div className="min-w-0 flex-1 space-y-2.5">
           <label className="block">
             <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-              显示名
+              {t("account.displayName")}
             </span>
             <input
               value={displayName}
               onChange={(event) => setDisplayName(event.target.value)}
               disabled={!canWrite}
-              placeholder="你的名字"
+              placeholder={t("account.displayNamePlaceholder")}
               className="input"
             />
           </label>
           <label className="block">
             <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-              邮箱
+              {t("account.email")}
             </span>
             <input
               value={email}
@@ -223,11 +225,11 @@ export default function AccountCard({
             type="button"
             onClick={() => void saveProfile()}
             disabled={!canWrite || saving}
-            title={canWrite ? "" : "当前角色只读"}
+            title={canWrite ? "" : t("common.readOnlyRole")}
             className="btn btn-primary"
           >
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-            保存账号信息
+            {t("account.saveAccount")}
           </button>
         </div>
       </div>
@@ -236,14 +238,14 @@ export default function AccountCard({
         <div className="flex items-center gap-2">
           <KeyRound size={14} className="text-indigo-500 dark:text-indigo-300" />
           <span className="text-[12.5px] font-semibold text-slate-800 dark:text-slate-100">
-            修改密码
+            {t("account.changePassword")}
           </span>
         </div>
 
         <div className="mt-2.5 grid gap-2.5 sm:grid-cols-3">
           <label className="block">
             <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-              当前密码
+              {t("account.currentPassword")}
             </span>
             <input
               type="password"
@@ -256,7 +258,7 @@ export default function AccountCard({
           </label>
           <label className="block">
             <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-              新密码
+              {t("account.newPassword")}
             </span>
             <input
               type="password"
@@ -264,13 +266,13 @@ export default function AccountCard({
               onChange={(event) => setNewPassword(event.target.value)}
               disabled={!canWrite}
               autoComplete="new-password"
-              placeholder="至少 8 位"
+              placeholder={t("auth.passwordHint")}
               className="input"
             />
           </label>
           <label className="block">
             <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-              确认新密码
+              {t("account.confirmPassword")}
             </span>
             <input
               type="password"
@@ -300,11 +302,11 @@ export default function AccountCard({
           type="button"
           onClick={() => void changePassword()}
           disabled={!canWrite || pwBusy || !currentPassword || !newPassword}
-          title={canWrite ? "" : "当前角色只读"}
+          title={canWrite ? "" : t("common.readOnlyRole")}
           className="btn btn-ghost mt-3"
         >
           {pwBusy ? <Loader2 size={13} className="animate-spin" /> : <KeyRound size={13} />}
-          更新密码
+          {t("account.updatePassword")}
         </button>
       </div>
     </motion.section>

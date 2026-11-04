@@ -16,11 +16,12 @@ import clsx from "clsx";
 import { api, tenantId, type Member, type TenantMembership } from "@/lib/api";
 import { setTenantId } from "@/lib/session";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
 
-const KIND_LABEL: Record<string, string> = {
-  system: "系统",
-  personal: "个人",
-  team: "团队",
+const KIND_LABEL_KEY: Record<string, string> = {
+  system: "space.system",
+  personal: "space.personal",
+  team: "space.team",
 };
 
 export default function SpacesCard({
@@ -31,6 +32,7 @@ export default function SpacesCard({
   onError: (message: string) => void;
 }) {
   const { tenant, refresh } = useSession();
+  const { t } = useI18n();
   const [items, setItems] = useState<TenantMembership[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -49,11 +51,11 @@ export default function SpacesCard({
       const data = await api.listTenants();
       setItems(data.tenants ?? []);
     } catch (err) {
-      onError(err instanceof Error ? err.message : "空间加载失败");
+      onError(err instanceof Error ? err.message : t("space.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [onError]);
+  }, [onError, t]);
 
   useEffect(() => {
     void load();
@@ -76,7 +78,7 @@ export default function SpacesCard({
       await refresh();
       goTenant(created.tenant.id);
     } catch (err) {
-      onError(err instanceof Error ? err.message : "新建空间失败");
+      onError(err instanceof Error ? err.message : t("space.createFailed"));
     } finally {
       setBusy(false);
     }
@@ -93,9 +95,9 @@ export default function SpacesCard({
       setRenameValue("");
       await load();
       await refresh();
-      onNotice("空间已重命名");
+      onNotice(t("space.renamed"));
     } catch (err) {
-      onError(err instanceof Error ? err.message : "重命名失败");
+      onError(err instanceof Error ? err.message : t("space.renameFailed"));
     } finally {
       setBusy(false);
     }
@@ -109,9 +111,9 @@ export default function SpacesCard({
       await api.deleteTenant(id);
       await load();
       await refresh();
-      onNotice("空间已删除");
+      onNotice(t("space.deleted"));
     } catch (err) {
-      onError(err instanceof Error ? err.message : "删除失败");
+      onError(err instanceof Error ? err.message : t("space.deleteFailed"));
     } finally {
       setBusy(false);
     }
@@ -126,7 +128,7 @@ export default function SpacesCard({
       const data = await api.listMembers(id);
       setTransferMembers(data.members ?? []);
     } catch (err) {
-      onError(err instanceof Error ? err.message : "成员加载失败");
+      onError(err instanceof Error ? err.message : t("members.loadFailed"));
       setTransferMembers([]);
     } finally {
       setTransferLoading(false);
@@ -143,9 +145,9 @@ export default function SpacesCard({
       setTransferId("");
       await load();
       await refresh();
-      onNotice("所有权已转移");
+      onNotice(t("space.transferSuccess"));
     } catch (err) {
-      onError(err instanceof Error ? err.message : "转移失败");
+      onError(err instanceof Error ? err.message : t("space.transferFailed"));
     } finally {
       setBusy(false);
     }
@@ -160,14 +162,14 @@ export default function SpacesCard({
       <div className="flex flex-wrap items-center gap-2">
         <Building2 size={15} className="text-indigo-500 dark:text-indigo-300" />
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-          空间
+          {t("space.title")}
         </h2>
-        <span className="chip-muted">{items.length} 个</span>
+        <span className="chip-muted">{t("common.count", { count: items.length })}</span>
       </div>
 
       <div className="mt-3 space-y-1.5">
         {loading ? (
-          <p className="text-[11px] text-slate-400">加载中…</p>
+          <p className="text-[11px] text-slate-400">{t("common.loading")}</p>
         ) : (
           items.map((item) => {
             const info = item.tenant;
@@ -190,11 +192,13 @@ export default function SpacesCard({
                     {info.name || id}
                   </span>
                   <span className="chip-muted">
-                    {KIND_LABEL[String(info.kind ?? "")] ?? info.kind ?? "团队"}
+                    {KIND_LABEL_KEY[String(info.kind ?? "")]
+                      ? t(KIND_LABEL_KEY[String(info.kind ?? "")])
+                      : info.kind ?? t("space.team")}
                   </span>
                   {isCurrent ? (
                     <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 text-[10px] font-medium text-indigo-600 dark:text-indigo-300">
-                      当前空间
+                      {t("space.current")}
                     </span>
                   ) : null}
                   <span className="flex items-center gap-1 text-[10px] text-slate-400">
@@ -212,7 +216,7 @@ export default function SpacesCard({
                       onClick={() => goTenant(id)}
                       className="btn-quiet px-2 py-1 text-[10.5px]"
                     >
-                      切换
+                      {t("space.switch")}
                     </button>
                   ) : null}
                   {isOwner && !isSystem ? (
@@ -224,7 +228,7 @@ export default function SpacesCard({
                           setRenameValue(info.name ?? "");
                         }}
                         className="btn-quiet px-1.5"
-                        title="重命名"
+                        title={t("common.rename")}
                       >
                         <Pencil size={12} />
                       </button>
@@ -232,7 +236,7 @@ export default function SpacesCard({
                         type="button"
                         onClick={() => void openTransfer(id)}
                         className="btn-quiet px-1.5"
-                        title="转移所有权"
+                        title={t("space.transfer")}
                       >
                         <UserRound size={12} />
                       </button>
@@ -241,7 +245,7 @@ export default function SpacesCard({
                         onClick={() => void deleteSpace(id)}
                         disabled={busy}
                         className="btn-quiet px-1.5"
-                        title="删除空间"
+                        title={t("space.deleteSpace")}
                       >
                         <Trash2 size={12} />
                       </button>
@@ -255,7 +259,7 @@ export default function SpacesCard({
                       value={renameValue}
                       onChange={(event) => setRenameValue(event.target.value)}
                       className="input w-full sm:max-w-[220px]"
-                      placeholder="空间名称"
+                      placeholder={t("space.namePlaceholder")}
                     />
                     <button
                       type="button"
@@ -264,13 +268,13 @@ export default function SpacesCard({
                       className="btn btn-primary px-3 py-1.5 text-[11px]"
                     >
                       {busy ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
-                      保存
+                      {t("common.save")}
                     </button>
                     <button
                       type="button"
                       onClick={() => setRenamingId("")}
                       className="btn-quiet px-1.5"
-                      aria-label="取消"
+                      aria-label={t("common.cancel")}
                     >
                       <X size={12} />
                     </button>
@@ -280,7 +284,7 @@ export default function SpacesCard({
                 {transferId === id ? (
                   <div className="mt-2 rounded-2xl border border-white/60 bg-white/55 p-2.5 dark:border-white/10 dark:bg-white/[0.05]">
                     <span className="block text-[11px] text-slate-500 dark:text-slate-400">
-                      选择新的所有者
+                      {t("space.selectOwner")}
                     </span>
                     <div className="mt-1.5 flex flex-wrap items-center gap-2">
                       <select
@@ -290,7 +294,7 @@ export default function SpacesCard({
                         disabled={transferLoading}
                       >
                         <option value="">
-                          {transferLoading ? "加载中…" : "选择成员"}
+                          {transferLoading ? t("common.loading") : t("space.selectMember")}
                         </option>
                         {transferMembers.map((member) => (
                           <option key={member.user_id} value={member.user_id}>
@@ -304,13 +308,13 @@ export default function SpacesCard({
                         disabled={busy || !transferUser}
                         className="btn btn-primary px-3 py-1.5 text-[11px]"
                       >
-                        确认转移
+                        {t("space.transferConfirm")}
                       </button>
                       <button
                         type="button"
                         onClick={() => setTransferId("")}
                         className="btn-quiet px-1.5"
-                        aria-label="取消转移"
+                        aria-label={t("common.cancel")}
                       >
                         <X size={12} />
                       </button>
@@ -325,13 +329,13 @@ export default function SpacesCard({
 
       <div className="mt-3.5 rounded-2xl border border-white/60 bg-white/55 p-3 dark:border-white/10 dark:bg-white/[0.05]">
         <span className="block text-[11px] font-medium text-slate-600 dark:text-slate-300">
-          新建空间
+          {t("space.create")}
         </span>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder="空间名称"
+            placeholder={t("space.namePlaceholder")}
             className="input w-full sm:max-w-[220px]"
           />
           <select
@@ -339,8 +343,8 @@ export default function SpacesCard({
             onChange={(event) => setKind(event.target.value as "personal" | "team")}
             className="select w-full py-2 text-[12px] sm:w-auto"
           >
-            <option value="team">团队</option>
-            <option value="personal">个人</option>
+            <option value="team">{t("space.team")}</option>
+            <option value="personal">{t("space.personal")}</option>
           </select>
           <button
             type="button"
@@ -349,7 +353,7 @@ export default function SpacesCard({
             className="btn btn-primary"
           >
             {busy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-            新建并切换
+            {t("space.createAndSwitch")}
           </button>
         </div>
       </div>

@@ -22,13 +22,15 @@ import clsx from "clsx";
 import { useCallback, useEffect, useState } from "react";
 import { API_BASE, api, type Course } from "@/lib/api";
 import { difficultyLabel } from "@/lib/format";
-import { ROLE_LABEL } from "@/lib/session";
+import { ROLE_LABEL, type Role } from "@/lib/session";
 import ThemeToggle from "@/components/ThemeToggle";
+import LocaleToggle from "@/components/i18n/LocaleToggle";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type NavItem = {
   href: string;
-  label: string;
+  labelKey: string;
   icon: typeof LayoutGrid;
   exact: boolean;
   requireServer?: boolean;
@@ -36,27 +38,42 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "课程工作台", icon: LayoutGrid, exact: true },
-  { href: "/kb", label: "知识库", icon: Library, exact: false },
+  { href: "/", labelKey: "nav.workspace", icon: LayoutGrid, exact: true },
+  { href: "/kb", labelKey: "nav.kb", icon: Library, exact: false },
   {
     href: "/research",
-    label: "深度研究",
+    labelKey: "nav.research",
     icon: BrainCircuit,
     exact: false,
     requireWrite: true,
   },
-  { href: "/longforms", label: "长篇写作", icon: PenLine, exact: false },
-  { href: "/jobs", label: "任务中心", icon: ListChecks, exact: false },
-  { href: "/media", label: "图片库", icon: ImageIcon, exact: false },
-  { href: "/settings", label: "个人设置", icon: IdCard, exact: true },
+  { href: "/longforms", labelKey: "nav.longform", icon: PenLine, exact: false },
+  { href: "/jobs", labelKey: "nav.jobs", icon: ListChecks, exact: false },
+  { href: "/media", labelKey: "nav.media", icon: ImageIcon, exact: false },
+  { href: "/settings", labelKey: "nav.settings", icon: IdCard, exact: true },
   {
     href: "/settings/server",
-    label: "服务器设置",
+    labelKey: "nav.server",
     icon: Server,
     exact: true,
     requireServer: true,
   },
 ];
+
+const ROLE_LABEL_EN: Record<Role, string> = {
+  owner: "Owner",
+  admin: "Admin",
+  editor: "Editor",
+  viewer: "Read-only",
+};
+
+const DIFFICULTY_EN: Record<string, string> = {
+  beginner: "Beginner",
+  elementary: "Beginner",
+  intermediate: "Intermediate",
+  advanced: "Advanced",
+  expert: "Expert",
+};
 
 type Status = "checking" | "online" | "degraded" | "offline";
 
@@ -70,19 +87,32 @@ type SidebarProps = {
 function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
   const { me, role, roleName, tenant, tenantName, tenants, avatarUrl, switchTenant, logout, can } =
     useSession();
+  const { t, tm } = useI18n();
 
-  const displayName = me?.user.display_name || me?.user.email || "本地用户";
+  const displayName = me?.user.display_name || me?.user.email || t("nav.localUser");
   const initial = displayName.slice(0, 1).toUpperCase();
-  const roleText = roleName || (role ? ROLE_LABEL[role] ?? role : "只读");
+  const roleText =
+    roleName ||
+    (role
+      ? tm({ zh: ROLE_LABEL[role] ?? role, en: ROLE_LABEL_EN[role] ?? role })
+      : t("common.readOnly"));
+
+  const roleLabel = (value: Role | string) =>
+    value in ROLE_LABEL
+      ? tm({
+          zh: ROLE_LABEL[value as Role],
+          en: ROLE_LABEL_EN[value as Role] ?? value,
+        })
+      : value;
 
   const statusText =
     status === "online"
-      ? "后端已连接"
+      ? t("nav.statusOnline")
       : status === "degraded"
-        ? "后端降级运行"
+        ? t("nav.statusDegraded")
         : status === "checking"
-          ? "正在连接后端"
-          : "后端未连接";
+          ? t("nav.statusChecking")
+          : t("nav.statusOffline");
 
   const statusColor =
     status === "online"
@@ -105,10 +135,10 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
         </span>
         <span className="min-w-0">
           <span className="block truncate text-sm font-semibold tracking-tight text-slate-800 dark:text-slate-100">
-            OpenCGP
+            {t("nav.brand")}
           </span>
           <span className="block whitespace-nowrap text-[10px] tracking-tight text-slate-500 dark:text-slate-400">
-            Open Content Generation Platform
+            {t("nav.tagline")}
           </span>
         </span>
       </Link>
@@ -134,7 +164,7 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
               )}
             >
               <Icon size={16} />
-              <span className="font-medium">{item.label}</span>
+              <span className="font-medium">{t(item.labelKey)}</span>
             </Link>
           );
         })}
@@ -142,7 +172,7 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
 
       <div className="mt-6 flex items-center justify-between px-2">
         <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-          我的课程
+          {t("nav.myCourses")}
         </span>
         <span className="text-[10px] text-slate-400 dark:text-slate-500">
           {courses.length}
@@ -152,7 +182,7 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
       <div className="no-scrollbar mt-2 flex-1 space-y-1 overflow-y-auto pr-1">
         {courses.length === 0 ? (
           <p className="px-2 py-3 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-            还没有课程，去工作台新建一门。
+            {t("nav.noCourses")}
           </p>
         ) : (
           courses.map((course) => {
@@ -183,7 +213,10 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
                     {course.title}
                   </span>
                   <span className="mt-0.5 block truncate text-[10px] text-slate-400 dark:text-slate-500">
-                    {difficultyLabel(course.difficulty)}
+                    {tm({
+                      zh: difficultyLabel(course.difficulty),
+                      en: DIFFICULTY_EN[course.difficulty] ?? difficultyLabel(course.difficulty),
+                    })}
                     {course.audience ? ` · ${course.audience}` : ""}
                   </span>
                 </span>
@@ -198,7 +231,7 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
           {avatarUrl ? (
             <img
               src={`${API_BASE}${avatarUrl}`}
-              alt="头像"
+              alt={t("account.avatarAlt")}
               className="h-8 w-8 shrink-0 rounded-full object-cover ring-2 ring-white/60 dark:ring-white/10"
             />
           ) : (
@@ -221,7 +254,8 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
             <button
               type="button"
               onClick={() => void logout()}
-              aria-label="退出登录"
+              aria-label={t("nav.logout")}
+              title={t("nav.logout")}
               className="btn-quiet px-1.5"
             >
               <LogOut size={13} />
@@ -231,7 +265,7 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
 
         <label className="mt-2.5 block">
           <span className="mb-1 block text-[10px] uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
-            空间
+            {t("nav.tenant")}
           </span>
           <select
             value={tenant}
@@ -240,10 +274,16 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
           >
             {(tenants.length > 0
               ? tenants
-              : [{ id: tenant || "default", name: tenantName || "默认空间", role: role ?? "viewer" }]
+              : [
+                  {
+                    id: tenant || "default",
+                    name: tenantName || t("nav.defaultSpace"),
+                    role: role ?? "viewer",
+                  },
+                ]
             ).map((item) => (
               <option key={item.id} value={item.id}>
-                {item.name} · {ROLE_LABEL[item.role] ?? item.role}
+                {item.name} · {roleLabel(item.role)}
               </option>
             ))}
           </select>
@@ -255,7 +295,7 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
           <span>{statusText}</span>
         </div>
         <p className="mt-1 truncate text-[10px] text-slate-400 dark:text-slate-500">
-          证据驱动写作 · 版本可回滚
+          {t("nav.footer")}
         </p>
       </div>
     </div>
@@ -266,6 +306,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = useLocation().pathname;
   const navigate = useNavigate();
   const { authMode } = useSession();
+  const { t } = useI18n();
   const [courses, setCourses] = useState<Course[]>([]);
   const [status, setStatus] = useState<Status>("checking");
   const [drawer, setDrawer] = useState(false);
@@ -324,22 +365,22 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const title =
     pathname === "/"
-      ? "课程工作台"
+      ? t("nav.workspace")
       : pathname === "/kb"
-        ? "知识库"
+        ? t("nav.kb")
         : pathname === "/research"
-          ? "深度研究"
+          ? t("nav.research")
           : pathname.startsWith("/longforms")
-            ? "长篇写作"
+            ? t("nav.longform")
             : pathname === "/jobs"
-              ? "任务中心"
+              ? t("nav.jobs")
               : pathname === "/media"
-                ? "图片库"
+                ? t("nav.media")
               : pathname === "/settings"
-              ? "个人设置"
+              ? t("nav.settings")
               : pathname === "/settings/server"
-                ? "服务器设置"
-                : activeCourse?.title ?? "课程";
+                ? t("nav.server")
+                : activeCourse?.title ?? t("nav.course");
 
   if (pathname === "/login") {
     return <main className="min-h-screen px-4 py-6">{children}</main>;
@@ -360,7 +401,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               type="button"
               onClick={() => setDrawer(true)}
               className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-slate-500 transition hover:bg-white/60 hover:text-indigo-600 dark:text-slate-300 dark:hover:bg-white/10 lg:hidden"
-              aria-label="打开导航"
+              aria-label={t("nav.openNav")}
             >
               <Menu size={18} />
             </button>
@@ -369,6 +410,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 {title}
               </p>
             </div>
+            <LocaleToggle />
             <ThemeToggle />
           </div>
         </header>
@@ -406,7 +448,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   type="button"
                   onClick={() => setDrawer(false)}
                   className="absolute -right-1 top-2 grid h-10 w-10 place-items-center rounded-full bg-white/80 text-slate-500 shadow-sm dark:bg-slate-800/80 dark:text-slate-300"
-                  aria-label="关闭导航"
+                  aria-label={t("nav.closeNav")}
                 >
                   <X size={15} />
                 </button>

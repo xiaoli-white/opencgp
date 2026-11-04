@@ -3,19 +3,20 @@ import { Loader2, Pencil, Plus, Trash2, Wand2 } from "lucide-react";
 import clsx from "clsx";
 import { api, type CreationProfile } from "@/lib/api";
 import { ConfirmDialog, Modal } from "@/components/common/Dialogs";
+import { useI18n } from "@/i18n/I18nProvider";
 
-const GENRES: { value: string; label: string }[] = [
-  { value: "article", label: "文章" },
-  { value: "report", label: "报告" },
-  { value: "essay", label: "随笔" },
-  { value: "tutorial", label: "教程" },
-  { value: "custom", label: "自定义" },
+const GENRES: { value: string; labelKey: string }[] = [
+  { value: "article", labelKey: "profiles.genreArticle" },
+  { value: "report", labelKey: "profiles.genreReport" },
+  { value: "essay", labelKey: "profiles.genreEssay" },
+  { value: "tutorial", labelKey: "profiles.genreTutorial" },
+  { value: "custom", labelKey: "profiles.genreCustom" },
 ];
 
-const POLICIES: { value: string; label: string }[] = [
-  { value: "required", label: "必须引用" },
-  { value: "optional", label: "引用可选" },
-  { value: "forbidden", label: "不引用" },
+const POLICIES: { value: string; labelKey: string }[] = [
+  { value: "required", labelKey: "profiles.citeRequired" },
+  { value: "optional", labelKey: "profiles.citeOptional" },
+  { value: "forbidden", labelKey: "profiles.citeForbidden" },
 ];
 
 const emptyForm = {
@@ -39,6 +40,7 @@ export default function CreationProfilesCard({
   onNotice: (message: string) => void;
   onError: (message: string) => void;
 }) {
+  const { t } = useI18n();
   const [items, setItems] = useState<CreationProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<typeof emptyForm | null>(null);
@@ -52,11 +54,11 @@ export default function CreationProfilesCard({
       const data = await api.listCreationProfiles();
       setItems(data.profiles);
     } catch (err) {
-      onError(err instanceof Error ? err.message : "创作规则加载失败");
+      onError(err instanceof Error ? err.message : t("profiles.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [onError]);
+  }, [onError, t]);
 
   useEffect(() => {
     void load();
@@ -79,15 +81,15 @@ export default function CreationProfilesCard({
     try {
       if (form.id) {
         await api.updateCreationProfile(form.id, payload);
-        onNotice("创作规则已更新");
+        onNotice(t("profiles.updated"));
       } else {
         await api.createCreationProfile(payload);
-        onNotice("创作规则已创建");
+        onNotice(t("profiles.created"));
       }
       setForm(null);
       await load();
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "保存失败");
+      setDialogError(err instanceof Error ? err.message : t("profiles.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -100,10 +102,10 @@ export default function CreationProfilesCard({
     try {
       await api.deleteCreationProfile(removing.id);
       setRemoving(null);
-      onNotice("创作规则已删除");
+      onNotice(t("profiles.deleted"));
       await load();
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "删除失败");
+      setDialogError(err instanceof Error ? err.message : t("profiles.deleteFailed"));
     } finally {
       setBusy(false);
     }
@@ -114,8 +116,8 @@ export default function CreationProfilesCard({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-800 dark:text-slate-100">
           <Wand2 size={15} className="text-indigo-500" />
-          创作规则
-          <span className="chip-muted">{items.length} 个</span>
+          {t("profiles.title")}
+          <span className="chip-muted">{t("common.count", { count: items.length })}</span>
         </h2>
         <button
           type="button"
@@ -124,25 +126,25 @@ export default function CreationProfilesCard({
             setForm({ ...emptyForm });
           }}
           disabled={!canWrite}
-          title={!canWrite ? "当前角色只读" : undefined}
+          title={!canWrite ? t("common.readOnlyRole") : undefined}
           className="btn btn-primary px-3 py-1.5 text-[11px]"
         >
           <Plus size={12} />
-          新建规则
+          {t("profiles.new")}
         </button>
       </div>
       <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-        规则模板记住体裁、口吻、目标读者、引用策略与目标字数，新建长篇时一键套用。
+        {t("profiles.hint")}
       </p>
 
       {loading ? (
         <div className="mt-4 flex items-center gap-2 text-[11px] text-slate-400">
           <Loader2 size={12} className="animate-spin" />
-          加载中…
+          {t("profiles.loading")}
         </div>
       ) : items.length === 0 ? (
         <p className="mt-4 rounded-2xl border border-white/50 bg-white/40 px-3 py-6 text-center text-[11px] text-slate-400 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-500">
-          还没有创作规则，新建一个可在长篇写作页直接套用。
+          {t("profiles.empty")}
         </p>
       ) : (
         <div className="mt-3 space-y-2">
@@ -155,27 +157,32 @@ export default function CreationProfilesCard({
                 <p className="flex flex-wrap items-center gap-1.5 text-[12.5px] font-medium text-slate-700 dark:text-slate-200">
                   {profile.name}
                   <span className="chip-muted">
-                    {GENRES.find((item) => item.value === profile.genre)?.label ??
-                      profile.genre}
+                    {GENRES.find((item) => item.value === profile.genre)
+                      ? t(GENRES.find((item) => item.value === profile.genre)!.labelKey)
+                      : profile.genre}
                   </span>
-                  {profile.is_shared ? <span className="chip">共享</span> : null}
+                  {profile.is_shared ? <span className="chip">{t("profiles.shared")}</span> : null}
                   {profile.is_owner ? (
-                    <span className="chip-muted">我的</span>
+                    <span className="chip-muted">{t("profiles.mine")}</span>
                   ) : (
-                    <span className="chip-muted">他人</span>
+                    <span className="chip-muted">{t("profiles.others")}</span>
                   )}
                 </p>
                 <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[10.5px] text-slate-400 dark:text-slate-500">
                   <span>
                     {POLICIES.find((item) => item.value === profile.citation_policy)
-                      ?.label ?? profile.citation_policy}
+                      ? t(
+                          POLICIES.find((item) => item.value === profile.citation_policy)!
+                            .labelKey,
+                        )
+                      : profile.citation_policy}
                   </span>
                   <span>·</span>
-                  <span>{profile.target_words} 字</span>
+                  <span>{t("profiles.words", { count: profile.target_words })}</span>
                   {profile.audience ? (
                     <>
                       <span>·</span>
-                      <span>读者 {profile.audience}</span>
+                      <span>{t("profiles.audience", { name: profile.audience })}</span>
                     </>
                   ) : null}
                 </p>
@@ -204,7 +211,7 @@ export default function CreationProfilesCard({
                   }}
                   disabled={!canWrite}
                   className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 transition hover:bg-white/70 hover:text-indigo-600 disabled:opacity-40 dark:hover:bg-white/10 dark:hover:text-indigo-300"
-                  aria-label="编辑规则"
+                  aria-label={t("profiles.edit")}
                 >
                   <Pencil size={12} />
                 </button>
@@ -216,7 +223,7 @@ export default function CreationProfilesCard({
                   }}
                   disabled={!canWrite}
                   className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-600 disabled:opacity-40"
-                  aria-label="删除规则"
+                  aria-label={t("profiles.delete")}
                 >
                   <Trash2 size={12} />
                 </button>
@@ -228,24 +235,24 @@ export default function CreationProfilesCard({
 
       <Modal
         open={Boolean(form)}
-        title={form?.id ? "编辑创作规则" : "新建创作规则"}
+        title={form?.id ? t("profiles.editTitle") : t("profiles.addTitle")}
         onClose={() => setForm(null)}
       >
         {form ? (
           <div className="space-y-3">
             <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-              规则名称
+              {t("profiles.name")}
               <input
                 autoFocus
                 value={form.name}
                 onChange={(event) => setForm({ ...form, name: event.target.value })}
                 className="input mt-1"
-                placeholder="例如：技术教程 · 严谨"
+                placeholder={t("profiles.namePlaceholder")}
               />
             </label>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                体裁
+                {t("profiles.genre")}
                 <select
                   value={form.genre}
                   onChange={(event) => setForm({ ...form, genre: event.target.value })}
@@ -253,13 +260,13 @@ export default function CreationProfilesCard({
                 >
                   {GENRES.map((item) => (
                     <option key={item.value} value={item.value}>
-                      {item.label}
+                      {t(item.labelKey)}
                     </option>
                   ))}
                 </select>
               </label>
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                引用策略
+                {t("profiles.citationPolicy")}
                 <select
                   value={form.citationPolicy}
                   onChange={(event) =>
@@ -269,40 +276,40 @@ export default function CreationProfilesCard({
                 >
                   {POLICIES.map((item) => (
                     <option key={item.value} value={item.value}>
-                      {item.label}
+                      {t(item.labelKey)}
                     </option>
                   ))}
                 </select>
               </label>
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                口吻
+                {t("profiles.tone")}
                 <input
                   value={form.tone}
                   onChange={(event) => setForm({ ...form, tone: event.target.value })}
                   className="input mt-1"
-                  placeholder="例如：冷静克制"
+                  placeholder={t("profiles.tonePlaceholder")}
                 />
               </label>
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                目标读者
+                {t("profiles.audienceLabel")}
                 <input
                   value={form.audience}
                   onChange={(event) => setForm({ ...form, audience: event.target.value })}
                   className="input mt-1"
-                  placeholder="例如：后端工程师"
+                  placeholder={t("profiles.audiencePlaceholder")}
                 />
               </label>
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                视角
+                {t("profiles.pov")}
                 <input
                   value={form.pov}
                   onChange={(event) => setForm({ ...form, pov: event.target.value })}
                   className="input mt-1"
-                  placeholder="例如：第二人称"
+                  placeholder={t("profiles.povPlaceholder")}
                 />
               </label>
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                目标字数
+                {t("profiles.targetWords")}
                 <input
                   type="number"
                   value={form.targetWords}
@@ -320,7 +327,7 @@ export default function CreationProfilesCard({
                 onChange={(event) => setForm({ ...form, isShared: event.target.checked })}
                 className="h-3.5 w-3.5 rounded border-slate-300"
               />
-              共享给空间成员使用
+              {t("profiles.shareToSpace")}
             </label>
             {dialogError ? (
               <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-700 dark:text-rose-300">
@@ -329,7 +336,7 @@ export default function CreationProfilesCard({
             ) : null}
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setForm(null)} className="btn btn-quiet">
-                取消
+                {t("profiles.cancel")}
               </button>
               <button
                 type="button"
@@ -338,7 +345,7 @@ export default function CreationProfilesCard({
                 className="btn btn-primary"
               >
                 {busy ? <Loader2 size={13} className="animate-spin" /> : null}
-                保存
+                {t("profiles.save")}
               </button>
             </div>
           </div>
@@ -347,8 +354,8 @@ export default function CreationProfilesCard({
 
       <ConfirmDialog
         open={Boolean(removing)}
-        title="删除创作规则"
-        description={`将删除规则「${removing?.name ?? ""}」，已创建的长篇不受影响。`}
+        title={t("profiles.deleteTitle")}
+        description={t("profiles.deleteDesc", { name: removing?.name ?? "" })}
         busy={busy}
         error={dialogError}
         onConfirm={() => void remove()}

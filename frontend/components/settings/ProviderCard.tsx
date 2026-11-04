@@ -17,6 +17,7 @@ import {
   Zap,
 } from "lucide-react";
 import clsx from "clsx";
+import { useI18n } from "@/i18n/I18nProvider";
 import { api, type ProviderOption, type ProviderSettings } from "@/lib/api";
 
 type Props = {
@@ -57,13 +58,15 @@ function toForm(data: ProviderSettings): FormState {
   };
 }
 
-function optionLabel(item: ProviderOption): string {
-  const prefix = item.scope === "user" ? "我的" : "";
-  const star = item.is_default ? " · 默认" : "";
-  const off = item.enabled === false ? " · 已停用" : "";
+type TFn = (path: string, vars?: Record<string, string | number>) => string;
+
+function optionLabel(item: ProviderOption, t: TFn): string {
+  const prefix = item.scope === "user" ? t("providers.prefixMine") : "";
+  const star = item.is_default ? t("providers.dotDefault") : "";
+  const off = item.enabled === false ? t("providers.dotDisabled") : "";
   const shared =
     item.scope === "shared"
-      ? ` · 共享自 ${item.owner_name || "他人"}${item.can_manage ? " · 可管理" : ""}`
+      ? t("providers.sharedFrom", { name: item.owner_name || t("providers.other") })
       : "";
   return `${prefix}${item.name}（${item.kind}）${star}${off}${shared}`;
 }
@@ -78,6 +81,7 @@ type PickerProps = {
 };
 
 function ProviderPicker({ value, mine, server, shared, disabled, onChange }: PickerProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const all = [...mine, ...server, ...shared];
   const current = all.find((item) => item.id === value);
@@ -87,9 +91,9 @@ function ProviderPicker({ value, mine, server, shared, disabled, onChange }: Pic
   }, [disabled]);
 
   const groups: { label: string; items: ProviderOption[] }[] = [
-    { label: "我的通道", items: mine },
-    { label: "服务器通道", items: server },
-    ...(shared.length > 0 ? [{ label: "共享给我的", items: shared }] : []),
+    { label: t("providers.groupMine"), items: mine },
+    { label: t("providers.groupServer"), items: server },
+    ...(shared.length > 0 ? [{ label: t("providers.groupShared"), items: shared }] : []),
   ];
 
   return (
@@ -101,7 +105,7 @@ function ProviderPicker({ value, mine, server, shared, disabled, onChange }: Pic
         className="select flex w-full items-center gap-1 text-left disabled:opacity-60"
       >
         <span className="flex-1 truncate">
-          {current ? optionLabel(current) : all.length === 0 ? "暂无可用通道" : "选择通道"}
+          {current ? optionLabel(current, t) : all.length === 0 ? t("providers.noChannels") : t("providers.selectChannel")}
         </span>
         <ChevronDown
           size={13}
@@ -123,7 +127,7 @@ function ProviderPicker({ value, mine, server, shared, disabled, onChange }: Pic
                   <span className="ml-1 normal-case">（{group.items.length}）</span>
                 </p>
                 {group.items.length === 0 ? (
-                  <p className="px-2 pb-1 text-[10px] text-slate-400">暂无</p>
+                  <p className="px-2 pb-1 text-[10px] text-slate-400">{t("common.none")}</p>
                 ) : (
                   group.items.map((item) => {
                     const active = item.id === value;
@@ -144,7 +148,7 @@ function ProviderPicker({ value, mine, server, shared, disabled, onChange }: Pic
                           off && !active && "opacity-55",
                         )}
                       >
-                        <span className="flex-1 truncate">{optionLabel(item)}</span>
+                        <span className="flex-1 truncate">{optionLabel(item, t)}</span>
                         {active ? <Check size={11} className="shrink-0" /> : null}
                       </button>
                     );
@@ -165,6 +169,7 @@ export default function ProviderCard({
   onNotice,
   onError,
 }: Props) {
+  const { t } = useI18n();
   const [data, setData] = useState<ProviderSettings | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -181,7 +186,7 @@ export default function ProviderCard({
       setData(next);
       setForm(toForm(next));
     } catch (err) {
-      onError(err instanceof Error ? err.message : "模型配置加载失败");
+      onError(err instanceof Error ? err.message : t("providers.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -241,7 +246,7 @@ export default function ProviderCard({
         parsedHeaders = form.extra_headers.trim() ? JSON.parse(form.extra_headers) : {};
         parsedBody = form.extra_body.trim() ? JSON.parse(form.extra_body) : {};
       } catch {
-        onError("请求头或请求参数不是合法 JSON");
+        onError(t("providers.invalidJson"));
         setBusy(false);
         return null;
       }
@@ -258,10 +263,10 @@ export default function ProviderCard({
       const next = await api.saveProviderSettings(payload);
       setData(next);
       setForm(toForm(next));
-      onNotice("模型配置已保存");
+      onNotice(t("providers.saved"));
       return next;
     } catch (err) {
-      onError(err instanceof Error ? err.message : "保存失败");
+      onError(err instanceof Error ? err.message : t("providers.saveFailed"));
       return null;
     } finally {
       setBusy(false);
@@ -278,13 +283,16 @@ export default function ProviderCard({
       setTest({
         ok: result.ok,
         text: result.ok
-          ? `连接正常 · ${result.latency_ms}ms · ${result.model || saved.model || "默认模型"}`
-          : result.detail || "连接失败",
+          ? t("providers.testOk", {
+          latency: result.latency_ms,
+          model: result.model || saved.model || t("providers.defaultModel"),
+        })
+          : result.detail || t("providers.testFail"),
       });
     } catch (err) {
       setTest({
         ok: false,
-        text: err instanceof Error ? err.message : "测试失败",
+        text: err instanceof Error ? err.message : t("providers.testFailed"),
       });
     } finally {
       setTesting(false);
@@ -298,9 +306,9 @@ export default function ProviderCard({
       const next = await api.resetProviderSettings();
       setData(next);
       setForm(toForm(next));
-      onNotice("已恢复服务器默认模型");
+      onNotice(t("providers.restored"));
     } catch (err) {
-      onError(err instanceof Error ? err.message : "恢复失败");
+      onError(err instanceof Error ? err.message : t("providers.restoreFailed"));
     } finally {
       setBusy(false);
     }
@@ -310,12 +318,12 @@ export default function ProviderCard({
   const server = data?.server;
   const keyPlaceholder =
     data?.has_key && data.api_key_masked
-      ? `${data.api_key_masked}（留空沿用通道密钥）`
+        ? t("providers.apiKeyPlaceholderMasked", { masked: data.api_key_masked })
       : activeProvider?.has_key
-        ? "留空沿用通道密钥，或填入个人密钥覆盖"
+        ? t("providers.apiKeyPlaceholder")
         : "sk-...";
   const disabled = !canWrite || busy || loading || !form;
-  const summary = `${data?.provider_name || activeProvider?.name || "服务器默认"} · ${data?.model || "默认模型"}`;
+  const summary = `${data?.provider_name || activeProvider?.name || t("providers.serverDefault")} · ${data?.model || t("providers.defaultModel")}`;
 
   const jumpTo = (id: string) => {
     const target = document.getElementById(id);
@@ -341,7 +349,7 @@ export default function ProviderCard({
       <div className="flex flex-wrap items-center gap-2">
         <Cpu size={15} className="text-indigo-500 dark:text-indigo-300" />
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-          我的模型
+          {t("providers.title")}
         </h2>
         <span
           className={clsx(
@@ -351,28 +359,28 @@ export default function ProviderCard({
               : "bg-indigo-500/12 text-indigo-600 dark:text-indigo-300",
           )}
         >
-          {isUser ? "使用我的配置" : "服务器默认"}
+          {isUser ? t("providers.usingMine") : t("providers.serverDefault")}
         </span>
         <span className="text-[10px] text-slate-400">
           <Server size={10} className="mr-1 inline align-[-1px]" />
-          {summary} · {data?.has_key ? "已配置个人密钥" : "使用通道密钥"}
+          {summary} · {data?.has_key ? t("providers.personalKey") : t("providers.channelKey")}
         </span>
       </div>
 
       {!canWrite ? (
         <p className="mt-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[10.5px] text-amber-700 dark:text-amber-300">
-          当前角色只读，模型配置仅可查看。
+          {t("providers.readOnlyHint")}
         </p>
       ) : null}
 
       {loading || !form ? (
-        <p className="mt-3 text-[11px] text-slate-400">加载中…</p>
+        <p className="mt-3 text-[11px] text-slate-400">{t("common.loading")}</p>
       ) : (
         <>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="block">
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                模型通道
+                {t("providers.channel")}
               </span>
               <ProviderPicker
                 value={form.provider_id}
@@ -383,13 +391,15 @@ export default function ProviderCard({
                 onChange={pickProvider}
               />
               <span className="mt-1 block text-[10px] text-slate-400">
-                我的通道 {mine.length} 个 · 服务器通道 {serverList.length} 个
-                {sharedList.length > 0 ? ` · 共享给我 ${sharedList.length} 个` : ""}
+                {t("providers.channelCounts", { mine: mine.length, server: serverList.length })}
+                {sharedList.length > 0
+                  ? t("providers.sharedSuffix", { count: sharedList.length })
+                  : ""}
               </span>
             </div>
             <label className="block">
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                模型
+                {t("providers.model")}
               </span>
               {useModelSelect ? (
                 <select
@@ -399,7 +409,10 @@ export default function ProviderCard({
                   className="select"
                 >
                   {form.model && !modelOptions.includes(form.model) ? (
-                    <option value={form.model}>{form.model}（自定义）</option>
+                    <option value={form.model}>
+                      {form.model}
+                      {t("providers.customModelSuffix")}
+                    </option>
                   ) : null}
                   {modelOptions.map((item) => (
                     <option key={item} value={item}>
@@ -411,7 +424,7 @@ export default function ProviderCard({
                 <input
                   value={form.model}
                   onChange={(event) => update({ model: event.target.value })}
-                  placeholder={server?.model || "该通道未登记模型，手动填写"}
+                  placeholder={server?.model || t("providers.modelPlaceholder")}
                   disabled={disabled}
                   className="input"
                 />
@@ -419,7 +432,7 @@ export default function ProviderCard({
             </label>
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                个人 API Key（可选覆盖）
+                {t("providers.apiKeyOverride")}
               </span>
               <span className="relative block">
                 <input
@@ -435,7 +448,7 @@ export default function ProviderCard({
                   type="button"
                   onClick={() => setShowKey((prev) => !prev)}
                   className="absolute right-1 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-lg text-slate-400 transition hover:text-indigo-500"
-                  aria-label={showKey ? "隐藏密钥" : "显示密钥"}
+                  aria-label={showKey ? t("myProviders.hideKey") : t("myProviders.showKey")}
                 >
                   {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
                 </button>
@@ -443,7 +456,7 @@ export default function ProviderCard({
             </label>
             <label className="block">
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                温度 temperature（0-2）
+                {t("providers.temperature")}
               </span>
               <input
                 type="number"
@@ -458,7 +471,7 @@ export default function ProviderCard({
             </label>
             <label className="block">
               <span className="mb-1 block text-[11px] text-slate-500 dark:text-slate-400">
-                最大 token 数 max_tokens
+                {t("providers.maxTokens")}
               </span>
               <input
                 type="number"
@@ -475,7 +488,7 @@ export default function ProviderCard({
           <div className="mt-4 rounded-2xl border border-slate-200/70 bg-white/50 p-3 dark:border-white/10 dark:bg-white/[0.03]">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
-                高级请求参数（可选）
+                {t("providers.advancedParams")}
               </span>
               <label className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300">
                 <input
@@ -484,13 +497,13 @@ export default function ProviderCard({
                   onChange={(event) => update({ disable_reasoning: event.target.checked })}
                   disabled={disabled}
                 />
-                关闭推理（thinking.type=disabled）
+                {t("providers.disableThinking")}
               </label>
             </div>
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1 block text-[10px] uppercase tracking-[0.14em] text-slate-400">
-                  请求头 JSON
+                  {t("providers.headersJson")}
                 </span>
                 <textarea
                   rows={3}
@@ -503,7 +516,7 @@ export default function ProviderCard({
               </label>
               <label className="block">
                 <span className="mb-1 block text-[10px] uppercase tracking-[0.14em] text-slate-400">
-                  请求体 JSON
+                  {t("providers.bodyJson")}
                 </span>
                 <textarea
                   rows={3}
@@ -516,7 +529,7 @@ export default function ProviderCard({
               </label>
             </div>
             <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
-              参数会原样合并进每次模型请求；关闭推理会自动写入 {"{"}"thinking":{"{"}"type":"disabled"{"}"}{"}"}。
+                {t("providers.paramsHint")}
             </p>
           </div>
 
@@ -525,21 +538,21 @@ export default function ProviderCard({
               type="button"
               onClick={() => void save()}
               disabled={disabled}
-              title={canWrite ? "" : "当前角色只读"}
+              title={canWrite ? "" : t("common.readOnlyRole")}
               className="btn btn-primary px-3 py-1.5 text-[11px]"
             >
               {busy ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-              保存
+              {t("providers.save")}
             </button>
             <button
               type="button"
               onClick={() => void runTest()}
               disabled={disabled || testing}
-              title={canWrite ? "先保存当前表单，再用已保存配置发起测试" : "当前角色只读"}
+              title={canWrite ? t("providers.testTitle") : t("common.readOnlyRole")}
               className="btn btn-ghost px-3 py-1.5 text-[11px]"
             >
               {testing ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
-              测试连接
+              {t("providers.test")}
             </button>
             <button
               type="button"
@@ -547,22 +560,22 @@ export default function ProviderCard({
               disabled={disabled || !isUser}
               title={
                 !canWrite
-                  ? "当前角色只读"
+                  ? t("common.readOnlyRole")
                   : isUser
-                    ? "删除我的配置，回退到服务器默认"
-                    : "当前已使用服务器默认"
+                    ? t("providers.restoreTitle")
+                    : t("providers.restoreDisabledTitle")
               }
               className="btn-quiet px-2.5 py-1.5 text-[11px]"
             >
               <RotateCcw size={12} />
-              恢复服务器默认
+              {t("providers.restore")}
             </button>
             <button
               type="button"
               onClick={toggleMine}
               className="btn-quiet px-2.5 py-1.5 text-[11px]"
             >
-              管理我的通道
+              {t("providers.manageMine")}
               <ChevronDown
                 size={12}
                 className={clsx("transition", showMine && "rotate-180")}
@@ -573,12 +586,12 @@ export default function ProviderCard({
                 to="/settings/server"
                 className="text-[10.5px] text-indigo-500 underline-offset-2 transition hover:underline dark:text-indigo-300"
               >
-                去管理服务器模型
+                {t("providers.gotoServer")}
                 <ArrowRight size={10} className="ml-1 inline align-[-1px]" />
               </Link>
             ) : null}
             <span className="text-[10px] text-slate-400">
-              测试连接会先保存当前表单再校验
+              {t("providers.testHint")}
             </span>
           </div>
 
@@ -603,7 +616,7 @@ export default function ProviderCard({
       )}
 
       <p className="mt-3 text-[10px] text-slate-400">
-        密钥仅加密存储在服务端，接口只返回掩码，不会返回明文。
+        {t("providers.keyEncrypted")}
       </p>
     </motion.section>
   );

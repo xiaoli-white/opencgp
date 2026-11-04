@@ -17,6 +17,7 @@ import {
 import clsx from "clsx";
 import { api, ApiError, type AdminUser, type Member } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
 import { formatDateTime } from "@/lib/format";
 import {
   Modal,
@@ -26,10 +27,10 @@ import {
 } from "@/components/common/Dialogs";
 
 const ROLE_OPTIONS = [
-  { value: "viewer", label: "只读" },
-  { value: "editor", label: "编辑" },
-  { value: "admin", label: "管理员" },
-  { value: "owner", label: "所有者" },
+  { value: "viewer", labelKey: "review.roleViewer" },
+  { value: "editor", labelKey: "review.roleEditor" },
+  { value: "admin", labelKey: "review.roleAdmin" },
+  { value: "owner", labelKey: "review.roleOwner" },
 ];
 
 type Tab = "pending" | "all";
@@ -41,6 +42,7 @@ export default function UserReviewCard({
   onNotice: (message: string) => void;
   onError: (message: string) => void;
 }) {
+  const { t } = useI18n();
   const { tenant, me } = useSession();
   const [tab, setTab] = useState<Tab>("pending");
   const [includeDeleted, setIncludeDeleted] = useState(false);
@@ -73,7 +75,7 @@ export default function UserReviewCard({
         setPendingCount(pending?.count ?? (pending?.users ?? []).length);
         setUsers(target === "pending" ? pending?.users ?? [] : list?.users ?? []);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "用户列表加载失败");
+        setError(err instanceof Error ? err.message : t("review.loadFailed"));
       } finally {
         setLoading(false);
       }
@@ -91,10 +93,10 @@ export default function UserReviewCard({
       setError("");
       try {
         await api.approveAdminUser(user.id);
-        onNotice(`已批准 ${user.display_name || user.email}`);
+        onNotice(t("review.approvedNotice", { name: user.display_name || user.email }));
         await load(tab);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "批准失败");
+        setError(err instanceof Error ? err.message : t("review.approveFailed"));
       } finally {
         setBusy("");
       }
@@ -108,12 +110,12 @@ export default function UserReviewCard({
       setError("");
       try {
         await api.rejectAdminUser(user.id, reason.trim());
-        onNotice(`已拒绝 ${user.display_name || user.email}`);
+        onNotice(t("review.rejectedNotice", { name: user.display_name || user.email }));
         setRejecting("");
         setReason("");
         await load(tab);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "拒绝失败");
+        setError(err instanceof Error ? err.message : t("review.rejectFailed"));
       } finally {
         setBusy("");
       }
@@ -122,10 +124,10 @@ export default function UserReviewCard({
   );
 
   const statusLabel = (status: string) => {
-    if (status === "pending") return "待审核";
-    if (status === "active") return "已启用";
-    if (status === "rejected") return "已拒绝";
-    if (status === "deleted") return "已删除";
+    if (status === "pending") return t("review.pendingTab");
+    if (status === "active") return t("review.enabled");
+    if (status === "rejected") return t("review.rejected");
+    if (status === "deleted") return t("review.deleted");
     return status;
   };
 
@@ -135,11 +137,11 @@ export default function UserReviewCard({
     setDialogError("");
     try {
       await api.updateAdminUser(renameTarget.id, payload);
-      onNotice("用户信息已更新");
+      onNotice(t("review.updated"));
       setRenameTarget(null);
       await load(tab);
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "更新失败");
+      setDialogError(err instanceof Error ? err.message : t("review.updateFailed"));
     } finally {
       setDialogBusy(false);
     }
@@ -149,27 +151,34 @@ export default function UserReviewCard({
     setError("");
     try {
       await api.updateAdminUser(user.id, { role });
-      onNotice(`已将 ${user.display_name || user.email} 设为 ${ROLE_OPTIONS.find((item) => item.value === role)?.label ?? role}`);
+      onNotice(
+        t("review.roleChangedNotice", {
+          name: user.display_name || user.email,
+          role: ROLE_OPTIONS.find((item) => item.value === role)
+            ? t(ROLE_OPTIONS.find((item) => item.value === role)!.labelKey)
+            : role,
+        }),
+      );
       await load(tab);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "角色更新失败");
+      setError(err instanceof Error ? err.message : t("review.roleUpdateFailed"));
     }
   };
 
   const resetPassword = async (value: string) => {
     if (!pwdTarget) return;
     if (value.length < 8) {
-      setDialogError("新密码至少 8 位");
+      setDialogError(t("review.passwordTooShort"));
       return;
     }
     setDialogBusy(true);
     setDialogError("");
     try {
       await api.resetAdminPassword(pwdTarget.id, value);
-      onNotice(`已重置 ${pwdTarget.display_name || pwdTarget.email} 的密码`);
+      onNotice(t("review.passwordResetNotice", { name: pwdTarget.display_name || pwdTarget.email }));
       setPwdTarget(null);
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "重置失败");
+      setDialogError(err instanceof Error ? err.message : t("review.resetFailed"));
     } finally {
       setDialogBusy(false);
     }
@@ -206,20 +215,20 @@ export default function UserReviewCard({
       });
       onNotice(
         transferTarget
-          ? `用户已删除，作品已转移（软删除可恢复）`
-          : "用户已删除（软删除，可恢复）",
+          ? t("review.deletedTransferred")
+          : t("review.deletedNotice"),
       );
       setDeleteTarget(null);
       setTransferTarget("");
       await load(tab, includeDeleted);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "删除失败";
+      const message = err instanceof Error ? err.message : t("review.deleteFailed");
       setDialogError(message);
       if (err instanceof ApiError && err.status === 409) {
         setDialogError(
           transferMembers.length === 0
-            ? `${message}（当前空间暂无可转移成员，可选择「不转移直接删」）`
-            : `${message}（请先在下方选择作品转移对象）`,
+            ? t("review.noTransferAvailable", { message })
+            : t("review.selectTransferFirst", { message }),
         );
       }
     } finally {
@@ -233,10 +242,10 @@ export default function UserReviewCard({
       setError("");
       try {
         await api.restoreAdminUser(user.id);
-        onNotice(`已恢复 ${user.display_name || user.email}`);
+        onNotice(t("review.restoredNotice", { name: user.display_name || user.email }));
         await load(tab, includeDeleted);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "恢复失败");
+        setError(err instanceof Error ? err.message : t("review.restoreFailed"));
       } finally {
         setBusy("");
       }
@@ -253,7 +262,7 @@ export default function UserReviewCard({
       <div className="flex flex-wrap items-center gap-2">
         <ShieldCheck size={15} className="text-indigo-500 dark:text-indigo-300" />
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-          用户管理
+          {t("review.title")}
         </h2>
         <span
           className={clsx(
@@ -263,14 +272,14 @@ export default function UserReviewCard({
               : "chip-muted",
           )}
         >
-          待审核 {pendingCount}
+          {t("review.pendingBadge", { count: pendingCount })}
         </span>
         <span className="flex-1" />
         <div className="flex items-center gap-1 rounded-full bg-white/50 p-0.5 dark:bg-white/[0.06]">
           {(
             [
-              { value: "pending", label: "待审核" },
-              { value: "all", label: "全部" },
+              { value: "pending", label: t("review.pendingTab") },
+              { value: "all", label: t("review.allTab") },
             ] as { value: Tab; label: string }[]
           ).map((item) => (
             <button
@@ -295,23 +304,23 @@ export default function UserReviewCard({
             "btn-quiet px-2 py-1 text-[10.5px]",
             includeDeleted && "text-indigo-600 dark:text-indigo-300",
           )}
-          title="是否显示已删除用户"
+          title={t("review.showDeleted")}
         >
-          {includeDeleted ? "隐藏已删除" : "显示已删除"}
+          {includeDeleted ? t("review.showDeletedOff") : t("review.showDeletedOn")}
         </button>
         <button
           type="button"
           onClick={() => void load(tab, includeDeleted)}
           disabled={loading}
           className="btn-quiet px-2 py-1 text-[10.5px]"
-          title="刷新"
+          title={t("common.refresh")}
         >
           {loading ? (
             <Loader2 size={11} className="animate-spin" />
           ) : (
             <RefreshCcw size={11} />
           )}
-          刷新
+          {t("common.refresh")}
         </button>
       </div>
 
@@ -323,7 +332,7 @@ export default function UserReviewCard({
             type="button"
             onClick={() => setError("")}
             className="shrink-0 text-rose-400 transition hover:text-rose-600"
-            aria-label="关闭"
+            aria-label={t("common.close")}
           >
             <X size={11} />
           </button>
@@ -334,11 +343,11 @@ export default function UserReviewCard({
         {loading ? (
           <p className="flex items-center gap-2 text-[11px] text-slate-400">
             <Loader2 size={12} className="animate-spin" />
-            加载中…
+            {t("common.loading")}
           </p>
         ) : users.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-white/60 bg-white/40 px-3 py-3 text-[11px] text-slate-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-400">
-            {tab === "pending" ? "暂无待审核用户" : "暂无用户"}
+            {tab === "pending" ? t("review.empty") : t("review.emptyAll")}
           </p>
         ) : (
           users.map((user) => (
@@ -355,7 +364,7 @@ export default function UserReviewCard({
                     {user.display_name || user.email}
                   </span>
                   <span className="block truncate text-[10px] text-slate-400">
-                    {user.email} · 注册 {formatDateTime(user.created_at)}
+                    {user.email} · {t("review.registeredAt")} {formatDateTime(user.created_at)}
                   </span>
                 </span>
                 <span
@@ -384,7 +393,7 @@ export default function UserReviewCard({
                       ) : (
                         <UserCheck size={11} />
                       )}
-                      批准
+                      {t("review.approve")}
                     </button>
                     <button
                       type="button"
@@ -395,15 +404,15 @@ export default function UserReviewCard({
                       className="btn-quiet px-2 py-1 text-[10.5px] text-rose-500"
                     >
                       <UserX size={11} />
-                      拒绝
+                      {t("review.reject")}
                     </button>
                   </>
                 ) : null}
                 <RowMenu
-                  label={`管理 ${user.display_name || user.email}`}
+                  label={t("review.manageNamed", { name: user.display_name || user.email })}
                   items={[
                     {
-                      label: "修改显示名",
+                      label: t("review.editName"),
                       icon: <Pencil size={11} />,
                       onClick: () => {
                         setDialogError("");
@@ -411,7 +420,7 @@ export default function UserReviewCard({
                       },
                     },
                     {
-                      label: "重置密码",
+                      label: t("review.resetPassword"),
                       icon: <KeyRound size={11} />,
                       onClick: () => {
                         setDialogError("");
@@ -421,14 +430,14 @@ export default function UserReviewCard({
                     ...(user.status === "deleted"
                       ? [
                           {
-                            label: "恢复用户",
+                            label: t("review.restoreUser"),
                             icon: <RotateCcw size={11} />,
                             onClick: () => void restoreUser(user),
                           },
                         ]
                       : [
                           {
-                            label: "删除用户",
+                            label: t("review.deleteUser"),
                             icon: <Trash2 size={11} />,
                             danger: true,
                             onClick: () => void openDelete(user),
@@ -440,11 +449,11 @@ export default function UserReviewCard({
                   value={user.role ?? "viewer"}
                   onChange={(event) => void changeRole(user, event.target.value)}
                   className="select w-auto px-1.5 py-1 text-[10.5px]"
-                  title="修改系统角色"
+                  title={t("review.roleLabel")}
                 >
                   {ROLE_OPTIONS.map((item) => (
                     <option key={item.value} value={item.value}>
-                      {item.label}
+                      {t(item.labelKey)}
                     </option>
                   ))}
                 </select>
@@ -455,7 +464,7 @@ export default function UserReviewCard({
                   <input
                     value={reason}
                     onChange={(event) => setReason(event.target.value)}
-                    placeholder="拒绝原因（可选）"
+                    placeholder={t("review.rejectReason")}
                     className="input flex-1 py-1 text-[11px]"
                   />
                   <button
@@ -469,7 +478,7 @@ export default function UserReviewCard({
                     ) : (
                       <CheckCircle2 size={11} />
                     )}
-                    确认拒绝
+                    {t("review.submitReject")}
                   </button>
                   <button
                     type="button"
@@ -479,7 +488,7 @@ export default function UserReviewCard({
                     }}
                     className="btn-quiet px-2 py-1 text-[10.5px]"
                   >
-                    取消
+                    {t("common.cancel")}
                   </button>
                 </div>
               ) : null}
@@ -490,8 +499,8 @@ export default function UserReviewCard({
 
       <PromptDialog
         open={Boolean(renameTarget)}
-        title="修改显示名"
-        label="显示名"
+        title={t("review.editName")}
+        label={t("review.displayName")}
         initial={renameTarget?.display_name ?? ""}
         busy={dialogBusy}
         error={dialogError}
@@ -501,10 +510,10 @@ export default function UserReviewCard({
 
       <PromptDialog
         open={Boolean(pwdTarget)}
-        title="重置密码"
-        label="新密码（至少 8 位）"
+        title={t("review.resetPassword")}
+        label={t("review.newPasswordLabel")}
         initial=""
-        confirmLabel="重置"
+        confirmLabel={t("review.reset")}
         busy={dialogBusy}
         error={dialogError}
         onConfirm={(value) => void resetPassword(value)}
@@ -513,22 +522,24 @@ export default function UserReviewCard({
 
       <Modal
         open={Boolean(deleteTarget)}
-        title="删除用户"
-        subtitle={`${deleteTarget?.display_name || deleteTarget?.email || ""} 的账号将被软删除，可由「显示已删除」恢复。`}
+        title={t("review.deleteUser")}
+        subtitle={t("review.deleteSubtitle", {
+          name: deleteTarget?.display_name || deleteTarget?.email || "",
+        })}
         onClose={() => setDeleteTarget(null)}
       >
         <div className="space-y-3">
           <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[10.5px] leading-relaxed text-amber-700 dark:text-amber-300">
-            该用户拥有的课程与长篇作品需要先转移给其他成员；选择「不转移直接删」可强制软删除。
+            {t("review.deleteHint")}
           </div>
           <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-            作品转移到
+            {t("review.transferTo")}
             <select
               value={transferTarget}
               onChange={(event) => setTransferTarget(event.target.value)}
               className="select mt-1 w-full py-1.5 text-[11px]"
             >
-              <option value="">不转移直接删</option>
+              <option value="">{t("review.noTransfer")}</option>
               {transferMembers.map((member) => (
                 <option key={member.user_id} value={member.user_id}>
                   {member.user_display_name || member.user_email}
@@ -538,7 +549,7 @@ export default function UserReviewCard({
           </label>
           {transferMembers.length === 0 ? (
             <p className="text-[10px] text-slate-400 dark:text-slate-500">
-              当前空间暂无可转移成员。
+              {t("review.noTransferMembers")}
             </p>
           ) : null}
           {dialogError ? (
@@ -553,7 +564,7 @@ export default function UserReviewCard({
               onClick={() => setDeleteTarget(null)}
               className="btn btn-quiet"
             >
-              取消
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -561,7 +572,7 @@ export default function UserReviewCard({
               disabled={dialogBusy}
               className="btn btn-quiet text-rose-600 dark:text-rose-300"
             >
-              强制软删除
+              {t("review.forceDelete")}
             </button>
             <button
               type="button"
@@ -570,7 +581,7 @@ export default function UserReviewCard({
               className="btn btn-primary"
             >
               {dialogBusy ? <Loader2 size={13} className="animate-spin" /> : null}
-              确认删除
+              {t("review.confirmDelete")}
             </button>
           </div>
         </div>

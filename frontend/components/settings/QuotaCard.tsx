@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { api, type Quota, type QuotaUsage } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
 
 function formatBytes(value: number): string {
   if (!value) return "0 B";
@@ -20,6 +21,7 @@ export default function QuotaCard({
   onError: (message: string) => void;
 }) {
   const { can, roleName } = useSession();
+  const { t } = useI18n();
   const canQuota = can("manage_quota");
 
   const [quota, setQuota] = useState<Quota | null>(null);
@@ -50,9 +52,9 @@ export default function QuotaCard({
     try {
       applyQuota(await api.getQuota());
     } catch (err) {
-      onError(err instanceof Error ? err.message : "配额加载失败");
+      onError(err instanceof Error ? err.message : t("quotas.loadFailed"));
     }
-  }, [applyQuota, onError]);
+  }, [applyQuota, onError, t]);
 
   useEffect(() => {
     void load();
@@ -69,9 +71,9 @@ export default function QuotaCard({
         storage_bytes: unlimited.storage ? 0 : limits.storage_bytes,
       });
       applyQuota(next);
-      onNotice("用量与配额已更新");
+      onNotice(t("quotas.updated"));
     } catch (err) {
-      onError(err instanceof Error ? err.message : "保存失败");
+      onError(err instanceof Error ? err.message : t("quotas.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -86,10 +88,10 @@ export default function QuotaCard({
       <div className="flex flex-wrap items-center gap-2">
         <ShieldCheck size={15} className="text-indigo-500 dark:text-indigo-300" />
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-          用量与配额
+          {t("quotas.title")}
         </h2>
-        {quota ? <span className="chip-muted">周期 {quota.period}</span> : null}
-        <span className="chip-muted">{roleName || "只读"}</span>
+        {quota ? <span className="chip-muted">{t("quotas.period", { period: quota.period })}</span> : null}
+        <span className="chip-muted">{roleName || t("common.readOnly")}</span>
       </div>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-3">
@@ -98,19 +100,19 @@ export default function QuotaCard({
             key: "monthly_generations" as const,
             flag: "generations" as const,
             usageKey: "generations" as const,
-            label: "每月生成次数",
+            label: t("quotas.generations"),
           },
           {
             key: "monthly_uploads" as const,
             flag: "uploads" as const,
             usageKey: "uploads" as const,
-            label: "每月上传次数",
+            label: t("quotas.uploads"),
           },
           {
             key: "storage_bytes" as const,
             flag: "storage" as const,
             usageKey: "storage_bytes" as const,
-            label: "存储上限",
+            label: t("quotas.storage"),
           },
         ].map((field) => {
           const isUnlimited = unlimited[field.flag];
@@ -130,7 +132,7 @@ export default function QuotaCard({
               <div className="mb-1 flex items-center justify-between gap-2">
                 <span className="text-[11px] text-slate-500 dark:text-slate-400">
                   {field.label}
-                  {field.key === "storage_bytes" ? "（MB）" : ""}
+                  {field.key === "storage_bytes" ? t("quotas.storageMb") : ""}
                 </span>
                 <label className="flex cursor-pointer items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400">
                   <input
@@ -142,7 +144,7 @@ export default function QuotaCard({
                     disabled={!canQuota}
                     className="h-3 w-3 accent-indigo-500"
                   />
-                  不限制
+                  {t("quotas.unlimited")}
                 </label>
               </div>
               <input
@@ -164,7 +166,7 @@ export default function QuotaCard({
                 }}
                 disabled={!canQuota || isUnlimited}
                 className="input disabled:opacity-50"
-                placeholder={isUnlimited ? "不限" : ""}
+                placeholder={isUnlimited ? t("quotas.unlimitedShort") : ""}
               />
               <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-slate-400/20">
                 <div
@@ -174,10 +176,14 @@ export default function QuotaCard({
               </div>
               <span className="mt-1 block text-[10px] text-slate-400">
                 {unlimitedFlag
-                  ? `已用 ${field.key === "storage_bytes" ? formatBytes(used) : used} · 不限`
-                  : `已用 ${field.key === "storage_bytes" ? formatBytes(used) : used} / ${
-                      field.key === "storage_bytes" ? formatBytes(limitValue) : limitValue
-                    }`}
+                  ? t("quotas.usedUnlimited", {
+                      used: field.key === "storage_bytes" ? formatBytes(used) : used,
+                    })
+                  : t("quotas.usedOf", {
+                      used: field.key === "storage_bytes" ? formatBytes(used) : used,
+                      limit:
+                        field.key === "storage_bytes" ? formatBytes(limitValue) : limitValue,
+                    })}
               </span>
             </div>
           );
@@ -188,11 +194,11 @@ export default function QuotaCard({
         type="button"
         onClick={() => void saveQuota()}
         disabled={!canQuota || busy}
-        title={canQuota ? "" : "当前角色无权管理配额"}
+        title={canQuota ? "" : t("quotas.noQuota")}
         className="btn btn-primary mt-4"
       >
         {busy ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
-        保存配额
+        {t("quotas.save")}
       </button>
     </motion.section>
   );
