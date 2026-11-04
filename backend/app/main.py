@@ -58,6 +58,7 @@ from app.services.media import detect_image_type
 from app.services.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
 from app.services.metrics import get_metrics
 from app.services.textproc import line_diff
+from app.services.validators import ValidatorRunner
 from app.services.errors import (
     ExecLanguageError,
     ExecUnavailableError,
@@ -108,6 +109,10 @@ from app.services.errors import (
     UserDeleteForbiddenError,
     UserHasWorksError,
     CreationProfileNotFoundError,
+    ProfileNotFoundError,
+    BuiltinProfileError,
+    ProfileInUseError,
+    ProfileInvalidError,
     SourceNotFoundError,
     ThreadNotFoundError,
     ProviderCallError,
@@ -118,6 +123,10 @@ container = get_container()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        container.profiles().ensure_builtin()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[profiles] 内置预设播种失败: {exc!r}")
     service = container.job_service()
     try:
         service.recover_stale()
@@ -512,6 +521,7 @@ class CourseCreateRequest(BaseModel):
     audience: str = ""
     difficulty: str = "intermediate"
     language: str = "zh"
+    profile_id: str = ""
 
 
 class LessonCreateRequest(BaseModel):
@@ -621,6 +631,29 @@ def _require_lesson(
     return lesson
 
 
+def _course_spec(course: Course | None) -> Any:
+    try:
+        return container.profiles().resolve_for_course(course)
+    except Exception:
+        return None
+
+
+def _longform_spec(longform: Any) -> Any:
+    try:
+        return container.profiles().resolve_for_longform(longform)
+    except Exception:
+        return None
+
+
+async def _validation_report(spec: Any, content: str, extra: dict[str, Any]) -> Any:
+    if spec is None or not content:
+        return None
+    try:
+        return await container.validators().run(spec, content, extra)
+    except Exception:
+        return None
+
+
 @app.post("/api/v1/courses", status_code=201)
 def create_course(
     req: CourseCreateRequest, ctx: AuthContext = Depends(get_auth_context)
@@ -634,6 +667,7 @@ def create_course(
         language=req.language,
         tenant_id=_tenant_of(ctx),
         user_id=ctx.user.id,
+        profile_id=req.profile_id,
     )
     return course.model_dump()
 
@@ -724,7 +758,7 @@ async def generate_lesson(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_lesson(lesson_id, ctx, "write")
+    lesson = _require_lesson(lesson_id, ctx, "write")
     _guard_lock(lesson_id, ctx)
     payload = req or LessonGenerateRequest()
     _charge(ctx, "generate", 1, ref_id=lesson_id)
@@ -739,12 +773,58 @@ async def generate_lesson(
             expected_version=payload.expected_version,
             tenant_id=_tenant_of(ctx),
             llm=container.llm_for(ctx.user.id),
+            spec=_course_spec(container.course_repository().get_course(lesson.course_id)),
         )
     except LessonNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
     except VersionConflictError as exc:
         return _conflict(exc)
     return result.model_dump()
+
+
+class LessonValidateRequest(BaseModel):
+    profile_id: str = ""
+    validators: list[str] | None = None
+
+
+@app.post("/api/v1/lessons/{lesson_id}/validate")
+async def validate_lesson(
+    lesson_id: str,
+    req: LessonValidateRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    lesson = _require_lesson(lesson_id, ctx)
+    payload = req or LessonValidateRequest()
+    course = container.course_repository().get_course(lesson.course_id)
+    spec = _course_spec(course)
+    if payload.profile_id:
+        resolved = container.profiles().resolve(payload.profile_id)
+        if resolved is not None:
+            spec = resolved
+    if spec is None:
+        raise HTTPException(status_code=404, detail="未找到可用的创作配置")
+    if payload.validators:
+        names = [item.strip().lower() for item in payload.validators if item and item.strip()]
+        spec = spec.model_copy(
+            update={"validation": spec.validation.model_copy(update={"validators": names})}
+        )
+    report = await container.validators().run(
+        spec,
+        lesson.content or "",
+        {
+            "lesson_id": lesson.id,
+            "course_id": lesson.course_id,
+            "title": lesson.title,
+            "setting_book": spec.assets.setting_book,
+        },
+    )
+    return {
+        "lesson_id": lesson_id,
+        "profile_id": (course.profile_id if course else "") or "",
+        "length": len(lesson.content or ""),
+        **report.model_dump(),
+    }
 
 
 @app.post("/api/v1/lessons/{lesson_id}/factcheck")
@@ -1110,7 +1190,7 @@ async def generate_course_blueprint(
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
     payload = req or BlueprintGenerateRequest()
-    _require_course(course_id, ctx, "write")
+    course = _require_course(course_id, ctx, "write")
     _charge(ctx, "blueprint", 1, ref_id=course_id)
     try:
         blueprint = await container.blueprint().generate(
@@ -1121,6 +1201,7 @@ async def generate_course_blueprint(
             focus=payload.focus,
             tenant_id=_tenant_of(ctx),
             llm=container.llm_for(ctx.user.id),
+            spec=_course_spec(course),
         )
     except NoEvidenceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -2637,32 +2718,62 @@ async def create_longform(
     _enforce(ctx, "write")
     _charge(ctx, "longform", 1, ref_id=req.title[:40])
     template = None
+    work_spec = None
     if req.profile_id:
         try:
-            template = container.creation_profiles().get(
-                req.profile_id, _tenant_of(ctx)
-            )
-        except CreationProfileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            work_spec = container.profiles().get_spec(ctx, req.profile_id)
+        except ProfileNotFoundError:
+            work_spec = None
+        except (PermissionDeniedError, BuiltinProfileError):
+            work_spec = None
+        if work_spec is None:
+            try:
+                template = container.creation_profiles().get(
+                    req.profile_id, _tenant_of(ctx)
+                )
+            except CreationProfileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
     genre = req.genre or (template.genre if template else "article")
     citation_policy = req.citation_policy or (
-        template.citation_policy if template else "optional"
+        work_spec.grounding.citation_policy
+        if work_spec is not None
+        else (template.citation_policy if template else "optional")
     )
-    tone = req.tone if req.tone is not None else (template.tone if template else "")
+    tone = (
+        req.tone
+        if req.tone is not None
+        else (
+            work_spec.voice.tone
+            if work_spec is not None
+            else (template.tone if template else "")
+        )
+    )
     audience = (
         req.audience
         if req.audience is not None
         else (template.audience if template else "")
     )
-    pov = req.pov if req.pov is not None else (template.pov if template else "")
-    target_words = req.target_words or (template.target_words if template else 3000)
+    pov = (
+        req.pov
+        if req.pov is not None
+        else (
+            work_spec.voice.pov
+            if work_spec is not None
+            else (template.pov if template else "")
+        )
+    )
+    target_words = req.target_words or (
+        work_spec.unit.default_words
+        if work_spec is not None
+        else (template.target_words if template else 3000)
+    )
     profile = LongformProfile(
         genre=genre,
         tone=tone,
         audience=audience,
         pov=pov,
         citation_policy=citation_policy,
-        unit_name="节",
+        unit_name=work_spec.unit.name if work_spec is not None else "节",
     )
     longform = await container.longform().create(
         req.title,
@@ -2672,10 +2783,10 @@ async def create_longform(
         tenant_id=_tenant_of(ctx),
         user_id=ctx.user.id,
         llm=container.llm_for(ctx.user.id),
+        profile_id=req.profile_id,
+        spec=work_spec,
     )
-    payload = longform.model_dump()
-    payload["profile_id"] = req.profile_id
-    return payload
+    return longform.model_dump()
 
 
 @app.get("/api/v1/longforms")
@@ -2723,10 +2834,16 @@ async def generate_longform_section(
         raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
     except LongformNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    report = await _validation_report(
+        _longform_spec(longform),
+        longform.content,
+        {"longform_id": longform_id, "section_id": section.id, "title": longform.title},
+    )
     return {
         "section_id": section.id,
         "content": section.content,
         "longform": longform.model_dump(),
+        "validation": report.model_dump() if report else None,
     }
 
 
@@ -2749,7 +2866,12 @@ async def generate_longform(
         tenant_id=_tenant_of(ctx),
         llm=container.llm_for(ctx.user.id),
     )
-    return updated.model_dump()
+    report = await _validation_report(
+        _longform_spec(updated),
+        updated.content,
+        {"longform_id": longform_id, "title": updated.title},
+    )
+    return {**updated.model_dump(), "validation": report.model_dump() if report else None}
 
 
 @app.post("/api/v1/longforms/{longform_id}/rewrite")
@@ -2768,6 +2890,7 @@ async def rewrite_longform(
             mode=req.mode,
             expected_version=req.expected_version,
             llm=container.llm_for(ctx.user.id),
+            spec=_longform_spec(container.longform().get(longform_id)),
         )
     except VersionConflictError as exc:
         return _conflict(exc)
@@ -2775,7 +2898,12 @@ async def rewrite_longform(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return updated.model_dump()
+    report = await _validation_report(
+        _longform_spec(updated),
+        updated.content,
+        {"longform_id": longform_id, "title": updated.title},
+    )
+    return {**updated.model_dump(), "validation": report.model_dump() if report else None}
 
 
 @app.get("/api/v1/longforms/{longform_id}/versions/diff")
@@ -3162,6 +3290,7 @@ class CourseUpdateRequest(BaseModel):
     audience: str | None = None
     difficulty: str | None = None
     language: str | None = None
+    profile_id: str | None = None
 
 
 @app.patch("/api/v1/courses/{course_id}")
@@ -3179,6 +3308,7 @@ def update_course(
         audience=req.audience,
         difficulty=req.difficulty,
         language=req.language,
+        profile_id=req.profile_id,
     )
     if course is None:
         raise HTTPException(status_code=404, detail=f"课程不存在: {course_id}")
@@ -3275,6 +3405,7 @@ class LongformUpdateRequest(BaseModel):
     title: str | None = None
     profile: dict[str, Any] | None = None
     target_words: int | None = Field(default=None, ge=200, le=50000)
+    profile_id: str | None = None
 
 
 @app.patch("/api/v1/longforms/{longform_id}")
@@ -3291,6 +3422,7 @@ def update_longform(
             title=req.title,
             profile=req.profile,
             target_words=req.target_words,
+            profile_id=req.profile_id,
         )
     except LongformNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -3528,6 +3660,195 @@ def delete_creation_profile(
     except PermissionDeniedError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     return {"ok": bool(removed), "profile_id": profile_id}
+
+
+class ProfileCreateRequest(BaseModel):
+    name: str = Field(min_length=1)
+    description: str = ""
+    spec: dict[str, Any] | None = None
+    is_shared: bool = False
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    spec: dict[str, Any] | None = None
+    is_shared: bool | None = None
+
+
+class ProfileDuplicateRequest(BaseModel):
+    name: str | None = None
+
+
+class ProfileValidateRequest(BaseModel):
+    spec: dict[str, Any] | None = None
+
+
+class ProfilePreviewRequest(BaseModel):
+    sample: dict[str, Any] | None = None
+
+
+class ProfileShareItem(BaseModel):
+    user_id: str = Field(min_length=1)
+    level: str = "read"
+
+
+class ProfileShareReplaceRequest(BaseModel):
+    shares: list[ProfileShareItem] = Field(default_factory=list)
+
+
+def _profile_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, ProfileNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, (BuiltinProfileError, ProfileInvalidError, ValueError)):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, ProfileInUseError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, PermissionDeniedError):
+        return HTTPException(status_code=403, detail=str(exc))
+    raise exc
+
+
+def _privileged_members(ctx: AuthContext) -> bool:
+    return container.auth_service().can(ctx, "manage_members")
+
+
+@app.get("/api/v1/profiles")
+def list_work_profiles(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    items = container.profiles().list(ctx)
+    return {"count": len(items), "profiles": items}
+
+
+@app.post("/api/v1/profiles", status_code=201)
+def create_work_profile(
+    req: ProfileCreateRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    try:
+        return container.profiles().create(
+            ctx,
+            name=req.name,
+            spec=req.spec,
+            is_shared=req.is_shared,
+            description=req.description,
+        )
+    except Exception as exc:
+        raise _profile_error(exc) from exc
+
+
+@app.post("/api/v1/profiles/validate")
+def validate_work_profile(
+    req: ProfileValidateRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    return container.profiles().validate(req.spec)
+
+
+@app.get("/api/v1/profiles/{profile_id}")
+def get_work_profile(
+    profile_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    try:
+        return container.profiles().get(ctx, profile_id)
+    except Exception as exc:
+        raise _profile_error(exc) from exc
+
+
+@app.patch("/api/v1/profiles/{profile_id}")
+def update_work_profile(
+    profile_id: str,
+    req: ProfileUpdateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    try:
+        return container.profiles().update(
+            ctx,
+            profile_id,
+            name=req.name,
+            spec=req.spec,
+            is_shared=req.is_shared,
+            description=req.description,
+        )
+    except Exception as exc:
+        raise _profile_error(exc) from exc
+
+
+@app.delete("/api/v1/profiles/{profile_id}")
+def delete_work_profile(
+    profile_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    try:
+        return container.profiles().delete(ctx, profile_id)
+    except Exception as exc:
+        raise _profile_error(exc) from exc
+
+
+@app.post("/api/v1/profiles/{profile_id}/duplicate", status_code=201)
+def duplicate_work_profile(
+    profile_id: str,
+    req: ProfileDuplicateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    try:
+        return container.profiles().duplicate(ctx, profile_id, name=req.name)
+    except Exception as exc:
+        raise _profile_error(exc) from exc
+
+
+@app.post("/api/v1/profiles/{profile_id}/preview")
+def preview_work_profile(
+    profile_id: str,
+    req: ProfilePreviewRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    try:
+        return container.profiles().preview(ctx, profile_id, sample=req.sample)
+    except Exception as exc:
+        raise _profile_error(exc) from exc
+
+
+def _profile_shares_payload(profile_id: str, shares: list[Any]) -> dict[str, Any]:
+    payload = container.profiles().share_payload(shares)
+    return {"profile_id": profile_id, "count": len(payload), "shares": payload}
+
+
+@app.get("/api/v1/profiles/{profile_id}/shares")
+def list_profile_shares(
+    profile_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    try:
+        shares = container.profiles().list_shares(
+            ctx, profile_id, privileged=_privileged_members(ctx)
+        )
+    except Exception as exc:
+        raise _profile_error(exc) from exc
+    return _profile_shares_payload(profile_id, shares)
+
+
+@app.put("/api/v1/profiles/{profile_id}/shares")
+def replace_profile_shares(
+    profile_id: str,
+    req: ProfileShareReplaceRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    try:
+        shares = container.profiles().replace_shares(
+            ctx,
+            profile_id,
+            [(item.user_id, item.level) for item in req.shares],
+            privileged=_privileged_members(ctx),
+        )
+    except Exception as exc:
+        raise _profile_error(exc) from exc
+    return _profile_shares_payload(profile_id, shares)
 
 
 @app.get("/api/v1/export/formats")

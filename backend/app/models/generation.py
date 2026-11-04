@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from app.models.citation import Citation
 from app.models.factcheck import CheckResult
+from app.models.validation import ValidationReport
 
 
 class Evidence(BaseModel):
@@ -21,6 +22,7 @@ class GenerationResult(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     factcheck: list[CheckResult] = Field(default_factory=list)
+    validation: ValidationReport | None = None
     grounded: bool = False
     provider: str = ""
     prompt: str = ""

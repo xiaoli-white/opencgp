@@ -31,6 +31,7 @@ class LongformRepository(Protocol):
         title: str | None = None,
         profile: dict[str, Any] | None = None,
         target_words: int | None = None,
+        profile_id: str | None = None,
     ) -> Longform | None:
         ...
 

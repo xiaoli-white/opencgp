@@ -71,6 +71,7 @@ SCHEMA: tuple[str, ...] = (
 COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("courses", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
     ("courses", "user_id", "TEXT NOT NULL DEFAULT ''"),
+    ("courses", "profile_id", "TEXT NOT NULL DEFAULT ''"),
     ("lessons", "last_mode", "TEXT NOT NULL DEFAULT ''"),
     ("lesson_versions", "mode", "TEXT NOT NULL DEFAULT ''"),
 )
@@ -104,6 +105,7 @@ class DatabaseCourseRepository(CourseRepository):
         language: str = "zh",
         tenant_id: str = "",
         user_id: str = "",
+        profile_id: str = "",
     ) -> Course:
         self.ensure_schema()
         now = time.time()
@@ -115,13 +117,14 @@ class DatabaseCourseRepository(CourseRepository):
             difficulty=difficulty,
             language=language,
             user_id=user_id or "",
+            profile_id=profile_id or "",
             created_at=now,
             updated_at=now,
         )
         self.database.execute(
             "INSERT INTO courses (id, title, subtitle, audience, difficulty, language,"
-            " tenant_id, user_id, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " tenant_id, user_id, profile_id, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 course.id,
                 course.title,
@@ -131,6 +134,7 @@ class DatabaseCourseRepository(CourseRepository):
                 course.language,
                 tenant_id or "",
                 user_id or "",
+                course.profile_id,
                 course.created_at,
                 course.updated_at,
             ),
@@ -172,6 +176,7 @@ class DatabaseCourseRepository(CourseRepository):
         audience: str | None = None,
         difficulty: str | None = None,
         language: str | None = None,
+        profile_id: str | None = None,
     ) -> Course | None:
         self.ensure_schema()
         course = self.get_course(course_id)
@@ -185,6 +190,7 @@ class DatabaseCourseRepository(CourseRepository):
             ("audience", audience),
             ("difficulty", difficulty),
             ("language", language),
+            ("profile_id", profile_id),
         ):
             if value is not None:
                 assignments.append(f"{column} = ?")
@@ -599,6 +605,7 @@ def _to_course(row: Mapping[str, Any]) -> Course:
         difficulty=str(row["difficulty"] or "intermediate"),
         language=str(row["language"] or "zh"),
         user_id=str(row["user_id"] or "") if "user_id" in keys else "",
+        profile_id=str(row["profile_id"] or "") if "profile_id" in keys else "",
         created_at=float(row["created_at"]),
         updated_at=float(row["updated_at"]),
     )

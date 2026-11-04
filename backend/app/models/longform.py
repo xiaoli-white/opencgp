@@ -47,6 +47,7 @@ class Longform(BaseModel):
     current_version: int = 0
     target_words: int = 3000
     last_mode: str = ""
+    profile_id: str = ""
     citations: list[Citation] = Field(default_factory=list)
     created_at: float = 0.0
     updated_at: float = 0.0

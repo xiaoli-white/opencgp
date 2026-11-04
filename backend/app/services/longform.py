@@ -20,6 +20,7 @@ from app.models.longform import (
     OutlineSection,
 )
 from app.models.mode import GenerationMode, LOOSE_NOTICE, with_loose_notice
+from app.models.work_profile import ProfileSpec
 from app.ports.llm import LLMProvider
 from app.ports.longform_repository import LongformRepository
 from app.ports.vectorstore import VectorStore
@@ -28,6 +29,7 @@ from app.services.errors import (
     LongformSectionNotFoundError,
     VersionConflictError,
 )
+from app.services.prompting import extra_requirement, prompt_values, unit_name
 
 DEFAULT_SECTIONS = (
     ("introduction", "引子", "用一段场景或问题引出主题，说明读者为什么要读下去。"),
@@ -42,6 +44,13 @@ NO_EVIDENCE_NOTICE = (
     "如需模型自由写作，请改用 loose 模式。"
 )
 SECTION_CHAR_LIMIT = MAX_SECTION_WORDS * 3
+_CN_DIGITS = ("一", "二", "三", "四", "五", "六", "七", "八", "九", "十")
+
+
+def _cn_number(value: int) -> str:
+    if 1 <= value <= len(_CN_DIGITS):
+        return _CN_DIGITS[value - 1]
+    return str(value)
 
 
 class LongformService:
@@ -72,6 +81,8 @@ class LongformService:
         tenant_id: str = "",
         user_id: str = "",
         llm: LLMProvider | None = None,
+        profile_id: str = "",
+        spec: ProfileSpec | None = None,
     ) -> Longform:
         resolved_title = (title or "").strip()
         if not resolved_title:
@@ -80,7 +91,7 @@ class LongformService:
         resolved_words = max(200, min(int(target_words or 3000), 50000))
         provider = llm or self.llm
         outline = await self._build_outline(
-            provider, resolved_title, resolved_profile, resolved_words
+            provider, resolved_title, resolved_profile, resolved_words, spec
         )
         longform = Longform(
             id=f"longform_{uuid.uuid4().hex[:16]}",
@@ -93,6 +104,7 @@ class LongformService:
             current_version=0,
             target_words=resolved_words,
             last_mode=GenerationMode.normalize(mode or self.default_mode).value,
+            profile_id=profile_id or "",
             created_at=time.time(),
             updated_at=time.time(),
         )
@@ -119,6 +131,7 @@ class LongformService:
         title: str | None = None,
         profile: Mapping[str, Any] | None = None,
         target_words: int | None = None,
+        profile_id: str | None = None,
     ) -> Longform:
         longform = self._require(longform_id)
         merged_profile: LongformProfile | None = None
@@ -137,6 +150,7 @@ class LongformService:
             title=resolved_title,
             profile=merged_profile.model_dump() if merged_profile else None,
             target_words=resolved_words,
+            profile_id=profile_id,
         )
         if updated is None:
             raise LongformNotFoundError(longform_id)
@@ -386,6 +400,7 @@ class LongformService:
         mode: str | None = None,
         expected_version: int | None = None,
         llm: LLMProvider | None = None,
+        spec: ProfileSpec | None = None,
     ) -> Longform:
         longform = self._require(longform_id)
         if expected_version is not None and int(expected_version) != longform.current_version:
@@ -398,7 +413,9 @@ class LongformService:
         if getattr(provider, "is_placeholder", False):
             text = self._rewrite_placeholder(longform, instruction)
         else:
-            text = await provider.complete(self._rewrite_prompt(longform, instruction))
+            text = await provider.complete(
+                self._rewrite_prompt(longform, instruction, spec)
+            )
         if resolved_mode is GenerationMode.loose:
             text = with_loose_notice(text)
         applied = self.repository.append_version(
@@ -444,46 +461,110 @@ class LongformService:
         title: str,
         profile: LongformProfile,
         target_words: int,
+        spec: ProfileSpec | None = None,
     ) -> list[OutlineSection]:
         if getattr(provider, "is_placeholder", False):
-            return self._template_outline(target_words)
+            return self._template_outline(target_words, spec)
         try:
             text = await provider.complete(
-                self._outline_prompt(title, profile, target_words)
+                self._outline_prompt(title, profile, target_words, spec)
             )
         except Exception:
-            return self._template_outline(target_words)
+            return self._template_outline(target_words, spec)
         payload = _extract_json_list(text)
         sections = _sections_from_payload(payload, target_words)
-        return sections or self._template_outline(target_words)
+        return sections or self._template_outline(target_words, spec)
 
     @staticmethod
-    def _template_outline(target_words: int) -> list[OutlineSection]:
-        per = max(200, target_words // len(DEFAULT_SECTIONS))
-        return [
-            OutlineSection(
-                id=section_id,
-                title=title,
-                summary=summary,
-                target_words=per,
+    def _template_outline(
+        target_words: int, spec: ProfileSpec | None = None
+    ) -> list[OutlineSection]:
+        if spec is None:
+            per = max(200, target_words // len(DEFAULT_SECTIONS))
+            return [
+                OutlineSection(
+                    id=section_id,
+                    title=title,
+                    summary=summary,
+                    target_words=per,
+                )
+                for section_id, title, summary in DEFAULT_SECTIONS
+            ]
+        bounds = list(spec.structure.sections_per_unit or [2, 5])
+        low = max(1, min(int(bounds[0]), 20))
+        high = max(low, min(int(bounds[1]) if len(bounds) > 1 else low, 20))
+        unit = unit_name(spec, "节")
+        per = max(200, min(int(spec.unit.default_words or 1200), MAX_SECTION_WORDS))
+        try:
+            desired = int(round(max(1, target_words) / float(per)))
+        except Exception:
+            desired = low
+        count = max(low, min(high, desired))
+        sections: list[OutlineSection] = []
+        for index in range(count):
+            if count == 1:
+                title = "正文"
+                summary = f"围绕主题直接展开本{unit}内容。"
+            elif index == 0:
+                title = "引子"
+                summary = "用一段场景或问题引出主题，说明读者为什么要读下去。"
+            elif index == count - 1:
+                title = "结论"
+                summary = "收敛全文，给出可执行的结论与下一步建议。"
+            else:
+                title = f"核心展开（{_cn_number(index)}）"
+                summary = "展开一个关键论点，给出机制、步骤或判断标准。"
+            sections.append(
+                OutlineSection(
+                    id=f"section-{index + 1}",
+                    title=title,
+                    summary=summary,
+                    target_words=per,
+                )
             )
-            for section_id, title, summary in DEFAULT_SECTIONS
-        ]
+        return sections
 
     def _outline_prompt(
-        self, title: str, profile: LongformProfile, target_words: int
+        self,
+        title: str,
+        profile: LongformProfile,
+        target_words: int,
+        spec: ProfileSpec | None = None,
     ) -> str:
-        return "\n".join(
+        unit = unit_name(spec, profile.unit_name or "节")
+        lines = [
+            "你是长文写作规划员，需要为一篇单页长篇生成章节大纲。",
+            f"- 标题：{title}",
+            f"- 体裁：{profile.genre}；语气：{profile.tone or '中性'}；读者：{profile.audience or '通用'}；人称：{profile.pov or '第三人称'}",
+            f"- 目标总字数：{target_words}",
+        ]
+        if spec is not None:
+            bounds = list(spec.structure.sections_per_unit or [2, 6])
+            lines.append(
+                f"- 章节数量：{bounds[0]}-{bounds[-1]} 个{unit}；每个{unit}约 "
+                f"{spec.unit.default_words} 字"
+            )
+        lines.extend(
             [
-                "你是长文写作规划员，需要为一篇单页长篇生成章节大纲。",
-                f"- 标题：{title}",
-                f"- 体裁：{profile.genre}；语气：{profile.tone or '中性'}；读者：{profile.audience or '通用'}；人称：{profile.pov or '第三人称'}",
-                f"- 目标总字数：{target_words}",
-                "要求：4-7 个章节，首尾必须包含引子与结论。",
+                f"要求：4-7 个{unit}，首尾必须包含引子与结论。",
                 "只输出 JSON 数组，不要 Markdown 代码块与解释，元素结构：",
                 '{"id":"section-1","title":"章节标题","summary":"本章要点","target_words":600}',
             ]
         )
+        extra = extra_requirement(
+            spec,
+            "outline",
+            prompt_values(
+                spec,
+                title=title,
+                unit=unit,
+                audience=profile.audience or "",
+                tone=profile.tone or "",
+            ),
+        )
+        if extra:
+            lines.extend(["", extra])
+        return "\n".join(lines)
 
     async def _evidence(
         self,
@@ -614,17 +695,30 @@ class LongformService:
         lines.append("只输出本节正文 Markdown，不要输出解释。")
         return "\n".join(lines)
 
-    def _rewrite_prompt(self, longform: Longform, instruction: str) -> str:
-        return "\n".join(
-            [
-                "你是资深编辑，请按要求重写下面这篇单页长篇，保留原有事实与结构，输出完整正文。",
-                f"- 标题：{longform.title}",
-                f"- 改写要求：{instruction}",
-                "",
-                "原文：",
-                longform.content[:6000],
-            ]
+    def _rewrite_prompt(
+        self, longform: Longform, instruction: str, spec: ProfileSpec | None = None
+    ) -> str:
+        lines = [
+            "你是资深编辑，请按要求重写下面这篇单页长篇，保留原有事实与结构，输出完整正文。",
+            f"- 标题：{longform.title}",
+            f"- 改写要求：{instruction}",
+        ]
+        extra = extra_requirement(
+            spec,
+            "revise",
+            prompt_values(
+                spec,
+                title=longform.title,
+                unit=longform.profile.unit_name or "",
+                audience=longform.profile.audience or "",
+                tone=longform.profile.tone or "",
+                instruction=instruction,
+            ),
         )
+        if extra:
+            lines.extend(["", extra])
+        lines.extend(["", "原文：", longform.content.strip()])
+        return "\n".join(lines)
 
     @staticmethod
     def _rewrite_placeholder(longform: Longform, instruction: str) -> str:

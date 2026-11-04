@@ -46,6 +46,10 @@ SCHEMA: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_longform_versions ON longform_versions(longform_id, version)",
 )
 
+COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("longforms", "profile_id", "TEXT NOT NULL DEFAULT ''"),
+)
+
 
 class DatabaseLongformRepository(LongformRepository):
     def __init__(self, database: Database) -> None:
@@ -57,6 +61,13 @@ class DatabaseLongformRepository(LongformRepository):
             return
         for statement in SCHEMA:
             self.database.execute(statement)
+        for table, column, ddl in COLUMN_MIGRATIONS:
+            columns = {
+                str(row["name"])
+                for row in self.database.fetchall(f"PRAGMA table_info({table})")
+            }
+            if column not in columns:
+                self.database.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         self._schema_ready = True
 
     def create(self, longform: Longform) -> Longform:
@@ -68,8 +79,8 @@ class DatabaseLongformRepository(LongformRepository):
             INSERT INTO longforms
                 (id, tenant_id, user_id, title, profile_json, outline_json, content,
                  status, current_version, target_words, last_mode, citations_json,
-                 created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 profile_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 longform.id,
@@ -84,6 +95,7 @@ class DatabaseLongformRepository(LongformRepository):
                 int(longform.target_words),
                 longform.last_mode,
                 _dump_citations(longform.citations),
+                longform.profile_id,
                 created,
                 now,
             ),
@@ -127,6 +139,7 @@ class DatabaseLongformRepository(LongformRepository):
         title: str | None = None,
         profile: dict[str, Any] | None = None,
         target_words: int | None = None,
+        profile_id: str | None = None,
     ) -> Longform | None:
         self.ensure_schema()
         current = self.get(longform_id)
@@ -158,6 +171,9 @@ class DatabaseLongformRepository(LongformRepository):
         if target_words is not None:
             sets.append("target_words = ?")
             params.append(int(target_words))
+        if profile_id is not None:
+            sets.append("profile_id = ?")
+            params.append(profile_id)
         params.append(longform_id)
         self.database.execute(
             f"UPDATE longforms SET {', '.join(sets)} WHERE id = ?", tuple(params)
@@ -337,6 +353,7 @@ def _row_to_longform(row: Mapping[str, Any]) -> Longform:
         citations=[item for item in citations if isinstance(item, dict)]
         if isinstance(citations, list)
         else [],
+        profile_id=str(row["profile_id"] or ""),
         created_at=float(row["created_at"] or 0.0),
         updated_at=float(row["updated_at"] or 0.0),
     )

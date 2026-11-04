@@ -19,6 +19,7 @@ from app.ports.blueprint_repository import BlueprintRepository
 from app.ports.course_repository import CourseRepository
 from app.ports.llm import LLMProvider
 from app.ports.vectorstore import VectorStore
+from app.models.work_profile import ProfileSpec
 from app.services.errors import (
     BlueprintNotFoundError,
     BlueprintParseError,
@@ -26,6 +27,12 @@ from app.services.errors import (
     LessonNotFoundError,
     NoEvidenceError,
     VersionConflictError,
+)
+from app.services.prompting import (
+    extra_requirement,
+    prompt_values,
+    system_prefix,
+    unit_name,
 )
 
 NO_EVIDENCE_MESSAGE = (
@@ -45,6 +52,49 @@ _STOPWORDS = {
     "以及", "因为", "所以", "但是", "如果", "就是", "不是", "没有", "如何", "什么",
     "内容", "部分", "以下", "上面", "下面", "时候", "问题", "方式", "情况", "通过",
 }
+
+_STAGE_TITLE_POOL = (
+    "入门与全景",
+    "核心机制",
+    "实践与进阶",
+    "工程化落地",
+    "进阶专题",
+    "综合实战",
+    "复盘与自测",
+    "前沿拓展",
+)
+
+_NODE_HINTS = (
+    ("{title}：问题域与价值", "说明「{title}」要解决的问题、适用场景与不适用场景。"),
+    ("核心概念与术语地图", "梳理「{title}」的关键概念及其相互关系。"),
+    ("学习路径与前置条件", "明确学习顺序、所需基础与自检方式。"),
+    ("关键机制拆解", "拆解核心机制的输入、处理过程与输出。"),
+    ("典型工作流", "走通一条从准备到交付的完整工作流。"),
+    ("常见误区与边界", "识别误用场景、失效边界与排查思路。"),
+    ("动手实践：最小可运行样例", "完成一个最小可运行样例并验证结果。"),
+    ("工程化落地与协作", "讨论可维护性、协作方式与质量保障。"),
+    ("进阶延伸与自测", "给出延伸方向与自测清单。"),
+)
+
+
+def _stage_titles(spec: ProfileSpec | None) -> list[str]:
+    if spec is None:
+        return list(_STAGE_TITLE_POOL[:3])
+    depth = int(spec.structure.depth or 2)
+    count = max(2, min(len(_STAGE_TITLE_POOL), depth * 2))
+    return list(_STAGE_TITLE_POOL[:count])
+
+
+def _node_counts(spec: ProfileSpec | None, stage_count: int) -> list[int]:
+    if spec is None:
+        return [3] * stage_count
+    low = max(1, int(spec.unit.min_units or 1))
+    high = max(low, int(spec.unit.max_units or 60))
+    total = min(high, max(low, stage_count * 3))
+    if total < stage_count:
+        return [1] * stage_count
+    base, remainder = divmod(total, stage_count)
+    return [base + (1 if index < remainder else 0) for index in range(stage_count)]
 
 
 class BlueprintService:
@@ -79,6 +129,7 @@ class BlueprintService:
         focus: str = "",
         tenant_id: str = "",
         llm: LLMProvider | None = None,
+        spec: ProfileSpec | None = None,
     ) -> CourseBlueprint:
         course = self.course_repository.get_course(course_id)
         if course is None:
@@ -105,11 +156,11 @@ class BlueprintService:
         provider_name = type(llm_provider).__name__
         if getattr(llm_provider, "is_placeholder", False):
             blueprint = self._placeholder_blueprint(
-                course, evidence, resolved_mode, provider_name
+                course, evidence, resolved_mode, provider_name, spec
             )
         else:
             payload = await self._request_payload(
-                course, evidence, resolved_mode, focus, llm_provider
+                course, evidence, resolved_mode, focus, llm_provider, spec
             )
             blueprint = self._blueprint_from_payload(
                 course, payload, evidence, resolved_mode, provider_name
@@ -299,9 +350,10 @@ class BlueprintService:
         mode: GenerationMode,
         focus: str,
         llm: LLMProvider | None = None,
+        spec: ProfileSpec | None = None,
     ) -> dict[str, Any]:
         provider = llm or self.llm
-        prompt = self._build_prompt(course, evidence, mode, focus)
+        prompt = self._build_prompt(course, evidence, mode, focus, spec)
         raw = await provider.complete(prompt)
         payload = _extract_json(raw)
         if payload is None:
@@ -322,20 +374,37 @@ class BlueprintService:
         evidence: Sequence[Evidence],
         mode: GenerationMode,
         focus: str,
+        spec: ProfileSpec | None = None,
     ) -> str:
-        lines: list[str] = [
-            "你是资深课程架构师，负责为一门课程设计可执行的教学蓝图。",
-            "",
-            "## 课程信息",
-            f"- 标题：{course.title}",
-            f"- 副标题：{course.subtitle or '（无）'}",
-            f"- 目标读者：{course.audience or '（未指定）'}",
-            f"- 难度：{course.difficulty}",
-            f"- 语言：{course.language}",
-            f"- 额外关注点：{focus.strip() or '（无）'}",
-            "",
-            "## 生成模式",
-        ]
+        unit = unit_name(spec)
+        stages_low, stages_high, nodes_low, nodes_high = self._plan_bounds(spec)
+        values = prompt_values(
+            spec,
+            title=course.title,
+            unit=unit,
+            audience=course.audience or "",
+            evidence_count=len(evidence),
+        )
+        lines: list[str] = []
+        prefix = system_prefix(spec, values)
+        if prefix:
+            lines.extend([prefix, ""])
+        lines.extend(
+            [
+                "你是资深课程架构师，负责为一门课程设计可执行的教学蓝图。",
+                "",
+                "## 课程信息",
+                f"- 标题：{course.title}",
+                f"- 副标题：{course.subtitle or '（无）'}",
+                f"- 目标读者：{course.audience or '（未指定）'}",
+                f"- 难度：{course.difficulty}",
+                f"- 语言：{course.language}",
+                f"- 写作单位：{unit}",
+                f"- 额外关注点：{focus.strip() or '（无）'}",
+                "",
+                "## 生成模式",
+            ]
+        )
         if mode is GenerationMode.strict:
             lines.extend(
                 [
@@ -389,17 +458,38 @@ class BlueprintService:
                 "}",
                 "",
                 "## 结构约束",
-                "1. learning_path 输出 4-8 个 stage，按学习顺序排列，id 形如 stage-1。",
-                "2. 每个 stage 下 2-5 个 outline 节点，全课共 8-20 个节点，id 形如 node-1。",
+                f"1. learning_path 输出 {stages_low}-{stages_high} 个 stage，按学习顺序排列，id 形如 stage-1。",
+                f"2. 每个 stage 下 1-5 个 outline 节点，全课共 {nodes_low}-{nodes_high} 个{unit}，id 形如 node-1。",
                 "3. 每个 outline 节点的 stage_id 必须引用已定义的 stage id。",
                 "4. glossary 输出 6-12 条术语，term 不重复，node_ids 引用 outline 节点 id。",
                 "5. 每个节点的 objectives 输出 2-3 条，prerequisites 可为空数组。",
+            ]
+        )
+        if spec is not None:
+            lines.append(
+                f"6. 本课程共 {nodes_low}-{nodes_high} 个{unit}，"
+                f"overview 中需说明整体节奏与{unit}划分依据。"
+            )
+        extra = extra_requirement(spec, "outline", values)
+        if extra:
+            lines.extend(["", extra])
+        lines.extend(
+            [
                 "",
                 "## 输出",
                 "只输出一个 JSON 对象，不要输出 markdown 代码块围栏，不要输出任何解释文字。",
             ]
         )
         return "\n".join(lines)
+
+    @staticmethod
+    def _plan_bounds(spec: ProfileSpec | None) -> tuple[int, int, int, int]:
+        if spec is None:
+            return 4, 8, 8, 20
+        stages = max(2, min(8, int(spec.structure.depth or 2) * 2))
+        low = max(1, int(spec.unit.min_units or 1))
+        high = max(low, int(spec.unit.max_units or 60))
+        return max(2, stages - 1), stages + 1, low, high
 
     def _blueprint_from_payload(
         self,
@@ -442,56 +532,36 @@ class BlueprintService:
         evidence: Sequence[Evidence],
         mode: GenerationMode,
         provider_name: str,
+        spec: ProfileSpec | None = None,
     ) -> CourseBlueprint:
         title = course.title
-        stage_specs: list[tuple[str, str, str, list[tuple[str, str]]]] = [
-            (
-                "stage-1",
-                "入门与全景",
-                f"建立对「{title}」的整体认知与术语基础",
-                [
-                    (f"{title}：问题域与价值", f"说明「{title}」要解决的问题、适用场景与不适用场景。"),
-                    ("核心概念与术语地图", f"梳理「{title}」的关键概念及其相互关系。"),
-                    ("学习路径与前置条件", "明确学习顺序、所需基础与自检方式。"),
-                ],
-            ),
-            (
-                "stage-2",
-                "核心机制",
-                f"理解「{title}」的关键机制与典型工作流",
-                [
-                    ("关键机制拆解", "拆解核心机制的输入、处理过程与输出。"),
-                    ("典型工作流", "走通一条从准备到交付的完整工作流。"),
-                    ("常见误区与边界", "识别误用场景、失效边界与排查思路。"),
-                ],
-            ),
-            (
-                "stage-3",
-                "实践与进阶",
-                "把知识落到可运行产物并规划进阶方向",
-                [
-                    ("动手实践：最小可运行样例", "完成一个最小可运行样例并验证结果。"),
-                    ("工程化落地与协作", "讨论可维护性、协作方式与质量保障。"),
-                    ("进阶延伸与自测", "给出延伸方向与自测清单。"),
-                ],
-            ),
-        ]
-
+        unit = unit_name(spec)
+        stage_titles = _stage_titles(spec)
+        counts = _node_counts(spec, len(stage_titles))
+        used_titles: set[str] = set()
         node_index = 0
         nodes: list[OutlineNode] = []
         stages: list[LearningStage] = []
-        for stage_id, stage_title, stage_goal, node_specs in stage_specs:
+        for position, stage_title in enumerate(stage_titles):
+            stage_id = f"stage-{position + 1}"
             stage_node_ids: list[str] = []
-            for node_title, node_summary in node_specs:
+            for _ in range(counts[position]):
+                hint_title, hint_summary = _NODE_HINTS[node_index % len(_NODE_HINTS)]
                 node_index += 1
                 node_id = f"node-{node_index}"
-                stage_node_ids.append(node_id)
-                summary = node_summary
+                node_title = hint_title.format(title=title)
+                if node_title in used_titles:
+                    node_title = f"{stage_title}：{node_title}"
+                if node_title in used_titles:
+                    node_title = f"{node_title}（{node_index}）"
+                used_titles.add(node_title)
+                summary = hint_summary.format(title=title, unit=unit)
                 if evidence:
                     marker = evidence[(node_index - 1) % len(evidence)].marker
-                    summary = f"{node_summary}（参考证据 [{marker}]）"
+                    summary = f"{summary}（参考证据 [{marker}]）"
                 else:
-                    summary = f"{node_summary}（资料不足：知识库暂无对应证据）"
+                    summary = f"{summary}（资料不足：知识库暂无对应证据）"
+                stage_node_ids.append(node_id)
                 nodes.append(
                     OutlineNode(
                         id=node_id,
@@ -503,7 +573,7 @@ class BlueprintService:
                             f"能判断「{title}」中与该主题相关的常见问题",
                         ],
                         prerequisites=[]
-                        if stage_id == "stage-1"
+                        if position == 0
                         else ["上一阶段的核心概念"],
                         estimated_minutes=30,
                         status=NODE_PLANNED,
@@ -513,7 +583,7 @@ class BlueprintService:
                 LearningStage(
                     id=stage_id,
                     title=stage_title,
-                    goal=stage_goal,
+                    goal=f"围绕「{title}」完成{stage_title}阶段的学习目标",
                     node_ids=stage_node_ids,
                     estimated_minutes=90,
                 )
@@ -530,7 +600,7 @@ class BlueprintService:
             else ""
         ) + (
             f"{term_source}覆盖「{title}」从入门到实践的 {len(stages)} 个阶段、"
-            f"{len(nodes)} 个讲次。目标读者：{course.audience or '未指定'}；难度：{course.difficulty}。"
+            f"{len(nodes)} 个{unit}。目标读者：{course.audience or '未指定'}；难度：{course.difficulty}。"
         )
         glossary = self._placeholder_terms(
             course, evidence, [node.id for node in nodes]

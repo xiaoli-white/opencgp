@@ -40,6 +40,7 @@ from app.ports.longform_repository import LongformRepository
 from app.ports.job_repository import JobRepository
 from app.ports.job_queue import JobQueue
 from app.ports.creation_profile_repository import CreationProfileRepository
+from app.ports.work_profile_repository import WorkProfileRepository
 from app.services.auth import AuthService
 from app.services.conversation import ConversationService
 from app.services.blueprint import BlueprintService
@@ -56,6 +57,8 @@ from app.services.research import ResearchService
 from app.services.longform import LongformService
 from app.services.jobs import JobService
 from app.services.creation_profiles import CreationProfileService
+from app.services.profiles import ProfileService
+from app.services.validators import ValidatorRunner
 from app.services.accounts import AccountAdminService
 from app.services.media import MediaService
 
@@ -228,6 +231,7 @@ class Container:
                 default_mode=self.settings.generation.default_mode,
                 min_score=self.settings.vectorstore.min_score,
                 factcheck=self.factcheck(),
+                validators=ValidatorRunner(),
             )
 
         return self._get_or_build("generation", build)
@@ -241,6 +245,12 @@ class Container:
             )
 
         return self._get_or_build("factcheck", build)
+
+    def validators(self) -> ValidatorRunner:
+        def build() -> ValidatorRunner:
+            return ValidatorRunner()
+
+        return self._get_or_build("validators", build)
 
     def blueprint_repository(self) -> BlueprintRepository:
         def build() -> BlueprintRepository:
@@ -541,6 +551,22 @@ class Container:
             return DatabaseCreationProfileRepository(database=self.database())
 
         return self._get_or_build("creation_profile_repository", build)
+
+    def work_profile_repository(self) -> WorkProfileRepository:
+        def build() -> WorkProfileRepository:
+            from app.adapters.database.work_profile_repository import (
+                DatabaseWorkProfileRepository,
+            )
+
+            return DatabaseWorkProfileRepository(database=self.database())
+
+        return self._get_or_build("work_profile_repository", build)
+
+    def profiles(self) -> ProfileService:
+        def build() -> ProfileService:
+            return ProfileService(repository=self.work_profile_repository())
+
+        return self._get_or_build("profiles", build)
 
     def creation_profiles(self) -> CreationProfileService:
         def build() -> CreationProfileService:

@@ -25,11 +25,26 @@ from app.models.course import Course, Lesson
 from app.models.factcheck import CheckResult
 from app.models.generation import Evidence, GenerationResult
 from app.models.mode import GenerationMode, with_loose_notice
+from app.models.validation import ValidationReport
+from app.models.work_profile import ProfileSpec
 from app.ports.course_repository import CourseRepository
 from app.ports.llm import LLMProvider
 from app.ports.vectorstore import VectorStore
 from app.services.errors import LessonNotFoundError, VersionConflictError
 from app.services.factcheck import FactCheckService
+from app.services.prompting import (
+    DEFAULT_LOOSE_WORDS,
+    DEFAULT_STRICT_WORDS,
+    extra_requirement,
+    glossary_lines,
+    policy_of,
+    prompt_values,
+    system_prefix,
+    unit_name,
+    voice_lines,
+    word_range,
+)
+from app.services.validators import ValidatorRunner
 
 NO_EVIDENCE_NOTICE = (
     "资料不足：知识库中未检索到与本节主题相关的证据，暂不生成正文。\n\n"
@@ -64,6 +79,7 @@ class GenerationService:
         default_mode: str = "strict",
         min_score: float = 0.15,
         factcheck: FactCheckService | None = None,
+        validators: ValidatorRunner | None = None,
     ) -> None:
         self.repository = repository
         self.vectorstore = vectorstore
@@ -74,6 +90,7 @@ class GenerationService:
         self.default_mode = GenerationMode.normalize(default_mode).value
         self.min_score = float(min_score)
         self.factcheck = factcheck
+        self.validators = validators
 
     async def generate_lesson(
         self,
@@ -86,6 +103,7 @@ class GenerationService:
         expected_version: int | None = None,
         tenant_id: str = "",
         llm: LLMProvider | None = None,
+        spec: ProfileSpec | None = None,
     ) -> GenerationResult:
         lesson = self.repository.get_lesson(lesson_id)
         if lesson is None:
@@ -94,46 +112,70 @@ class GenerationService:
             raise VersionConflictError(int(expected_version), lesson.current_version)
         course = self.repository.get_course(lesson.course_id)
         resolved_mode = GenerationMode.normalize(mode or self.default_mode)
+        policy = policy_of(spec, resolved_mode.value)
 
         resolved_topic = (topic or lesson.title).strip()
         resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
-        is_strict = resolved_mode is GenerationMode.strict
-        citations = await self.vectorstore.search(
-            self._build_query(resolved_topic, lesson),
-            top_k=resolved_top_k,
-            source_ids=source_ids,
-            tenant_id=tenant_id,
-            min_score=self.min_score if is_strict else None,
-        )
-        citations = _diversify(citations, self.max_evidence, per_source=3)
+        if policy == "forbidden":
+            citations: list[Citation] = []
+        else:
+            citations = await self.vectorstore.search(
+                self._build_query(resolved_topic, lesson),
+                top_k=resolved_top_k,
+                source_ids=source_ids,
+                tenant_id=tenant_id,
+                min_score=self.min_score
+                if (policy == "required" and resolved_mode is GenerationMode.strict)
+                else None,
+            )
+            citations = _diversify(citations, self.max_evidence, per_source=3)
         evidence = [
             Evidence(marker=f"E{index}", citation=citation)
             for index, citation in enumerate(citations, start=1)
         ]
 
         provider = llm or self.llm
-        if resolved_mode is GenerationMode.loose:
+        if resolved_mode is GenerationMode.loose and policy != "forbidden":
             content, prompt, provider_name, grounded = await self._write_loose(
-                course, lesson, resolved_topic, evidence, provider
+                course, lesson, resolved_topic, evidence, provider, spec
+            )
+        elif policy == "required":
+            content, prompt, provider_name, grounded = await self._write_strict(
+                course, lesson, resolved_topic, evidence, provider, spec
+            )
+        elif policy == "optional" and evidence:
+            content, prompt, provider_name, grounded = await self._write_strict(
+                course, lesson, resolved_topic, evidence, provider, spec
             )
         else:
-            content, prompt, provider_name, grounded = await self._write_strict(
-                course, lesson, resolved_topic, evidence, provider
+            content, prompt, provider_name, grounded = await self._write_free(
+                course, lesson, resolved_topic, evidence, provider, spec, resolved_mode
             )
 
-        checks = await self._run_factcheck(content, tenant_id, provider, is_strict)
+        checks = await self._run_factcheck(
+            content,
+            tenant_id,
+            provider,
+            resolved_mode is GenerationMode.strict and policy != "forbidden",
+        )
+        report = await self._run_validators(spec, content, lesson)
         note_value = note or self._default_note(resolved_mode, evidence)
         if checks:
             note_value = f"{note_value};factcheck:{self.factcheck.summarize(checks)}"
+        if report is not None and report.results:
+            note_value = f"{note_value};validators:{report.note_fragment()}"
 
+        usable = (
+            resolved_mode is GenerationMode.loose
+            or bool(evidence)
+            or policy != "required"
+        )
         applied = self.repository.append_version(
             lesson_id,
             content=content,
             citations=citations,
             note=note_value,
-            status="generated"
-            if resolved_mode is GenerationMode.loose or evidence
-            else lesson.status,
+            status="generated" if usable else lesson.status,
             mode=resolved_mode.value,
         )
         assert applied is not None
@@ -152,7 +194,27 @@ class GenerationService:
             provider=provider_name,
             prompt=prompt,
             factcheck=checks,
+            validation=report,
         )
+
+    async def _run_validators(
+        self, spec: ProfileSpec | None, content: str, lesson: Lesson
+    ) -> ValidationReport | None:
+        if self.validators is None or spec is None or not content:
+            return None
+        try:
+            return await self.validators.run(
+                spec,
+                content,
+                {
+                    "lesson_id": lesson.id,
+                    "course_id": lesson.course_id,
+                    "title": lesson.title,
+                    "setting_book": (spec.assets.setting_book),
+                },
+            )
+        except Exception:
+            return None
 
     async def _run_factcheck(
         self,
@@ -178,13 +240,14 @@ class GenerationService:
         topic: str,
         evidence: Sequence[Evidence],
         llm: LLMProvider,
+        spec: ProfileSpec | None = None,
     ) -> tuple[str, str, str, bool]:
         if not evidence:
             return NO_EVIDENCE_NOTICE, "", "", False
-        prompt = self._build_strict_prompt(course, lesson, topic, evidence)
+        prompt = self._build_strict_prompt(course, lesson, topic, evidence, spec)
         provider_name = type(llm).__name__
         if getattr(llm, "is_placeholder", False):
-            content = self._strict_placeholder_draft(lesson, topic, evidence)
+            content = self._strict_placeholder_draft(lesson, topic, evidence, spec)
         else:
             content = await llm.complete(prompt)
         return content, prompt, provider_name, bool(content)
@@ -196,14 +259,35 @@ class GenerationService:
         topic: str,
         evidence: Sequence[Evidence],
         llm: LLMProvider,
+        spec: ProfileSpec | None = None,
     ) -> tuple[str, str, str, bool]:
-        prompt = self._build_loose_prompt(course, lesson, topic, evidence)
+        prompt = self._build_loose_prompt(course, lesson, topic, evidence, spec)
         provider_name = type(llm).__name__
         if getattr(llm, "is_placeholder", False):
-            content = self._loose_placeholder_draft(lesson, topic, evidence)
+            content = self._loose_placeholder_draft(lesson, topic, evidence, spec)
         else:
             content = await llm.complete(prompt)
         return with_loose_notice(content), prompt, provider_name, False
+
+    async def _write_free(
+        self,
+        course: Course | None,
+        lesson: Lesson,
+        topic: str,
+        evidence: Sequence[Evidence],
+        llm: LLMProvider,
+        spec: ProfileSpec | None,
+        mode: GenerationMode,
+    ) -> tuple[str, str, str, bool]:
+        prompt = self._build_free_prompt(course, lesson, topic, evidence, spec, mode)
+        provider_name = type(llm).__name__
+        if getattr(llm, "is_placeholder", False):
+            content = self._free_placeholder_draft(lesson, topic, evidence, spec)
+        else:
+            content = await llm.complete(prompt)
+        if mode is GenerationMode.loose:
+            content = with_loose_notice(content)
+        return content, prompt, provider_name, False
 
     @staticmethod
     def _default_note(mode: GenerationMode, evidence: Sequence[Evidence]) -> str:
@@ -217,22 +301,49 @@ class GenerationService:
             parts.append(" ".join(lesson.learning_objectives))
         return " ".join(part for part in parts if part).strip()
 
+    def _prompt_values(
+        self,
+        course: Course | None,
+        lesson: Lesson,
+        topic: str,
+        evidence: Sequence[Evidence],
+        spec: ProfileSpec | None,
+    ) -> dict[str, object]:
+        return prompt_values(
+            spec,
+            title=(course.title if course else lesson.title) or lesson.title,
+            unit=unit_name(spec),
+            unit_index=lesson.order_index,
+            audience=(course.audience if course else "") or "",
+            evidence_count=len(evidence),
+        )
+
     def _build_strict_prompt(
         self,
         course: Course | None,
         lesson: Lesson,
         topic: str,
         evidence: Sequence[Evidence],
+        spec: ProfileSpec | None = None,
     ) -> str:
-        lines: list[str] = [
-            "你是严谨的课程作者，负责为一门课程撰写其中一讲的正文。",
-            "",
-            "## 讲次信息",
-            f"- 课程：{course.title if course else '未命名课程'}",
-            f"- 讲次：第 {lesson.order_index} 讲 · {lesson.title}",
-            f"- 本节主题：{topic}",
-        ]
-        lines.extend(self._lesson_context(lesson))
+        unit = unit_name(spec)
+        low, high = word_range(spec, DEFAULT_STRICT_WORDS)
+        values = self._prompt_values(course, lesson, topic, evidence, spec)
+        lines: list[str] = []
+        prefix = system_prefix(spec, values)
+        if prefix:
+            lines.extend([prefix, ""])
+        lines.extend(
+            [
+                f"你是严谨的课程作者，负责为一门课程撰写其中一{unit}的正文。",
+                "",
+                "## 讲次信息",
+                f"- 课程：{course.title if course else '未命名课程'}",
+                f"- 第 {lesson.order_index} {unit} · {lesson.title}",
+                f"- 本{unit}主题：{topic}",
+            ]
+        )
+        lines.extend(self._lesson_context(lesson, spec))
 
         lines.extend(
             [
@@ -241,13 +352,17 @@ class GenerationService:
                 "1. 只能使用「证据」中明确陈述的内容，不得引入证据之外的事实、数据、案例、人物或结论。",
                 "2. 每个自然段至少标注一个来源标记，格式为 [E1]；一段引用多条证据时写作 [E1][E3]。",
                 "3. 证据不足以支撑的小节，必须显式写明「资料不足：<缺口说明>」，禁止用常识或推测补全。",
-                "4. 输出 Markdown：用二级标题组织小节，正文 600-1200 字，术语首次出现时给出简要解释。",
+                f"4. 输出 Markdown：用二级标题组织小节，正文 {low}-{high} 字，术语首次出现时给出简要解释。",
                 "4.1 语气要求：面向读者直接讲解，像老师在讲，不要反复使用「证据指出」「这说明」「由此可见」这类转述句式；事实直接陈述，句末保留来源标记即可。",
-                "5. 结尾追加「## 延伸问题」小节，列出 2-3 个需要补充资料才能回答的问题。",
-                "",
-                "## 证据",
+                f"5. 结尾追加「## 延伸问题」小节，列出 2-3 个需要补充资料才能回答的问题。",
             ]
         )
+        lines.extend(voice_lines(spec))
+        lines.extend(glossary_lines(spec, unit))
+        extra = extra_requirement(spec, "unit", values)
+        if extra:
+            lines.extend(["", extra])
+        lines.extend(["", "## 证据"])
         lines.extend(self._evidence_block(evidence))
         lines.append("## 输出")
         lines.append("只输出正文 Markdown，不要输出解释、前言或对写作过程的说明。")
@@ -259,17 +374,29 @@ class GenerationService:
         lesson: Lesson,
         topic: str,
         evidence: Sequence[Evidence],
+        spec: ProfileSpec | None = None,
     ) -> str:
-        lines: list[str] = [
-            "你是经验丰富的课程作者，负责为一门课程撰写其中一讲的正文。",
-            "本节使用「自由写作」模式：允许你基于自身通用知识展开，不要求逐段引用知识库证据。",
-            "",
-            "## 讲次信息",
-            f"- 课程：{course.title if course else '未命名课程'}",
-            f"- 讲次：第 {lesson.order_index} 讲 · {lesson.title}",
-            f"- 本节主题：{topic}",
-        ]
-        lines.extend(self._lesson_context(lesson))
+        unit = unit_name(spec)
+        low, high = word_range(spec, DEFAULT_LOOSE_WORDS)
+        values = self._prompt_values(course, lesson, topic, evidence, spec)
+        lines: list[str] = []
+        prefix = system_prefix(spec, values)
+        if prefix:
+            lines.extend([prefix, ""])
+        lines.extend(
+            [
+                f"你是经验丰富的课程作者，负责为一门课程撰写其中一{unit}的正文。",
+                "本{unit_label}使用「自由写作」模式：允许你基于自身通用知识展开，不要求逐段引用知识库证据。".replace(
+                    "{unit_label}", unit
+                ),
+                "",
+                "## 讲次信息",
+                f"- 课程：{course.title if course else '未命名课程'}",
+                f"- 第 {lesson.order_index} {unit} · {lesson.title}",
+                f"- 本{unit}主题：{topic}",
+            ]
+        )
+        lines.extend(self._lesson_context(lesson, spec))
 
         lines.extend(
             [
@@ -278,13 +405,17 @@ class GenerationService:
                 "1. 可以使用自身的通用知识、常见实践与教学经验自由组织内容，不必局限于「参考证据」。",
                 "2. 正文第一行必须输出声明：「> ⚠️ 本文由大模型编写，未经知识库证据核实」。",
                 "3. 不强制逐段标注来源；若引用了参考证据中的具体说法，可选择性标注 [E1]。",
-                "4. 输出 Markdown：用二级标题组织小节，正文 800-1500 字，术语首次出现时给出简要解释。",
+                f"4. 输出 Markdown：用二级标题组织小节，正文 {low}-{high} 字，术语首次出现时给出简要解释。",
                 "5. 对不确定或时效性强的结论，用「建议核实」等方式提示读者，不要伪装成已核实事实。",
                 "6. 结尾追加「## 延伸阅读建议」小节，列出 2-3 个可进一步查证的方向。",
-                "",
-                "## 参考证据（可选，缺失时忽略）",
             ]
         )
+        lines.extend(voice_lines(spec))
+        lines.extend(glossary_lines(spec, unit))
+        extra = extra_requirement(spec, "unit", values)
+        if extra:
+            lines.extend(["", extra])
+        lines.extend(["", "## 参考证据（可选，缺失时忽略）"])
         if evidence:
             lines.extend(self._evidence_block(evidence))
         else:
@@ -293,8 +424,62 @@ class GenerationService:
         lines.append("只输出正文 Markdown，不要输出解释、前言或对写作过程的说明。")
         return "\n".join(lines)
 
+    def _build_free_prompt(
+        self,
+        course: Course | None,
+        lesson: Lesson,
+        topic: str,
+        evidence: Sequence[Evidence],
+        spec: ProfileSpec | None,
+        mode: GenerationMode,
+    ) -> str:
+        unit = unit_name(spec)
+        low, high = word_range(spec, DEFAULT_LOOSE_WORDS)
+        values = self._prompt_values(course, lesson, topic, evidence, spec)
+        lines: list[str] = []
+        prefix = system_prefix(spec, values)
+        if prefix:
+            lines.extend([prefix, ""])
+        lines.extend(
+            [
+                f"你是经验丰富的作者，负责撰写一门课程中一{unit}的正文。",
+                "",
+                "## 讲次信息",
+                f"- 课程：{course.title if course else '未命名课程'}",
+                f"- 第 {lesson.order_index} {unit} · {lesson.title}",
+                f"- 本{unit}主题：{topic}",
+            ]
+        )
+        lines.extend(self._lesson_context(lesson, spec))
+        lines.extend(
+            [
+                "",
+                "## 写作要求",
+                "1. 依据自身知识、常见实践与教学经验组织内容，不需要引用知识库证据。",
+                "2. 严禁输出任何形如 [E1] 的来源标记，也不要编造来源名称。",
+                f"3. 输出 Markdown：用二级标题组织小节，正文 {low}-{high} 字，术语首次出现时给出简要解释。",
+                "4. 对不确定或时效性强的结论，用「建议核实」等方式提示读者，不要伪装成已核实事实。",
+            ]
+        )
+        if mode is GenerationMode.loose:
+            lines.append("5. 正文第一行必须输出声明：「> ⚠️ 本文由大模型编写，未经知识库证据核实」。")
+        lines.extend(voice_lines(spec))
+        lines.extend(glossary_lines(spec, unit))
+        extra = extra_requirement(spec, "unit", values)
+        if extra:
+            lines.extend(["", extra])
+        if evidence:
+            lines.extend(["", "## 参考背景（不得输出来源标记）"])
+            for item in evidence[:3]:
+                snippet = (item.citation.text or item.citation.snippet).strip()
+                lines.append(snippet[:300])
+                lines.append("")
+        lines.append("## 输出")
+        lines.append("只输出正文 Markdown，不要输出解释、前言或对写作过程的说明。")
+        return "\n".join(lines)
+
     @staticmethod
-    def _lesson_context(lesson: Lesson) -> list[str]:
+    def _lesson_context(lesson: Lesson, spec: ProfileSpec | None = None) -> list[str]:
         lines: list[str] = []
         if lesson.learning_objectives:
             lines.append("- 学习目标：" + "；".join(lesson.learning_objectives))
@@ -315,14 +500,19 @@ class GenerationService:
         return lines
 
     def _strict_placeholder_draft(
-        self, lesson: Lesson, topic: str, evidence: Sequence[Evidence]
+        self,
+        lesson: Lesson,
+        topic: str,
+        evidence: Sequence[Evidence],
+        spec: ProfileSpec | None = None,
     ) -> str:
+        unit = unit_name(spec)
         lines: list[str] = [
             f"# {lesson.title}",
             "",
             "> 占位草稿（未配置 LLM API key，严格模式）：正文由检索证据直接编排，用于验证带引用的写作链路。",
             "",
-            "## 本节主题",
+            f"## 本{unit}主题",
             topic,
             "",
         ]
@@ -344,25 +534,32 @@ class GenerationService:
 
         lines.append("## 资料不足说明")
         lines.append(
-            f"本节仅覆盖检索到的 {len(evidence)} 条证据，尚未对主题做完整展开；"
+            f"本{unit}仅覆盖检索到的 {len(evidence)} 条证据，尚未对主题做完整展开；"
             "配置真实模型后将基于同一批证据生成连贯正文。"
         )
         lines.append("")
         lines.append("## 延伸问题")
         lines.append("- 这些证据之间是否存在相互矛盾或适用条件差异？")
         lines.append("- 该主题在真实项目中还有哪些证据未覆盖的场景？")
+        if spec is not None and spec.assets.glossary:
+            lines.extend(self._placeholder_glossary(evidence, spec))
         return "\n".join(lines)
 
     def _loose_placeholder_draft(
-        self, lesson: Lesson, topic: str, evidence: Sequence[Evidence]
+        self,
+        lesson: Lesson,
+        topic: str,
+        evidence: Sequence[Evidence],
+        spec: ProfileSpec | None = None,
     ) -> str:
+        unit = unit_name(spec)
         lines: list[str] = [
             f"# {lesson.title}",
             "",
             "> 占位草稿（未配置 LLM API key，非严格模式）：本节允许模型基于自身知识自由写作，"
             "因此不承诺逐段引用；配置真实模型后将由模型生成完整正文。",
             "",
-            "## 本节主题",
+            f"## 本{unit}主题",
             topic,
             "",
             "## 写作要点（占位）",
@@ -394,4 +591,66 @@ class GenerationService:
         lines.append("## 延伸阅读建议")
         lines.append("- 查阅该主题的官方文档与规范原文。")
         lines.append("- 对比不同实现方案的取舍与适用边界。")
+        if spec is not None and spec.assets.glossary:
+            lines.extend(self._placeholder_glossary(evidence, spec))
         return "\n".join(lines)
+
+    def _free_placeholder_draft(
+        self,
+        lesson: Lesson,
+        topic: str,
+        evidence: Sequence[Evidence],
+        spec: ProfileSpec | None = None,
+    ) -> str:
+        unit = unit_name(spec)
+        profile_name = (spec.meta.name if spec is not None else "") or "自由写作"
+        lines: list[str] = [
+            f"# {lesson.title}",
+            "",
+            f"> 占位草稿（未配置 LLM API key）：按创作配置「{profile_name}」自由写作，"
+            "不引用知识库证据，也不输出来源标记。",
+            "",
+            f"## 本{unit}主题",
+            topic,
+            "",
+            f"## 内容框架（占位）",
+            f"- 从「{topic}」的核心问题切入，交代它解决的痛点与适用边界。",
+            "- 拆解关键概念与常见做法，给出可对照的判断标准。",
+            "- 以可执行的步骤收束，并提示需要核实的事实性细节。",
+            "",
+        ]
+        if lesson.learning_objectives:
+            lines.append("## 学习目标")
+            lines.extend(f"- {item}" for item in lesson.learning_objectives)
+            lines.append("")
+        if lesson.prerequisites:
+            lines.append("## 前置知识")
+            lines.extend(f"- {item}" for item in lesson.prerequisites)
+            lines.append("")
+        lines.append("## 延伸阅读建议")
+        lines.append("- 查阅该主题的官方文档与规范原文。")
+        lines.append("- 对比不同实现方案的取舍与适用边界。")
+        if spec is not None and spec.assets.glossary:
+            lines.extend(self._placeholder_glossary(evidence, spec))
+        return "\n".join(lines)
+
+    def _placeholder_glossary(
+        self, evidence: Sequence[Evidence], spec: ProfileSpec | None
+    ) -> list[str]:
+        lines: list[str] = ["", "## 术语"]
+        candidates: list[str] = []
+        for item in evidence:
+            text = (item.citation.text or item.citation.snippet or "").strip()
+            for token in text.replace("，", " ").replace("。", " ").split():
+                cleaned = token.strip("，。、；：（）()[]《》")
+                if 2 <= len(cleaned) <= 8 and cleaned not in candidates:
+                    candidates.append(cleaned)
+                if len(candidates) >= 5:
+                    break
+            if len(candidates) >= 5:
+                break
+        if not candidates:
+            candidates = ["核心概念", "工作流程", "常见误区"]
+        for term in candidates[:5]:
+            lines.append(f"- {term}：占位释义，待补充资料后定稿。")
+        return lines

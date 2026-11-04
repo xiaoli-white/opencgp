@@ -48,6 +48,7 @@ class CourseRepository(Protocol):
         audience: str | None = None,
         difficulty: str | None = None,
         language: str | None = None,
+        profile_id: str | None = None,
     ) -> Course | None:
         ...
 

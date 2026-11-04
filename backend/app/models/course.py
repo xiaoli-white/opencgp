@@ -13,6 +13,7 @@ class Course(BaseModel):
     difficulty: str = "intermediate"
     language: str = "zh"
     user_id: str = ""
+    profile_id: str = ""
     created_at: float
     updated_at: float
 

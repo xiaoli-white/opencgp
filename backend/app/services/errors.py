@@ -213,3 +213,19 @@ class ProviderCallError(RuntimeError):
         reason = (detail or "未知原因").strip()[:120]
         super().__init__(f"模型通道调用失败：{reason}")
         self.detail = reason
+
+
+class ProfileNotFoundError(LookupError):
+    pass
+
+
+class BuiltinProfileError(ValueError):
+    pass
+
+
+class ProfileInUseError(RuntimeError):
+    pass
+
+
+class ProfileInvalidError(ValueError):
+    pass
