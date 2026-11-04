@@ -8,7 +8,9 @@ import {
   ArrowUp,
   ChevronDown,
   Clock3,
+  Eye,
   FileText,
+  GitCompare,
   History,
   Layers,
   ImagePlus,
@@ -35,6 +37,8 @@ import {
 import { cancelJob, runJob } from "@/lib/jobs";
 import { contentLength, formatChars, formatDateTime } from "@/lib/format";
 import MarkdownReader from "@/components/reader/MarkdownReader";
+import VersionDiffDialog from "@/components/reader/VersionDiffDialog";
+import VersionPreviewDialog from "@/components/reader/VersionPreviewDialog";
 import { useSession } from "@/components/auth/SessionProvider";
 import SharePanel, { type ShareMember } from "@/components/sharing/SharePanel";
 import ExportMenu from "@/components/export/ExportMenu";
@@ -93,6 +97,9 @@ export default function LongformEditorPage() {
 
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const [previewVersion, setPreviewVersion] = useState<number | null>(null);
+  const [versionDiffOpen, setVersionDiffOpen] = useState(false);
+  const [versionDiffAnchor, setVersionDiffAnchor] = useState<number | null>(null);
   const [rewriteOpen, setRewriteOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [rewriteMode, setRewriteMode] = useState<GenerationMode>("loose");
@@ -346,6 +353,23 @@ export default function LongformEditorPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "取消失败");
     }
+  };
+
+  const openVersionDiff = (version: number) => {
+    setVersionDiffAnchor(version);
+    setVersionDiffOpen(true);
+  };
+
+  const loadVersionPreview = async (version: number) => {
+    const detail = await api.getLongformVersion(id, version);
+    return {
+      content: detail.version.content ?? "",
+      citations: detail.version.citations ?? [],
+    };
+  };
+
+  const fetchVersionDiff = async (from: number, to: number) => {
+    return api.diffLongformVersions(id, from, to);
   };
 
   const revert = async (version: number) => {
@@ -1122,6 +1146,24 @@ export default function LongformEditorPage() {
                           </span>
                         ) : null}
                       </button>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewVersion(version.version)}
+                          className="btn-quiet px-2 py-1 text-[10.5px]"
+                        >
+                          <Eye size={11} />
+                          预览
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openVersionDiff(version.version)}
+                          className="btn-quiet px-2 py-1 text-[10.5px]"
+                        >
+                          <GitCompare size={11} />
+                          对比
+                        </button>
+                      </div>
                       {active && !current ? (
                         <button
                           type="button"
@@ -1144,7 +1186,7 @@ export default function LongformEditorPage() {
             )}
           </div>
           <p className="mt-2 px-1 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
-            版本列表只返回元信息，内容对比请回滚后查看。
+            版本列表只返回元信息，预览与对比会按需拉取完整内容。
           </p>
         </aside>
       </div>
@@ -1507,6 +1549,37 @@ export default function LongformEditorPage() {
           </div>
         </div>
       </Modal>
+
+      <VersionPreviewDialog
+        open={previewVersion !== null}
+        version={previewVersion}
+        load={loadVersionPreview}
+        onClose={() => setPreviewVersion(null)}
+        onCompare={() => {
+          const target = previewVersion;
+          setPreviewVersion(null);
+          if (target !== null) openVersionDiff(target);
+        }}
+      />
+
+      <VersionDiffDialog
+        open={versionDiffOpen}
+        versions={versions.map((item) => item.version)}
+        initialFrom={
+          versionDiffAnchor !== null
+            ? Math.max(1, versionDiffAnchor - 1)
+            : versions.length > 1
+              ? [...versions].sort((a, b) => a.version - b.version)[0].version
+              : 1
+        }
+        initialTo={
+          versionDiffAnchor ??
+          (longform?.current_version ||
+            versions.reduce((max, item) => Math.max(max, item.version), 1))
+        }
+        fetchDiff={fetchVersionDiff}
+        onClose={() => setVersionDiffOpen(false)}
+      />
     </div>
   );
 }

@@ -209,6 +209,57 @@ export type Quota = {
   unlimited?: QuotaUnlimited;
 };
 
+export type VersionHunkType = "same" | "add" | "del";
+
+export type VersionDiffHunk = {
+  type: VersionHunkType;
+  text: string;
+};
+
+export type VersionDiffResult = {
+  owner_id?: string;
+  from: number;
+  to: number;
+  added_chars: number;
+  removed_chars: number;
+  hunks: VersionDiffHunk[];
+};
+
+export type LessonVersionDetail = LessonVersion & {
+  citation_count?: number;
+  content_length?: number;
+  approved_at?: number;
+  reviewer_id?: string;
+};
+
+export type LongformVersionDetail = {
+  id: string;
+  longform_id: string;
+  version: number;
+  content: string;
+  outline: LongformSection[];
+  citations: Citation[];
+  mode: string;
+  note: string;
+  created_at: number;
+};
+
+export type QuotaHistoryDay = {
+  date: string;
+  generations: number;
+  uploads: number;
+  storage_bytes: number;
+  exec: number;
+  image: number;
+};
+
+export type QuotaHistory = {
+  tenant_id: string;
+  period: string;
+  days: QuotaHistoryDay[];
+  totals: Omit<QuotaHistoryDay, "date">;
+};
+
 export type ProviderKind = "openai_compat" | "dummy";
 
 export type ServerProvider = {
@@ -970,6 +1021,16 @@ export const api = {
       versions: LessonVersion[];
     }>(`/api/v1/lessons/${lessonId}/versions`),
 
+  getLessonVersion: (lessonId: string, version: number) =>
+    request<{ lesson_id: string; version: LessonVersionDetail }>(
+      `/api/v1/lessons/${lessonId}/versions/${version}`,
+    ),
+
+  diffLessonVersions: (lessonId: string, from: number, to: number) =>
+    request<VersionDiffResult>(
+      `/api/v1/lessons/${lessonId}/versions/diff?from=${from}&to=${to}`,
+    ),
+
   revertLesson: (
     lessonId: string,
     version: number,
@@ -1015,6 +1076,28 @@ export const api = {
         expected_version: expectedVersion ?? null,
       }),
     }),
+
+  checkLessonCode: (lessonId: string) =>
+    request<{
+      lesson_id: string;
+      blocks: {
+        index: number;
+        language: string;
+        ok: boolean;
+        stdout: string;
+        stderr: string;
+        exit_code: number;
+        duration_ms: number;
+      }[];
+      summary: {
+        total: number;
+        executed: number;
+        passed: number;
+        failed: number;
+        skipped: number;
+        backend: string;
+      };
+    }>(`/api/v1/lessons/${lessonId}/code-check`, { method: "POST", body: JSON.stringify({}) }),
 
   getThread: (lessonId: string) =>
     request<ThreadView>(`/api/v1/lessons/${lessonId}/thread`),
@@ -1230,6 +1313,9 @@ export const api = {
 
   getQuota: () => request<Quota>("/api/v1/quotas"),
 
+  getQuotaHistory: (days = 30) =>
+    request<QuotaHistory>(`/api/v1/quotas/history?days=${days}`),
+
   listRoles: () => request<RoleList>("/api/v1/roles"),
 
   createRole: (payload: {
@@ -1435,6 +1521,16 @@ export const api = {
       `/api/v1/longforms/${longformId}/versions`,
     ),
 
+  getLongformVersion: (longformId: string, version: number) =>
+    request<{ longform_id: string; version: LongformVersionDetail }>(
+      `/api/v1/longforms/${longformId}/versions/${version}`,
+    ),
+
+  diffLongformVersions: (longformId: string, from: number, to: number) =>
+    request<VersionDiffResult>(
+      `/api/v1/longforms/${longformId}/versions/diff?from=${from}&to=${to}`,
+    ),
+
   revertLongform: (longformId: string, version: number) =>
     request<Longform>(`/api/v1/longforms/${longformId}/revert`, {
       method: "POST",
@@ -1472,10 +1568,15 @@ export const api = {
       body: JSON.stringify({ shares }),
     }),
 
-  listAdminUsers: (status?: string) =>
-    request<AdminUserList>(
-      `/api/v1/admin/users${status ? `?status=${encodeURIComponent(status)}` : ""}`,
-    ),
+  listAdminUsers: (status?: string, options?: { includeDeleted?: boolean }) => {
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (options?.includeDeleted) params.set("include_deleted", "true");
+    const query = params.toString();
+    return request<AdminUserList>(
+      `/api/v1/admin/users${query ? `?${query}` : ""}`,
+    );
+  },
 
   approveAdminUser: (userId: string) =>
     request<{ ok?: boolean }>(`/api/v1/admin/users/${userId}/approve`, {
@@ -1656,10 +1757,26 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  deleteAdminUser: (userId: string) =>
-    request<{ ok?: boolean }>(`/api/v1/admin/users/${userId}`, {
-      method: "DELETE",
-    }),
+  deleteAdminUser: (
+    userId: string,
+    payload?: { transfer_to_user_id?: string; force?: boolean },
+  ) =>
+    request<{ ok?: boolean; transferred?: number }>(
+      `/api/v1/admin/users/${userId}`,
+      {
+        method: "DELETE",
+        body: JSON.stringify(payload ?? {}),
+      },
+    ),
+
+  restoreAdminUser: (userId: string) =>
+    request<{ ok?: boolean; user?: AdminUser }>(
+      `/api/v1/admin/users/${userId}/restore`,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    ),
 
   resetAdminPassword: (userId: string, newPassword: string) =>
     request<{ ok?: boolean }>(`/api/v1/admin/users/${userId}/reset-password`, {

@@ -7,6 +7,7 @@ import {
   Loader2,
   Pencil,
   RefreshCcw,
+  RotateCcw,
   ShieldCheck,
   Trash2,
   UserCheck,
@@ -14,12 +15,14 @@ import {
   X,
 } from "lucide-react";
 import clsx from "clsx";
-import { api, type AdminUser } from "@/lib/api";
+import { api, ApiError, type AdminUser, type Member } from "@/lib/api";
+import { useSession } from "@/components/auth/SessionProvider";
 import { formatDateTime } from "@/lib/format";
 import {
-  ConfirmDialog,
+  Modal,
   PromptDialog,
   RowMenu,
+  type MenuItem,
 } from "@/components/common/Dialogs";
 
 const ROLE_OPTIONS = [
@@ -38,7 +41,11 @@ export default function UserReviewCard({
   onNotice: (message: string) => void;
   onError: (message: string) => void;
 }) {
+  const { tenant, me } = useSession();
   const [tab, setTab] = useState<Tab>("pending");
+  const [includeDeleted, setIncludeDeleted] = useState(false);
+  const [transferTarget, setTransferTarget] = useState("");
+  const [transferMembers, setTransferMembers] = useState<Member[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -53,13 +60,15 @@ export default function UserReviewCard({
   const [dialogError, setDialogError] = useState("");
 
   const load = useCallback(
-    async (target: Tab = tab) => {
+    async (target: Tab = tab, withDeleted = includeDeleted) => {
       setLoading(true);
       setError("");
       try {
         const [pending, list] = await Promise.all([
           api.listAdminUsers("pending"),
-          target === "pending" ? Promise.resolve(null) : api.listAdminUsers(),
+          target === "pending"
+            ? Promise.resolve(null)
+            : api.listAdminUsers(undefined, { includeDeleted: withDeleted }),
         ]);
         setPendingCount(pending?.count ?? (pending?.users ?? []).length);
         setUsers(target === "pending" ? pending?.users ?? [] : list?.users ?? []);
@@ -69,12 +78,12 @@ export default function UserReviewCard({
         setLoading(false);
       }
     },
-    [tab],
+    [includeDeleted, tab],
   );
 
   useEffect(() => {
-    void load(tab);
-  }, [load, tab]);
+    void load(tab, includeDeleted);
+  }, [load, tab, includeDeleted]);
 
   const approve = useCallback(
     async (user: AdminUser) => {
@@ -116,6 +125,7 @@ export default function UserReviewCard({
     if (status === "pending") return "待审核";
     if (status === "active") return "已启用";
     if (status === "rejected") return "已拒绝";
+    if (status === "deleted") return "已删除";
     return status;
   };
 
@@ -165,21 +175,74 @@ export default function UserReviewCard({
     }
   };
 
-  const removeUser = async () => {
+  const openDelete = useCallback(
+    async (user: AdminUser) => {
+      setDialogError("");
+      setTransferTarget("");
+      setDeleteTarget(user);
+      if (!tenant) return;
+      try {
+        const result = await api.listMembers(tenant);
+        setTransferMembers(
+          (result.members ?? []).filter(
+            (member) => member.user_id !== user.id && member.user_id !== me?.user?.id,
+          ),
+        );
+      } catch {
+        setTransferMembers([]);
+      }
+    },
+    [me, tenant],
+  );
+
+  const removeUser = async (force = false) => {
     if (!deleteTarget) return;
     setDialogBusy(true);
     setDialogError("");
     try {
-      await api.deleteAdminUser(deleteTarget.id);
-      onNotice("用户已删除");
+      await api.deleteAdminUser(deleteTarget.id, {
+        transfer_to_user_id: transferTarget || undefined,
+        force,
+      });
+      onNotice(
+        transferTarget
+          ? `用户已删除，作品已转移（软删除可恢复）`
+          : "用户已删除（软删除，可恢复）",
+      );
       setDeleteTarget(null);
-      await load(tab);
+      setTransferTarget("");
+      await load(tab, includeDeleted);
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "删除失败");
+      const message = err instanceof Error ? err.message : "删除失败";
+      setDialogError(message);
+      if (err instanceof ApiError && err.status === 409) {
+        setDialogError(
+          transferMembers.length === 0
+            ? `${message}（当前空间暂无可转移成员，可选择「不转移直接删」）`
+            : `${message}（请先在下方选择作品转移对象）`,
+        );
+      }
     } finally {
       setDialogBusy(false);
     }
   };
+
+  const restoreUser = useCallback(
+    async (user: AdminUser) => {
+      setBusy(user.id);
+      setError("");
+      try {
+        await api.restoreAdminUser(user.id);
+        onNotice(`已恢复 ${user.display_name || user.email}`);
+        await load(tab, includeDeleted);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "恢复失败");
+      } finally {
+        setBusy("");
+      }
+    },
+    [includeDeleted, load, onNotice, tab],
+  );
 
   return (
     <motion.section
@@ -227,7 +290,18 @@ export default function UserReviewCard({
         </div>
         <button
           type="button"
-          onClick={() => void load(tab)}
+          onClick={() => setIncludeDeleted((prev) => !prev)}
+          className={clsx(
+            "btn-quiet px-2 py-1 text-[10.5px]",
+            includeDeleted && "text-indigo-600 dark:text-indigo-300",
+          )}
+          title="是否显示已删除用户"
+        >
+          {includeDeleted ? "隐藏已删除" : "显示已删除"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void load(tab, includeDeleted)}
           disabled={loading}
           className="btn-quiet px-2 py-1 text-[10.5px]"
           title="刷新"
@@ -344,16 +418,23 @@ export default function UserReviewCard({
                         setPwdTarget(user);
                       },
                     },
-                    {
-                      label: "删除用户",
-                      icon: <Trash2 size={11} />,
-                      danger: true,
-                      onClick: () => {
-                        setDialogError("");
-                        setDeleteTarget(user);
-                      },
-                    },
-                  ]}
+                    ...(user.status === "deleted"
+                      ? [
+                          {
+                            label: "恢复用户",
+                            icon: <RotateCcw size={11} />,
+                            onClick: () => void restoreUser(user),
+                          },
+                        ]
+                      : [
+                          {
+                            label: "删除用户",
+                            icon: <Trash2 size={11} />,
+                            danger: true,
+                            onClick: () => void openDelete(user),
+                          },
+                        ]),
+                  ] as MenuItem[]}
                 />
                 <select
                   value={user.role ?? "viewer"}
@@ -430,15 +511,70 @@ export default function UserReviewCard({
         onClose={() => setPwdTarget(null)}
       />
 
-      <ConfirmDialog
+      <Modal
         open={Boolean(deleteTarget)}
         title="删除用户"
-        description={`将删除 ${deleteTarget?.email ?? ""} 的账号，不可恢复。`}
-        busy={dialogBusy}
-        error={dialogError}
-        onConfirm={() => void removeUser()}
+        subtitle={`${deleteTarget?.display_name || deleteTarget?.email || ""} 的账号将被软删除，可由「显示已删除」恢复。`}
         onClose={() => setDeleteTarget(null)}
-      />
+      >
+        <div className="space-y-3">
+          <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[10.5px] leading-relaxed text-amber-700 dark:text-amber-300">
+            该用户拥有的课程与长篇作品需要先转移给其他成员；选择「不转移直接删」可强制软删除。
+          </div>
+          <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            作品转移到
+            <select
+              value={transferTarget}
+              onChange={(event) => setTransferTarget(event.target.value)}
+              className="select mt-1 w-full py-1.5 text-[11px]"
+            >
+              <option value="">不转移直接删</option>
+              {transferMembers.map((member) => (
+                <option key={member.user_id} value={member.user_id}>
+                  {member.user_display_name || member.user_email}
+                </option>
+              ))}
+            </select>
+          </label>
+          {transferMembers.length === 0 ? (
+            <p className="text-[10px] text-slate-400 dark:text-slate-500">
+              当前空间暂无可转移成员。
+            </p>
+          ) : null}
+          {dialogError ? (
+            <p className="flex items-start gap-1.5 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[10.5px] text-rose-700 dark:text-rose-300">
+              <AlertCircle size={12} className="mt-0.5 shrink-0" />
+              <span className="flex-1 break-words">{dialogError}</span>
+            </p>
+          ) : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setDeleteTarget(null)}
+              className="btn btn-quiet"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => void removeUser(true)}
+              disabled={dialogBusy}
+              className="btn btn-quiet text-rose-600 dark:text-rose-300"
+            >
+              强制软删除
+            </button>
+            <button
+              type="button"
+              onClick={() => void removeUser(false)}
+              disabled={dialogBusy}
+              className="btn btn-primary"
+            >
+              {dialogBusy ? <Loader2 size={13} className="animate-spin" /> : null}
+              确认删除
+            </button>
+          </div>
+        </div>
+      </Modal>
     </motion.section>
   );
 }

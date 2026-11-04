@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { GitCompare, History, Loader2, RotateCcw, X } from "lucide-react";
+import { Eye, GitCompare, History, Loader2, RotateCcw } from "lucide-react";
 import clsx from "clsx";
-import type { LessonVersion } from "@/lib/api";
+import { api, type LessonVersion } from "@/lib/api";
 import { contentLength, formatDateTime } from "@/lib/format";
-import DiffView from "@/components/reader/DiffView";
+import VersionDiffDialog from "@/components/reader/VersionDiffDialog";
+import VersionPreviewDialog from "@/components/reader/VersionPreviewDialog";
 
 type VersionPanelProps = {
   versions: LessonVersion[];
@@ -12,6 +12,7 @@ type VersionPanelProps = {
   loading: boolean;
   busyVersion: number | null;
   onRevert: (version: number) => Promise<void>;
+  lessonId?: string;
   className?: string;
 };
 
@@ -21,21 +22,44 @@ export default function VersionPanel({
   loading,
   busyVersion,
   onRevert,
+  lessonId,
   className,
 }: VersionPanelProps) {
-  const [compareVersion, setCompareVersion] = useState<number | null>(null);
+  const [previewVersion, setPreviewVersion] = useState<number | null>(null);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [diffAnchor, setDiffAnchor] = useState<number | null>(null);
 
   const ordered = useMemo(
     () => [...versions].sort((a, b) => b.version - a.version),
     [versions],
   );
 
-  const compareTarget = ordered.find(
-    (version) => version.version === compareVersion,
+  const versionNumbers = useMemo(
+    () => ordered.map((version) => version.version),
+    [ordered],
   );
-  const compareBase = compareTarget
-    ? ordered.find((version) => version.version === compareTarget.version - 1)
-    : undefined;
+
+  const loadPreview = async (version: number) => {
+    if (lessonId) {
+      const detail = await api.getLessonVersion(lessonId, version);
+      return {
+        content: detail.version.content ?? "",
+        citations: detail.version.citations ?? [],
+      };
+    }
+    const local = versions.find((item) => item.version === version);
+    return { content: local?.content ?? "", citations: local?.citations ?? [] };
+  };
+
+  const fetchDiff = async (from: number, to: number) => {
+    if (!lessonId) throw new Error("缺少讲次信息，无法对比");
+    return api.diffLessonVersions(lessonId, from, to);
+  };
+
+  const openDiff = (version?: number) => {
+    setDiffAnchor(version ?? null);
+    setDiffOpen(true);
+  };
 
   return (
     <div
@@ -51,6 +75,17 @@ export default function VersionPanel({
         </div>
         <span className="chip-muted">当前 v{currentVersion || 0}</span>
       </div>
+
+      {versionNumbers.length > 1 ? (
+        <button
+          type="button"
+          onClick={() => openDiff()}
+          className="btn-quiet mt-2 w-full justify-center text-[11px]"
+        >
+          <GitCompare size={12} />
+          任意两版对比
+        </button>
+      ) : null}
 
       <div className="no-scrollbar mt-3 flex-1 space-y-1.5 overflow-y-auto pr-1">
         {loading ? (
@@ -118,10 +153,18 @@ export default function VersionPanel({
                   <span>{formatDateTime(version.created_at)}</span>
                   <span>{contentLength(version.content)} 字</span>
                 </div>
-                <div className="mt-2 flex items-center gap-1">
+                <div className="mt-2 flex flex-wrap items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => setCompareVersion(version.version)}
+                    onClick={() => setPreviewVersion(version.version)}
+                    className="btn-quiet"
+                  >
+                    <Eye size={12} />
+                    预览
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openDiff(version.version)}
                     className="btn-quiet"
                   >
                     <GitCompare size={12} />
@@ -147,72 +190,33 @@ export default function VersionPanel({
         )}
       </div>
 
-      <AnimatePresence>
-        {compareTarget && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            <div
-              className="absolute inset-0 bg-slate-900/45 backdrop-blur-sm"
-              onClick={() => setCompareVersion(null)}
-            />
-            <motion.div
-              initial={{ y: 18, opacity: 0, scale: 0.98 }}
-              animate={{ y: 0, opacity: 1, scale: 1 }}
-              exit={{ y: 12, opacity: 0, scale: 0.98 }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="glass relative z-10 w-full max-w-3xl rounded-3xl p-5 shadow-glass"
-            >
-              <div className="mb-4 flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                    版本对比
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                    v{compareTarget.version - 1} → v{compareTarget.version} ·{" "}
-                    {compareTarget.mode || "strict"} ·{" "}
-                    {compareTarget.note || "自动存档"}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setCompareVersion(null)}
-                  className="grid h-8 w-8 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
-                  aria-label="关闭对比"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-              <DiffView
-                before={compareBase?.content ?? ""}
-                after={compareTarget.content}
-                beforeLabel={compareBase ? `v${compareBase.version}` : "起稿前"}
-                afterLabel={`v${compareTarget.version}`}
-              />
-              <div className="mt-4 flex items-center justify-between gap-3">
-                <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                  回滚会基于该版本内容生成一个新版本，历史不会被覆盖。
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onRevert(compareTarget.version);
-                    setCompareVersion(null);
-                  }}
-                  disabled={compareTarget.version === currentVersion}
-                  className="btn btn-primary disabled:opacity-40"
-                >
-                  <RotateCcw size={13} />
-                  回滚到此版本
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <VersionPreviewDialog
+        open={previewVersion !== null}
+        version={previewVersion}
+        load={loadPreview}
+        onClose={() => setPreviewVersion(null)}
+        onCompare={() => {
+          const target = previewVersion;
+          setPreviewVersion(null);
+          if (target !== null) openDiff(target);
+        }}
+      />
+
+      <VersionDiffDialog
+        open={diffOpen}
+        versions={versionNumbers}
+        initialFrom={
+          diffAnchor !== null
+            ? Math.max(1, diffAnchor - 1)
+            : versionNumbers[0]
+        }
+        initialTo={
+          diffAnchor ??
+          (currentVersion || versionNumbers[versionNumbers.length - 1])
+        }
+        fetchDiff={fetchDiff}
+        onClose={() => setDiffOpen(false)}
+      />
     </div>
   );
 }

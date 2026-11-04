@@ -11,6 +11,7 @@ import CreationProfilesCard from "@/components/settings/CreationProfilesCard";
 import RolesCard from "@/components/settings/RolesCard";
 import MembersCard from "@/components/settings/MembersCard";
 import QuotaCard from "@/components/settings/QuotaCard";
+import QuotaTrendCard from "@/components/settings/QuotaTrendCard";
 
 export default function ProfileSettingsPage() {
   const { can, roleName } = useSession();
@@ -92,6 +93,8 @@ export default function ProfileSettingsPage() {
       <MembersCard onNotice={handleNotice} onError={handleError} />
 
       <QuotaCard onNotice={handleNotice} onError={handleError} />
+
+      <QuotaTrendCard days={30} />
 
       <motion.div
         initial={{ opacity: 0, y: 8 }}

@@ -52,6 +52,7 @@ import ChatPanel from "@/components/chat/ChatPanel";
 import ModePicker from "@/components/course/ModePicker";
 import BlueprintBoard from "@/components/blueprint/BlueprintBoard";
 import ReviewControls from "@/components/course/ReviewControls";
+import CodeCheckPanel from "@/components/course/CodeCheckPanel";
 import CourseGrantsPanel from "@/components/course/CourseGrantsPanel";
 import StatusBadge from "@/components/course/StatusBadge";
 import LessonLockBanner from "@/components/course/LessonLockBanner";
@@ -1007,6 +1008,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 onReacquire={() => void lockController.current?.retry()}
               />
 
+              <CodeCheckPanel lessonId={activeLesson.id} disabled={!canWrite} />
               <ReviewControls
                 lesson={activeLesson}
                 progress={progress}
@@ -1213,6 +1215,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
             loading={versionsLoading}
             busyVersion={reverting}
             onRevert={handleRevert}
+            lessonId={activeLesson?.id}
             className="sticky top-24 h-[calc(100vh-7rem)]"
           />
         </div>
@@ -1267,6 +1270,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 loading={versionsLoading}
                 busyVersion={reverting}
                 onRevert={handleRevert}
+                lessonId={activeLesson?.id}
                 className="h-full"
               />
               <button
