@@ -32,6 +32,8 @@ from app.ports.quota_repository import QuotaRepository
 from app.ports.storage import StorageBackend
 from app.ports.vectorstore import VectorStore
 from app.ports.web_search import WebSearchPort
+from app.ports.image_provider import ImageProvider
+from app.ports.media_repository import MediaRepository
 from app.ports.research_repository import ResearchRepository
 from app.ports.longform_repository import LongformRepository
 from app.ports.job_repository import JobRepository
@@ -41,6 +43,7 @@ from app.services.auth import AuthService
 from app.services.conversation import ConversationService
 from app.services.blueprint import BlueprintService
 from app.services.generation import GenerationService
+from app.services.export import ExportService
 from app.services.ingest import IngestService
 from app.services.locks import LockService
 from app.services.provider_catalog import ProviderCatalogService
@@ -52,6 +55,7 @@ from app.services.longform import LongformService
 from app.services.jobs import JobService
 from app.services.creation_profiles import CreationProfileService
 from app.services.accounts import AccountAdminService
+from app.services.media import MediaService
 
 PROVIDER_CACHE_SIZE = 64
 
@@ -182,10 +186,25 @@ class Container:
             if backend == "builtin":
                 from app.adapters.exporter.builtin import BuiltinExporter
 
-                return BuiltinExporter()
+                cfg = self.settings.exporter
+                return BuiltinExporter(
+                    font_regular=cfg.font_regular,
+                    font_bold=cfg.font_bold,
+                    pdf_margin_mm=cfg.pdf_margin_mm,
+                )
             raise ValueError(f"不支持的 exporter backend: {backend!r}")
 
         return self._get_or_build("exporter", build)
+
+    def export_service(self) -> ExportService:
+        def build() -> ExportService:
+            return ExportService(
+                course_repository=self.course_repository(),
+                longform_repository=self.longform_repository(),
+                exporter=self.exporter(),
+            )
+
+        return self._get_or_build("export_service", build)
 
     def course_repository(self) -> CourseRepository:
         def build() -> CourseRepository:
@@ -524,6 +543,46 @@ class Container:
             )
 
         return self._get_or_build("account_admin", build)
+
+    def image_provider(self) -> ImageProvider:
+        def build() -> ImageProvider:
+            settings = self.settings.image
+            backend = (settings.backend or "none").strip().lower()
+            if backend == "openai_images" and settings.api_key:
+                from app.adapters.imagegen.openai_images import OpenAIImageProvider
+
+                return OpenAIImageProvider(
+                    base_url=settings.base_url,
+                    api_key=settings.api_key,
+                    model=settings.model,
+                    timeout=settings.timeout,
+                )
+            from app.adapters.imagegen.none import NullImageProvider
+
+            return NullImageProvider()
+
+        return self._get_or_build("image_provider", build)
+
+    def media_repository(self) -> MediaRepository:
+        def build() -> MediaRepository:
+            from app.adapters.database.media_repository import (
+                DatabaseMediaRepository,
+            )
+
+            return DatabaseMediaRepository(database=self.database())
+
+        return self._get_or_build("media_repository", build)
+
+    def media_service(self) -> MediaService:
+        def build() -> MediaService:
+            return MediaService(
+                repository=self.media_repository(),
+                storage=self.storage(),
+                image_provider=self.image_provider(),
+                max_bytes=self.settings.image.max_bytes,
+            )
+
+        return self._get_or_build("media_service", build)
 
     def conversation_repository(self) -> ConversationRepository:
         def build() -> ConversationRepository:

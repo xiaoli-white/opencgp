@@ -15,6 +15,7 @@ import json
 import time
 from contextlib import asynccontextmanager
 from typing import Any, Literal
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,13 +34,32 @@ from app.models.auth import (
 from app.models.citation import Citation
 from app.models.blueprint import CourseBlueprint, GlossaryTerm
 from app.models.course import Course, Lesson
+from app.models.export import (
+    EXPORT_FORMATS,
+    EXPORT_SOURCE_TYPES,
+    EXPORT_THEMES,
+    FORMAT_CONTENT_TYPES,
+    FORMAT_EXTENSIONS,
+    FORMAT_LABELS,
+    FORMAT_MARKDOWN,
+    SOURCE_COURSE,
+    THEME_LIGHT,
+)
 from app.models.mode import GenerationMode
 from app.models.thread import LessonThreadView
 from app.models.longform import LongformProfile
 from app.models.research import ResearchRun
 from app.models.job import JOB_KINDS, JOB_STATUSES, Job
 from app.services.jobs import JobContext
+from app.services.media import detect_image_type
 from app.services.errors import (
+    ImageGenerationError,
+    ImageGenerationUnavailableError,
+    MediaAssetNotFoundError,
+    MediaInvalidError,
+    ExportFormatError,
+    ExportSourceNotFoundError,
+    ExportUnavailableError,
     AccountNotActiveError,
     AvatarInvalidError,
     AuthRequiredError,
@@ -294,6 +314,15 @@ def health() -> dict[str, Any]:
         }
     except Exception as exc:  # noqa: BLE001
         adapters["websearch"] = {"ok": False, "error": str(exc), "optional": True}
+    try:
+        imagegen = container.image_provider()
+        adapters["imagegen"] = {
+            "ok": bool(imagegen.healthcheck()),
+            "backend": getattr(imagegen, "name", ""),
+            "optional": True,
+        }
+    except Exception as exc:  # noqa: BLE001
+        adapters["imagegen"] = {"ok": False, "error": str(exc), "optional": True}
     queue_info: dict[str, Any] = {"backend": "unknown", "ok": False}
     jobs_info: dict[str, int] = {"queued": 0, "running": 0}
     try:
@@ -3253,3 +3282,242 @@ def delete_creation_profile(
     except PermissionDeniedError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     return {"ok": bool(removed), "profile_id": profile_id}
+
+
+@app.get("/api/v1/export/formats")
+def export_formats(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    exporter = container.exporter()
+    availability = {}
+    if hasattr(exporter, "available_formats"):
+        try:
+            availability = dict(exporter.available_formats())
+        except Exception:
+            availability = {}
+    return {
+        "formats": [
+            {
+                "id": fmt,
+                "label": FORMAT_LABELS[fmt],
+                "available": bool(availability.get(fmt, True)),
+            }
+            for fmt in EXPORT_FORMATS
+        ]
+    }
+
+
+@app.get("/api/v1/export/{source_type}/{source_id}")
+def export_document(
+    source_type: str,
+    source_id: str,
+    fmt: str = Query(FORMAT_MARKDOWN, alias="format"),
+    theme: str = Query(THEME_LIGHT),
+    include_citations: bool = Query(True),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> StreamingResponse:
+    _enforce(ctx, "write")
+    if source_type not in EXPORT_SOURCE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的导出来源类型: {source_type}（支持 {', '.join(EXPORT_SOURCE_TYPES)}）",
+        )
+    fmt = (fmt or "").strip().lower()
+    if fmt not in EXPORT_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的导出格式: {fmt}（支持 {', '.join(EXPORT_FORMATS)}）",
+        )
+    theme = (theme or THEME_LIGHT).strip().lower()
+    if theme not in EXPORT_THEMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的主题: {theme}（支持 {', '.join(EXPORT_THEMES)}）",
+        )
+    if source_type == SOURCE_COURSE:
+        _require_course(source_id, ctx, "write")
+    else:
+        _require_longform(source_id, ctx, "write")
+    try:
+        document = container.export_service().build_document(
+            source_type,
+            source_id,
+            _tenant_of(ctx),
+            include_citations=include_citations,
+        )
+        payload = container.exporter().export(
+            document,
+            fmt,
+            theme=theme,
+            include_citations=include_citations,
+        )
+    except ExportSourceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ExportFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ExportUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    extension = FORMAT_EXTENSIONS[fmt]
+    filename = f"{document.title or source_id}.{extension}"
+    disposition = (
+        f"attachment; filename=\"export.{extension}\"; "
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+    print(
+        f"[export] title={document.title} source={source_type}:{source_id} "
+        f"format={fmt} theme={theme} bytes={len(payload)}",
+        flush=True,
+    )
+    return StreamingResponse(
+        iter([payload]),
+        media_type=FORMAT_CONTENT_TYPES[fmt],
+        headers={
+            "Content-Disposition": disposition,
+            "Content-Length": str(len(payload)),
+        },
+    )
+
+
+class MediaGenerateRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    size: str = "1024x1024"
+    n: int = Field(default=1, ge=1, le=4)
+
+
+MEDIA_CACHE_CONTROL = "private, max-age=600"
+
+
+def _media_ctx(
+    authorization: str | None,
+    x_tenant_id: str | None,
+    token: str | None,
+) -> AuthContext:
+    service = container.auth_service()
+    if service.mode != "required":
+        return service.local_context()
+    raw = ""
+    if authorization:
+        scheme, _, value = authorization.partition(" ")
+        raw = value.strip() if scheme.lower() == "bearer" else authorization.strip()
+    if not raw and token:
+        raw = token.strip()
+    if not raw:
+        raise HTTPException(status_code=401, detail="缺少访问令牌")
+    try:
+        return service.resolve(raw, x_tenant_id)
+    except AuthRequiredError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except AccountNotActiveError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except MembershipNotFoundError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except TenantNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/media")
+def list_media(
+    kind: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    assets = container.media_service().list_assets(ctx, kind=kind, limit=limit)
+    return {"count": len(assets), "assets": [item.payload() for item in assets]}
+
+
+@app.get("/api/v1/media/{asset_id}")
+def get_media(
+    asset_id: str,
+    token: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+    x_tenant_id: str | None = Header(default=None),
+) -> StreamingResponse:
+    ctx = _media_ctx(authorization, x_tenant_id, token)
+    _enforce(ctx, "read")
+    service = container.media_service()
+    try:
+        asset = service.get_asset(ctx, asset_id)
+        data = service.read_bytes(asset)
+    except MediaAssetNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return StreamingResponse(
+        iter([data]),
+        media_type=asset.content_type or "application/octet-stream",
+        headers={
+            "Cache-Control": MEDIA_CACHE_CONTROL,
+            "Content-Length": str(len(data)),
+        },
+    )
+
+
+@app.post("/api/v1/media/upload")
+async def upload_media(
+    file: UploadFile = File(...),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="图片文件为空")
+    try:
+        content_type, _ = detect_image_type(file.filename or "", file.content_type or "")
+    except MediaInvalidError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    max_bytes = container.media_service().max_bytes
+    if len(data) > max_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"图片不能超过 {max_bytes // (1024 * 1024)}MB",
+        )
+    _charge(ctx, "upload")
+    _charge(ctx, "storage", len(data))
+    try:
+        asset = container.media_service().save_bytes(
+            ctx, data, content_type, "uploaded"
+        )
+    except MediaInvalidError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return asset.payload()
+
+
+@app.post("/api/v1/media/generate")
+async def generate_media(
+    req: MediaGenerateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    service = container.media_service()
+    provider = service.provider()
+    if provider is None or getattr(provider, "is_placeholder", False):
+        raise HTTPException(status_code=503, detail="未配置图片生成服务")
+    _charge(ctx, "image")
+    try:
+        assets = await service.generate(ctx, req.prompt, req.size, req.n)
+    except ImageGenerationUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ImageGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except MediaInvalidError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    print(
+        f"[media] generate prompt={req.prompt[:60]!r} assets={len(assets)} "
+        f"provider={getattr(provider, 'name', '')}",
+        flush=True,
+    )
+    return {
+        "count": len(assets),
+        "assets": [item.payload() for item in assets],
+        "provider": getattr(provider, "name", ""),
+    }
+
+
+@app.delete("/api/v1/media/{asset_id}")
+def delete_media(
+    asset_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    try:
+        container.media_service().delete_asset(ctx, asset_id)
+    except MediaAssetNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True}

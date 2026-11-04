@@ -21,3 +21,7 @@ class Exporter(Protocol):
     def healthcheck(self) -> bool:
         """探活：底层渲染引擎（如 pandoc/weasyprint）是否可用。"""
         ...
+
+    def available_formats(self) -> dict[str, bool]:
+        """返回各导出格式的可用性（``{fmt: bool}``）。"""
+        ...

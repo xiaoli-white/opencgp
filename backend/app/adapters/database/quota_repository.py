@@ -116,7 +116,11 @@ class DatabaseQuotaRepository(QuotaRepository):
         storage = _sum_kinds(storage_rows)
         return QuotaUsage(
             period=time.strftime("%Y-%m", time.localtime(period_start)),
-            generations=period["generate"] + period["amend"] + period["ask"] + period["blueprint"],
+            generations=period["generate"]
+            + period["amend"]
+            + period["ask"]
+            + period["blueprint"]
+            + period["image"],
             uploads=period["upload"],
             storage_bytes=storage["storage"],
         )
@@ -220,7 +224,7 @@ def _limits_from_row(row: Mapping[str, Any]) -> QuotaLimits:
 
 
 def _sum_kinds(rows: list[Mapping[str, Any]]) -> dict[str, int]:
-    totals: dict[str, int] = {"generate": 0, "amend": 0, "ask": 0, "blueprint": 0, "upload": 0, "storage": 0}
+    totals: dict[str, int] = {"generate": 0, "amend": 0, "ask": 0, "blueprint": 0, "image": 0, "upload": 0, "storage": 0}
     for row in rows:
         kind = str(row["kind"])
         totals[kind] = totals.get(kind, 0) + int(row["units"] or 0)

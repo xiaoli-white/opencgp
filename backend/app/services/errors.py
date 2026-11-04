@@ -166,3 +166,31 @@ class SourceNotFoundError(LookupError):
 
 class ThreadNotFoundError(LookupError):
     pass
+
+
+class ExportSourceNotFoundError(LookupError):
+    pass
+
+
+class ExportFormatError(ValueError):
+    pass
+
+
+class ExportUnavailableError(RuntimeError):
+    pass
+
+
+class ImageGenerationUnavailableError(RuntimeError):
+    pass
+
+
+class ImageGenerationError(RuntimeError):
+    pass
+
+
+class MediaAssetNotFoundError(LookupError):
+    pass
+
+
+class MediaInvalidError(ValueError):
+    pass

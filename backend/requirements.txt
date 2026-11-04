@@ -7,3 +7,5 @@ python-multipart==0.0.33
 pypdf==6.21.4
 python-docx==1.2.0
 redis==8.1.0
+weasyprint==70.0
+fonttools==4.68.0

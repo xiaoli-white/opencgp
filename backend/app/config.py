@@ -26,6 +26,7 @@ VECTORSTORE_BACKENDS = ("simple", "pgvector")
 EXPORTER_BACKENDS = ("builtin",)
 PARSER_BACKENDS = ("builtin",)
 EMBEDDING_BACKENDS = ("none", "openai_compat")
+IMAGE_BACKENDS = ("none", "openai_images")
 
 
 def _find_dotenv() -> Path | None:
@@ -132,10 +133,18 @@ class VectorStoreConfig:
 @dataclass
 class ExporterConfig:
     backend: str = "builtin"
+    font_regular: str = ""
+    font_bold: str = ""
+    pdf_margin_mm: int = 18
 
     @classmethod
     def from_env(cls) -> "ExporterConfig":
-        return cls(backend=_env("EXPORTER_BACKEND", "builtin"))
+        return cls(
+            backend=_env("EXPORTER_BACKEND", "builtin"),
+            font_regular=_env("EXPORTER_FONT_REGULAR", ""),
+            font_bold=_env("EXPORTER_FONT_BOLD", ""),
+            pdf_margin_mm=int(_env("EXPORTER_PDF_MARGIN_MM", "18")),
+        )
 
 
 @dataclass
@@ -270,6 +279,28 @@ class WebSearchConfig:
 
 
 @dataclass
+class ImageConfig:
+    backend: str = "none"
+    base_url: str = "https://api.openai.com/v1"
+    model: str = "gpt-image-1"
+    api_key: str = ""
+    max_bytes: int = 8388608
+    timeout: float = 60.0
+
+    @classmethod
+    def from_env(cls) -> "ImageConfig":
+        return cls(
+            backend=_env("IMAGE_BACKEND", "none") or "none",
+            base_url=_env("IMAGE_BASE_URL", "https://api.openai.com/v1")
+            or "https://api.openai.com/v1",
+            model=_env("IMAGE_MODEL", "gpt-image-1") or "gpt-image-1",
+            api_key=_env("IMAGE_API_KEY", ""),
+            max_bytes=int(_env("IMAGE_MAX_BYTES", "8388608") or 8388608),
+            timeout=float(_env("IMAGE_TIMEOUT", "60") or 60),
+        )
+
+
+@dataclass
 class LockConfig:
     ttl_seconds: int = 120
 
@@ -323,6 +354,7 @@ class Settings:
     auth: AuthConfig = field(default_factory=AuthConfig)
     locks: LockConfig = field(default_factory=LockConfig)
     websearch: WebSearchConfig = field(default_factory=WebSearchConfig)
+    image: ImageConfig = field(default_factory=ImageConfig)
     jobs: JobsConfig = field(default_factory=JobsConfig)
 
     @classmethod
@@ -344,6 +376,7 @@ class Settings:
             auth=AuthConfig.from_env(),
             locks=LockConfig.from_env(),
             websearch=WebSearchConfig.from_env(),
+            image=ImageConfig.from_env(),
             jobs=JobsConfig.from_env(),
         )
 
