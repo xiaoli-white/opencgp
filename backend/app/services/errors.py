@@ -192,5 +192,13 @@ class MediaAssetNotFoundError(LookupError):
     pass
 
 
+class ExecUnavailableError(RuntimeError):
+    pass
+
+
+class ExecLanguageError(ValueError):
+    pass
+
+
 class MediaInvalidError(ValueError):
     pass

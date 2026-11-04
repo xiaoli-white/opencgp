@@ -26,6 +26,10 @@ class QuotaService:
         usage.period = name
         return usage
 
+    def usage_by_kind(self, tenant_id: str) -> dict[str, int]:
+        _name, start = self.period()
+        return self.repository.usage_by_kind(tenant_id, start)
+
     def limits(self, tenant_id: str) -> QuotaLimits:
         return self.repository.get_limits(tenant_id)
 

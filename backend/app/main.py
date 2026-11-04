@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
@@ -45,14 +45,20 @@ from app.models.export import (
     SOURCE_COURSE,
     THEME_LIGHT,
 )
+from app.models.exec import LANGUAGES, ExecResult
 from app.models.mode import GenerationMode
 from app.models.thread import LessonThreadView
 from app.models.longform import LongformProfile
 from app.models.research import ResearchRun
 from app.models.job import JOB_KINDS, JOB_STATUSES, Job
 from app.services.jobs import JobContext
+from app.services.codecheck import CodeCheckService
 from app.services.media import detect_image_type
+from app.services.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
+from app.services.metrics import get_metrics
 from app.services.errors import (
+    ExecLanguageError,
+    ExecUnavailableError,
     ImageGenerationError,
     ImageGenerationUnavailableError,
     MediaAssetNotFoundError,
@@ -130,6 +136,29 @@ app = FastAPI(
     description="AI 课程工作室 · 以对话为中心、以课程为活文档的创作工作台",
     lifespan=lifespan,
 )
+
+def _route_label(request: Request) -> str:
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    return str(path) if path else "unmatched"
+
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    if request.url.path == "/metrics":
+        return await call_next(request)
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:  # noqa: BLE001
+        get_metrics().inc_request(request.method, _route_label(request), 500)
+        raise
+    elapsed = time.perf_counter() - started
+    route = _route_label(request)
+    get_metrics().inc_request(request.method, route, response.status_code)
+    get_metrics().observe_duration(route, elapsed)
+    return response
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -2959,6 +2988,7 @@ class LessonUpdateRequest(BaseModel):
     prerequisites: list[str] | None = None
     order_index: int | None = None
     status: str | None = None
+    content: str | None = None
 
 
 @app.patch("/api/v1/lessons/{lesson_id}")
@@ -2976,6 +3006,7 @@ def update_lesson(
         prerequisites=req.prerequisites,
         status=req.status,
         order_index=req.order_index,
+        content=req.content,
     )
     if lesson is None:
         raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}")
@@ -3521,3 +3552,135 @@ def delete_media(
     except MediaAssetNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"ok": True}
+
+
+class ExecRequest(BaseModel):
+    language: str
+    code: str
+    stdin: str = ""
+    timeout: int | None = Field(default=None, ge=1, le=60)
+
+
+class CodeCheckRequest(BaseModel):
+    language: str | None = None
+
+
+def _exec_result_label(result: ExecResult) -> str:
+    if result.timed_out:
+        return "timeout"
+    return "ok" if int(result.exit_code) == 0 else "error"
+
+
+@app.get("/api/v1/exec/backends")
+def exec_backends(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    backends = container.executor_backends()
+    return {
+        "backends": backends,
+        "selected": getattr(container.executor(), "name", "none"),
+        "languages": sorted(LANGUAGES.keys()),
+    }
+
+
+@app.post("/api/v1/exec")
+def exec_code(
+    req: ExecRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    ctx = _enforce(ctx, "write")
+    language = (req.language or "").strip().lower()
+    if language not in LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"不支持的代码语言: {req.language}")
+    executor = container.executor()
+    if not executor.available():
+        raise HTTPException(status_code=503, detail="未配置代码执行后端")
+    _charge(ctx, "exec", 1, ref_id=language)
+    try:
+        result = executor.run(language, req.code, req.stdin, req.timeout)
+    except ExecLanguageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ExecUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="未配置代码执行后端") from exc
+    get_metrics().inc_exec(result.backend, _exec_result_label(result))
+    return result.model_dump()
+
+
+@app.post("/api/v1/lessons/{lesson_id}/code-check")
+def lesson_code_check(
+    lesson_id: str,
+    req: CodeCheckRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    ctx = _enforce(ctx, "write")
+    lesson = _require_lesson(lesson_id, ctx, "write")
+    executor = container.executor()
+    if not executor.available():
+        raise HTTPException(status_code=503, detail="未配置代码执行后端")
+    service = CodeCheckService(executor)
+    payload = service.check(lesson.content or "", (req or CodeCheckRequest()).language)
+    for block in payload["blocks"]:
+        if block.get("exit_code") is None:
+            continue
+        label = "timeout" if block.get("timed_out") else (
+            "ok" if block.get("ok") else "error"
+        )
+        get_metrics().inc_exec(getattr(executor, "name", ""), label)
+    return {"lesson_id": lesson_id, **payload}
+
+
+def _metrics_snapshot() -> dict[str, Any]:
+    snapshot: dict[str, Any] = {
+        "jobs_total": [],
+        "jobs_active": 0,
+        "queue_backlog": 0,
+        "adapter_up": [],
+        "quota_usage": [],
+        "info": {"version": app.version, "env": settings.env},
+    }
+    try:
+        jobs = container.job_repository().list(limit=2000)
+        grouped: dict[tuple[str, str], int] = {}
+        for job in jobs:
+            key = (str(job.kind), str(job.status))
+            grouped[key] = grouped.get(key, 0) + 1
+        snapshot["jobs_total"] = [
+            {"kind": kind, "status": status, "count": count}
+            for (kind, status), count in sorted(grouped.items())
+        ]
+    except Exception as exc:  # noqa: BLE001
+        print(f"[metrics] 任务统计失败: {exc!r}")
+    try:
+        counts = container.job_service().counts()
+        snapshot["jobs_active"] = int(counts.get("queued") or 0) + int(
+            counts.get("running") or 0
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[metrics] 活跃任务统计失败: {exc!r}")
+    try:
+        stats = container.job_queue().stats()
+        snapshot["queue_backlog"] = int(stats.get("pending") or 0)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[metrics] 队列统计失败: {exc!r}")
+    try:
+        payload = health()
+        snapshot["adapter_up"] = [
+            {"name": name, "up": bool(info.get("ok"))}
+            for name, info in (payload.get("adapters") or {}).items()
+        ]
+    except Exception as exc:  # noqa: BLE001
+        print(f"[metrics] adapter 探活失败: {exc!r}")
+    try:
+        usage = container.quota_service().usage_by_kind(DEFAULT_TENANT_ID)
+        snapshot["quota_usage"] = [
+            {"kind": kind, "value": int(value)}
+            for kind, value in sorted(usage.items())
+        ]
+    except Exception as exc:  # noqa: BLE001
+        print(f"[metrics] 配额统计失败: {exc!r}")
+    return snapshot
+
+
+@app.get("/metrics")
+def metrics_endpoint() -> PlainTextResponse:
+    return PlainTextResponse(
+        get_metrics().render(_metrics_snapshot()), media_type=METRICS_CONTENT_TYPE
+    )

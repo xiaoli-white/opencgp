@@ -34,6 +34,7 @@ from app.ports.vectorstore import VectorStore
 from app.ports.web_search import WebSearchPort
 from app.ports.image_provider import ImageProvider
 from app.ports.media_repository import MediaRepository
+from app.ports.executor import Executor
 from app.ports.research_repository import ResearchRepository
 from app.ports.longform_repository import LongformRepository
 from app.ports.job_repository import JobRepository
@@ -583,6 +584,93 @@ class Container:
             )
 
         return self._get_or_build("media_service", build)
+
+    def executor(self) -> Executor:
+        def build() -> Executor:
+            settings = self.settings.exec
+            backend = (settings.backend or "docker").strip().lower()
+            if backend == "docker":
+                from app.adapters.executor.docker import DockerExecutor
+
+                docker = DockerExecutor(
+                    images=settings.images,
+                    max_bytes=settings.max_bytes,
+                    default_timeout=settings.timeout,
+                )
+                if docker.available():
+                    return docker
+                print(f"[exec] docker 后端不可用，回落 local: {docker.last_error}")
+            if backend in ("docker", "local"):
+                from app.adapters.executor.local import LocalExecutor
+
+                local = LocalExecutor(
+                    max_bytes=settings.max_bytes,
+                    default_timeout=settings.timeout,
+                )
+                if local.available():
+                    return local
+                print("[exec] local 后端不可用，回落 none")
+            from app.adapters.executor.null import NullExecutor
+
+            return NullExecutor()
+
+        return self._get_or_build("executor", build)
+
+    def executor_backends(self) -> list[dict[str, Any]]:
+        settings = self.settings.exec
+        backends: list[dict[str, Any]] = []
+        from app.adapters.executor.docker import DockerExecutor
+        from app.adapters.executor.local import LocalExecutor
+        from app.adapters.executor.null import NullExecutor
+
+        docker = DockerExecutor(
+            images=settings.images,
+            max_bytes=settings.max_bytes,
+            default_timeout=settings.timeout,
+        )
+        backends.append(
+            {
+                "id": "docker",
+                "available": docker.available(),
+                "isolated": True,
+                "images": sorted(set(settings.images.values())),
+                "missing_images": docker.missing_images(),
+                "detail": docker.last_error,
+            }
+        )
+        local = LocalExecutor(
+            max_bytes=settings.max_bytes, default_timeout=settings.timeout
+        )
+        backends.append(
+            {
+                "id": "local",
+                "available": local.available(),
+                "isolated": False,
+                "images": ["system-runtime"],
+                "missing_images": [],
+                "detail": "无网络隔离，仅适用于本地可信环境",
+            }
+        )
+        null = NullExecutor()
+        backends.append(
+            {
+                "id": "none",
+                "available": null.available(),
+                "isolated": False,
+                "images": [],
+                "missing_images": [],
+                "detail": "未配置代码执行后端",
+            }
+        )
+        return backends
+
+    def code_check_service(self) -> Any:
+        from app.services.codecheck import CodeCheckService
+
+        def build() -> CodeCheckService:
+            return CodeCheckService(self.executor())
+
+        return self._get_or_build("code_check_service", build)
 
     def conversation_repository(self) -> ConversationRepository:
         def build() -> ConversationRepository:

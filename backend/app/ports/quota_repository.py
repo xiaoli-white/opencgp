@@ -19,6 +19,9 @@ class QuotaRepository(Protocol):
     def usage(self, tenant_id: str, period_start: float) -> QuotaUsage:
         ...
 
+    def usage_by_kind(self, tenant_id: str, period_start: float) -> dict[str, int]:
+        ...
+
     def record(
         self,
         tenant_id: str,

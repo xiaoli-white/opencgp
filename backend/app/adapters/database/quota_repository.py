@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from app.models.quota import (
     DEFAULT_MONTHLY_GENERATIONS,
+    GENERATION_KINDS,
     DEFAULT_MONTHLY_UPLOADS,
     DEFAULT_STORAGE_BYTES,
     LessonLock,
@@ -116,14 +117,19 @@ class DatabaseQuotaRepository(QuotaRepository):
         storage = _sum_kinds(storage_rows)
         return QuotaUsage(
             period=time.strftime("%Y-%m", time.localtime(period_start)),
-            generations=period["generate"]
-            + period["amend"]
-            + period["ask"]
-            + period["blueprint"]
-            + period["image"],
+            generations=sum(period[kind] for kind in GENERATION_KINDS if kind in period),
             uploads=period["upload"],
             storage_bytes=storage["storage"],
         )
+
+    def usage_by_kind(self, tenant_id: str, period_start: float) -> dict[str, int]:
+        self.ensure_schema()
+        rows = self.database.fetchall(
+            "SELECT kind, SUM(units) AS units FROM usage_events"
+            " WHERE tenant_id = ? AND created_at >= ? GROUP BY kind",
+            (tenant_id, period_start),
+        )
+        return {str(row["kind"]): int(row["units"] or 0) for row in rows}
 
     def record(
         self,

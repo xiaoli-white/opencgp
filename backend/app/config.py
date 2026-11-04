@@ -27,6 +27,7 @@ EXPORTER_BACKENDS = ("builtin",)
 PARSER_BACKENDS = ("builtin",)
 EMBEDDING_BACKENDS = ("none", "openai_compat")
 IMAGE_BACKENDS = ("none", "openai_images")
+EXECUTOR_BACKENDS = ("docker", "local", "none")
 
 
 def _find_dotenv() -> Path | None:
@@ -335,6 +336,39 @@ class JobsConfig:
 
 
 @dataclass
+class ExecConfig:
+    backend: str = "docker"
+    timeout: int = 10
+    max_bytes: int = 65536
+    images: dict[str, str] = field(
+        default_factory=lambda: {
+            "python": "python:3.12-slim",
+            "node": "node:20-slim",
+            "bash": "python:3.12-slim",
+        }
+    )
+
+    @classmethod
+    def from_env(cls) -> "ExecConfig":
+        default = cls()
+        raw_images = _env("EXEC_IMAGES", "")
+        images = dict(default.images)
+        for item in raw_images.split(","):
+            entry = item.strip()
+            if not entry or ":" not in entry:
+                continue
+            lang, _, image = entry.partition(":")
+            if lang.strip() and image.strip():
+                images[lang.strip().lower()] = image.strip()
+        return cls(
+            backend=(_env("EXECUTOR_BACKEND", "docker") or "docker").strip().lower(),
+            timeout=max(1, int(_env("EXEC_TIMEOUT", "10") or 10)),
+            max_bytes=max(1024, int(_env("EXEC_MAX_BYTES", "65536") or 65536)),
+            images=images,
+        )
+
+
+@dataclass
 class Settings:
     """应用总配置。"""
 
@@ -356,6 +390,7 @@ class Settings:
     websearch: WebSearchConfig = field(default_factory=WebSearchConfig)
     image: ImageConfig = field(default_factory=ImageConfig)
     jobs: JobsConfig = field(default_factory=JobsConfig)
+    exec: ExecConfig = field(default_factory=ExecConfig)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -378,6 +413,7 @@ class Settings:
             websearch=WebSearchConfig.from_env(),
             image=ImageConfig.from_env(),
             jobs=JobsConfig.from_env(),
+            exec=ExecConfig.from_env(),
         )
 
 

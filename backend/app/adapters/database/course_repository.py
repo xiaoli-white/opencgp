@@ -339,6 +339,7 @@ class DatabaseCourseRepository(CourseRepository):
         prerequisites: Sequence[str] | None = None,
         status: str | None = None,
         order_index: int | None = None,
+        content: str | None = None,
     ) -> Lesson | None:
         self.ensure_schema()
         lesson = self.get_lesson(lesson_id)
@@ -361,6 +362,9 @@ class DatabaseCourseRepository(CourseRepository):
         if order_index is not None:
             assignments.append("order_index = ?")
             params.append(int(order_index))
+        if content is not None:
+            assignments.append("content = ?")
+            params.append(content)
         if not assignments:
             return lesson
         assignments.append("updated_at = ?")

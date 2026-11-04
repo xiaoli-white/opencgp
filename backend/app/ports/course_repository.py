@@ -81,6 +81,7 @@ class CourseRepository(Protocol):
         prerequisites: Sequence[str] | None = None,
         status: str | None = None,
         order_index: int | None = None,
+        content: str | None = None,
     ) -> Lesson | None:
         ...
 
