@@ -17,6 +17,8 @@ type MarkdownReaderProps = {
   mode?: GenerationMode | "";
   className?: string;
   onAskSelection?: (text: string) => void;
+  enableAsk?: boolean;
+  showCitations?: boolean;
 };
 
 type SelectionAnchor = {
@@ -53,6 +55,7 @@ function CiteMark({ marker, source }: { marker: string; source?: Citation }) {
 function decorate(
   node: React.ReactNode,
   lookup: Map<string, Citation>,
+  showCitations: boolean,
 ): React.ReactNode {
   if (typeof node === "string") {
     const parts = node.split(/(\[E\d+\])/g);
@@ -60,12 +63,13 @@ function decorate(
     return parts.map((part, index) => {
       const match = MARKER_PATTERN.exec(part);
       if (!match) return part;
+      if (!showCitations) return null;
       const marker = `E${match[1]}`;
       return <CiteMark key={`${marker}-${index}`} marker={marker} source={lookup.get(marker)} />;
     });
   }
   if (Array.isArray(node)) {
-    return node.map((child) => decorate(child, lookup));
+    return node.map((child) => decorate(child, lookup, showCitations));
   }
   return node;
 }
@@ -78,9 +82,12 @@ export default function MarkdownReader({
   mode,
   className,
   onAskSelection,
+  enableAsk = true,
+  showCitations = true,
 }: MarkdownReaderProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [anchor, setAnchor] = useState<SelectionAnchor | null>(null);
+  const askEnabled = enableAsk && Boolean(onAskSelection);
 
   const dismiss = useCallback(() => setAnchor(null), []);
 
@@ -89,7 +96,7 @@ export default function MarkdownReader({
   }, [content, dismiss]);
 
   useEffect(() => {
-    if (!onAskSelection) return;
+    if (!askEnabled) return;
     const host = hostRef.current;
     if (!host) return;
 
@@ -159,7 +166,7 @@ export default function MarkdownReader({
       window.removeEventListener("scroll", dismiss, true);
       window.removeEventListener("resize", dismiss);
     };
-  }, [onAskSelection, dismiss]);
+  }, [askEnabled, onAskSelection, dismiss]);
 
   const lookup = useMemo(() => {
     const map = new Map<string, Citation>();
@@ -186,13 +193,13 @@ export default function MarkdownReader({
   const components = useMemo<Components>(
     () => ({
       p({ children }) {
-        return <p>{decorate(children, lookup)}</p>;
+        return <p>{decorate(children, lookup, showCitations)}</p>;
       },
       li({ children }) {
-        return <li>{decorate(children, lookup)}</li>;
+        return <li>{decorate(children, lookup, showCitations)}</li>;
       },
       td({ children }) {
-        return <td>{decorate(children, lookup)}</td>;
+        return <td>{decorate(children, lookup, showCitations)}</td>;
       },
       a({ href, children }) {
         return (
@@ -228,7 +235,7 @@ export default function MarkdownReader({
         );
       },
     }),
-    [lookup],
+    [lookup, showCitations],
   );
 
   return (
@@ -270,7 +277,7 @@ export default function MarkdownReader({
       >
         {body}
       </ReactMarkdown>
-      {onAskSelection ? (
+      {askEnabled ? (
         <AnimatePresence>
           {anchor ? (
             <motion.button
@@ -283,7 +290,7 @@ export default function MarkdownReader({
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => {
                 const text = anchor.text;
-                onAskSelection(text);
+                onAskSelection?.(text);
                 window.getSelection()?.removeAllRanges();
                 dismiss();
               }}

@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { SessionProvider } from "@/components/auth/SessionProvider";
 
@@ -15,6 +15,7 @@ const LongformsPage = lazy(() => import("./pages/LongformsPage"));
 const LongformEditorPage = lazy(() => import("./pages/LongformEditorPage"));
 const JobsPage = lazy(() => import("./pages/JobsPage"));
 const MediaPage = lazy(() => import("./pages/MediaPage"));
+const ReaderModePage = lazy(() => import("./pages/ReaderModePage"));
 
 function GlassSkeleton() {
   return (
@@ -30,6 +31,19 @@ function GlassSkeleton() {
 }
 
 export default function App() {
+  const location = useLocation();
+
+  if (location.pathname.startsWith("/read/")) {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-[#f8fafc] dark:bg-[#0b1020]" />}>
+        <Routes>
+          <Route path="/read/:kind/:id" element={<ReaderModePage />} />
+          <Route path="*" element={<ReaderModePage />} />
+        </Routes>
+      </Suspense>
+    );
+  }
+
   return (
     <SessionProvider>
       <AppShell>

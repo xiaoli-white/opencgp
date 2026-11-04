@@ -580,6 +580,16 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               sourceId={course.id}
               fallbackName={course.title}
             />
+            <a
+              href={`/read/course/${course.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-ghost shrink-0"
+              title="在新标签页打开独立阅读模式"
+            >
+              <BookOpen size={13} />
+              阅读模式
+            </a>
             {canWrite ? (
               <button
                 type="button"

@@ -800,3 +800,37 @@ textarea:focus-visible {
     min-height: 24px;
   }
 }
+
+.reader-surface .reader {
+  max-width: none;
+  font-size: var(--rm-font-size, 17px);
+  line-height: 1.95;
+  letter-spacing: 0.002em;
+}
+
+.reader-surface .reader > * + * {
+  margin-top: 1.35em;
+}
+
+.reader-surface .reader h1 {
+  font-size: 1.5em;
+  margin-top: 1.9em;
+}
+
+.reader-surface .reader h2 {
+  font-size: 1.28em;
+  margin-top: 1.7em;
+}
+
+.reader-surface .reader h3 {
+  font-size: 1.12em;
+  margin-top: 1.5em;
+}
+
+.reader-surface .reader li + li {
+  margin-top: 0.5em;
+}
+
+.reader-surface .reader p {
+  text-wrap: pretty;
+}

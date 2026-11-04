@@ -32,12 +32,19 @@ type NavItem = {
   icon: typeof LayoutGrid;
   exact: boolean;
   requireServer?: boolean;
+  requireWrite?: boolean;
 };
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "课程工作台", icon: LayoutGrid, exact: true },
   { href: "/kb", label: "知识库", icon: Library, exact: false },
-  { href: "/research", label: "深度研究", icon: BrainCircuit, exact: false },
+  {
+    href: "/research",
+    label: "深度研究",
+    icon: BrainCircuit,
+    exact: false,
+    requireWrite: true,
+  },
   { href: "/longforms", label: "长篇写作", icon: PenLine, exact: false },
   { href: "/jobs", label: "任务中心", icon: ListChecks, exact: false },
   { href: "/media", label: "图片库", icon: ImageIcon, exact: false },
@@ -107,7 +114,11 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
       </Link>
 
       <nav className="mt-4 space-y-1">
-        {NAV_ITEMS.filter((item) => !item.requireServer || can("manage_server")).map((item) => {
+        {NAV_ITEMS.filter(
+          (item) =>
+            (!item.requireServer || can("manage_server")) &&
+            (!item.requireWrite || can("write")),
+        ).map((item) => {
           const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
           const Icon = item.icon;
           return (

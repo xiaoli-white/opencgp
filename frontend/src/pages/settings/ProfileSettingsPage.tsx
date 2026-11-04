@@ -17,6 +17,8 @@ export default function ProfileSettingsPage() {
   const { can, roleName } = useSession();
   const canServer = can("manage_server");
   const canWrite = can("write");
+  const canMembers = can("manage_members");
+  const canQuota = can("manage_quota");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -88,13 +90,20 @@ export default function ProfileSettingsPage() {
         onError={handleError}
       />
 
-      <RolesCard onNotice={handleNotice} onError={handleError} />
+      {canMembers ? (
+        <RolesCard onNotice={handleNotice} onError={handleError} />
+      ) : null}
 
-      <MembersCard onNotice={handleNotice} onError={handleError} />
+      {canMembers ? (
+        <MembersCard onNotice={handleNotice} onError={handleError} />
+      ) : null}
 
-      <QuotaCard onNotice={handleNotice} onError={handleError} />
-
-      <QuotaTrendCard days={30} />
+      {canQuota ? (
+        <>
+          <QuotaCard onNotice={handleNotice} onError={handleError} />
+          <QuotaTrendCard days={30} />
+        </>
+      ) : null}
 
       <motion.div
         initial={{ opacity: 0, y: 8 }}

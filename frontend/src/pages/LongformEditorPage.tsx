@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  BookOpen,
   ChevronDown,
   Clock3,
   Eye,
@@ -758,6 +759,16 @@ export default function LongformEditorPage() {
               )}
               全文生成
             </button>
+            <a
+              href={`/read/longform/${longform.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-quiet whitespace-nowrap"
+              title="在新标签页打开独立阅读模式"
+            >
+              <BookOpen size={13} />
+              阅读模式
+            </a>
             <button
               type="button"
               onClick={() => setRewriteOpen(true)}

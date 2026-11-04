@@ -3,11 +3,9 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   AlertCircle,
-  ArrowLeft,
   CheckCircle2,
   Globe2,
   Loader2,
-  Lock,
   Server,
   X,
 } from "lucide-react";
@@ -17,6 +15,7 @@ import { useSession } from "@/components/auth/SessionProvider";
 import ServerProvidersCard from "@/components/settings/ServerProvidersCard";
 import UserReviewCard from "@/components/settings/UserReviewCard";
 import SettingsBreadcrumb from "@/components/settings/SettingsBreadcrumb";
+import NoAccessCard from "@/components/common/NoAccessCard";
 
 export default function ServerSettingsPage() {
   const { can } = useSession();
@@ -53,25 +52,12 @@ export default function ServerSettingsPage() {
     return (
       <div className="mx-auto w-full max-w-4xl space-y-4">
         <SettingsBreadcrumb current="服务器设置" />
-        <motion.section
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="glass rounded-3xl p-8 text-center shadow-glass"
-        >
-          <span className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-slate-500/12 text-slate-500 dark:text-slate-300">
-            <Lock size={20} />
-          </span>
-          <h2 className="mt-4 text-base font-semibold tracking-tight text-slate-900 dark:text-white">
-            需要服务器管理权限
-          </h2>
-          <p className="mx-auto mt-2 max-w-md text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
-            服务器设置对所有空间生效，仅拥有「服务器管理」权限的角色可以查看与修改。请联系空间管理员申请权限。
-          </p>
-          <Link to="/settings" className="btn btn-primary mt-5">
-            <ArrowLeft size={14} />
-            返回个人设置
-          </Link>
-        </motion.section>
+        <NoAccessCard
+          title="需要服务器管理权限"
+          message="服务器设置对所有空间生效，仅拥有「服务器管理」权限的角色可以查看与修改。请联系空间管理员申请权限。"
+          backTo="/settings"
+          backLabel="返回个人设置"
+        />
       </div>
     );
   }
