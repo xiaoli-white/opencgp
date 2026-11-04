@@ -22,27 +22,12 @@ import ProfileSelect, {
 } from "@/components/profiles/ProfileSelect";
 import { useI18n } from "@/i18n/I18nProvider";
 
-const GENRE_OPTIONS = [
-  { value: "article", label: "文章", badge: "文章" },
-  { value: "report", label: "报告", badge: "报告" },
-  { value: "essay", label: "随笔", badge: "随笔" },
-  { value: "tutorial", label: "教程", badge: "教程" },
-  { value: "custom", label: "自定义", badge: "自定义" },
-];
+const GENRE_VALUES = ["article", "report", "essay", "tutorial", "custom"] as const;
+const CITATION_VALUES = ["required", "optional", "forbidden"] as const;
+const MODE_VALUES = ["strict", "loose"] as const;
 
-const CITATION_OPTIONS = [
-  { value: "required", label: "必须带出处" },
-  { value: "optional", label: "可用可不用" },
-  { value: "forbidden", label: "不引用" },
-];
-
-const MODE_OPTIONS = [
-  { value: "strict", label: "严格 · 只写有据可查的内容" },
-  { value: "loose", label: "非严格 · 允许自由补全" },
-];
-
-function genreLabel(value: string): string {
-  return GENRE_OPTIONS.find((item) => item.value === value)?.badge ?? (value || "文章");
+function isKnownGenre(value: string): boolean {
+  return (GENRE_VALUES as readonly string[]).includes(value);
 }
 
 export default function LongformsPage() {
@@ -50,6 +35,21 @@ export default function LongformsPage() {
   const { can, roleName } = useSession();
   const { t } = useI18n();
   const writable = can("write");
+
+  const genreLabel = (value: string) =>
+    isKnownGenre(value) ? t(`longform.genre.${value}`) : value || t("longform.genre.article");
+  const genreOptions = GENRE_VALUES.map((value) => ({
+    value,
+    label: t(`longform.genre.${value}`),
+  }));
+  const citationOptions = CITATION_VALUES.map((value) => ({
+    value,
+    label: t(`longform.citation.${value}`),
+  }));
+  const modeOptions = MODE_VALUES.map((value) => ({
+    value,
+    label: t(value === "strict" ? "longform.modeStrictOption" : "longform.modeLooseOption"),
+  }));
   const { profiles } = useWorkProfiles();
 
   const [items, setItems] = useState<Longform[]>([]);
@@ -76,7 +76,7 @@ export default function LongformsPage() {
       const data = await api.listLongforms();
       setItems(data.longforms);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "加载长篇列表失败");
+      setError(err instanceof Error ? err.message : t("longform.loadListFailed"));
     } finally {
       setLoading(false);
     }
@@ -90,7 +90,7 @@ export default function LongformsPage() {
     const name = title.trim();
     if (!name || creating) return;
     if (!writable) {
-      setError("当前角色只读，无法新建长篇");
+      setError(t("longform.readOnlyCreate"));
       return;
     }
     setCreating(true);
@@ -111,10 +111,10 @@ export default function LongformsPage() {
       setOpen(false);
       setTitle("");
       setToneless();
-      setNotice("已创建，进入编辑器继续");
+      setNotice(t("longform.createdNotice"));
       navigate(`/longforms/${created.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "创建失败");
+      setError(err instanceof Error ? err.message : t("longform.createFailed"));
     } finally {
       setCreating(false);
     }
@@ -132,16 +132,16 @@ export default function LongformsPage() {
 
   const remove = async (item: Longform) => {
     if (!writable || deleting) return;
-    const confirmed = window.confirm(`删除长篇「${item.title}」？该操作不可撤销。`);
+    const confirmed = window.confirm(t("longform.confirmDelete", { title: item.title }));
     if (!confirmed) return;
     setDeleting(item.id);
     setError("");
     try {
       await api.deleteLongform(item.id);
       setItems((prev) => prev.filter((row) => row.id !== item.id));
-      setNotice("已删除");
+      setNotice(t("longform.deleted"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "删除失败");
+      setError(err instanceof Error ? err.message : t("longform.deleteFailed"));
     } finally {
       setDeleting(null);
     }
@@ -151,7 +151,7 @@ export default function LongformsPage() {
     <div className="space-y-5">
       {!writable ? (
         <div className="rounded-2xl border border-amber-300/50 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-300">
-          你以 {roleName || "只读"} 身份访问，仅可查看长篇草稿
+          {t("longform.readOnlyView", { role: roleName || t("common.readOnly") })}
         </div>
       ) : null}
 
@@ -166,13 +166,13 @@ export default function LongformsPage() {
           <div className="min-w-0 flex-1">
             <span className="chip">
               <PenLine size={11} />
-              单页长篇
+              {t("longform.singlePage")}
             </span>
             <h1 className="mt-3 text-xl font-semibold tracking-tight text-slate-800 dark:text-slate-100 sm:text-2xl">
-              一块画布，写完一整篇长文
+              {t("longform.heroTitle")}
             </h1>
             <p className="mt-2 max-w-xl text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-              先出大纲，再逐节生成，最后统一重写润色。每一次生成都会存档成新版本，可随时回滚。
+              {t("longform.heroDesc")}
             </p>
           </div>
           <button
@@ -180,10 +180,10 @@ export default function LongformsPage() {
             onClick={() => setOpen(true)}
             disabled={!writable}
             className="btn btn-primary shrink-0"
-            title={!writable ? "当前角色只读" : undefined}
+            title={!writable ? t("common.readOnlyRole") : undefined}
           >
             <FilePlus2 size={14} />
-            新建长篇
+            {t("longform.newTitle")}
           </button>
         </div>
 
@@ -211,10 +211,10 @@ export default function LongformsPage() {
             <Layers size={20} />
           </div>
           <p className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">
-            还没有长篇作品
+            {t("longform.emptyTitle")}
           </p>
           <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-            新建时会先生成一份大纲。填好体裁、读者与目标字数，模型会据此安排每一节的篇幅。
+            {t("longform.emptyDesc")}
           </p>
           <button
             type="button"
@@ -223,7 +223,7 @@ export default function LongformsPage() {
             className="btn btn-quiet mx-auto mt-4"
           >
             <FilePlus2 size={13} />
-            新建第一篇
+            {t("longform.createFirst")}
           </button>
         </div>
       ) : (
@@ -244,7 +244,7 @@ export default function LongformsPage() {
                         : "bg-emerald-500/12 text-emerald-700 ring-emerald-500/25 dark:bg-emerald-400/15 dark:text-emerald-300 dark:ring-emerald-300/25",
                     )}
                   >
-                    {item.last_mode === "loose" ? "非严格" : "严格"}
+                    {item.last_mode === "loose" ? t("longform.loose") : t("longform.strict")}
                   </span>
                 ) : null}
                 <button
@@ -252,7 +252,7 @@ export default function LongformsPage() {
                   onClick={() => void remove(item)}
                   disabled={!writable || deleting === item.id}
                   className="btn-quiet ml-auto grid h-7 w-7 place-items-center rounded-full text-rose-500 opacity-0 transition group-hover:opacity-100 disabled:opacity-40"
-                  title={writable ? "删除" : "当前角色只读"}
+                  title={writable ? t("common.delete") : t("common.readOnlyRole")}
                 >
                   {deleting === item.id ? (
                     <Loader2 size={12} className="animate-spin" />
@@ -270,11 +270,15 @@ export default function LongformsPage() {
 
               <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
                 <span className="chip-muted">
-                  {formatChars(item.content ? item.content.length : 0)} / 目标{" "}
-                  {formatChars(item.target_words)}
+                  {t("longform.charsOfTarget", {
+                    current: formatChars(item.content ? item.content.length : 0),
+                    target: formatChars(item.target_words),
+                  })}
                 </span>
                 <span className="chip-muted">v{item.current_version}</span>
-                <span className="chip-muted">{item.outline.length} 节</span>
+                <span className="chip-muted">
+                  {t("longform.sectionCount", { count: item.outline.length })}
+                </span>
               </div>
 
               <div className="mt-auto flex items-center justify-between pt-4">
@@ -285,7 +289,7 @@ export default function LongformsPage() {
                   to={`/longforms/${item.id}`}
                   className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 dark:text-indigo-300"
                 >
-                  打开编辑器
+                  {t("longform.openEditor")}
                   <ArrowRight size={11} />
                 </Link>
               </div>
@@ -312,10 +316,10 @@ export default function LongformsPage() {
                 <div>
                   <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-800 dark:text-slate-100">
                     <Sparkles size={14} className="text-indigo-500" />
-                    新建长篇
+                    {t("longform.newTitle")}
                   </h3>
                   <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                    创建后会先生成大纲，正文可逐节或一次性生成。
+                    {t("longform.newDesc")}
                   </p>
                 </div>
                 <button
@@ -330,13 +334,13 @@ export default function LongformsPage() {
               <div className="mt-4 space-y-3">
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                    标题
+                    {t("longform.fieldTitle")}
                   </span>
                   <input
                     value={title}
                     onChange={(event) => setTitle(event.target.value)}
                     className="input"
-                    placeholder="例如：向量检索的工程实践"
+                    placeholder={t("longform.titlePlaceholder")}
                   />
                 </label>
 
@@ -374,14 +378,14 @@ export default function LongformsPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      体裁
+                      {t("longform.fieldGenre")}
                     </span>
                     <select
                       value={genre}
                       onChange={(event) => setGenre(event.target.value)}
                       className="select"
                     >
-                      {GENRE_OPTIONS.map((item) => (
+                      {genreOptions.map((item) => (
                         <option key={item.value} value={item.value}>
                           {item.label}
                         </option>
@@ -390,14 +394,14 @@ export default function LongformsPage() {
                   </label>
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      引用策略
+                      {t("longform.fieldCitation")}
                     </span>
                     <select
                       value={citationPolicy}
                       onChange={(event) => setCitationPolicy(event.target.value)}
                       className="select"
                     >
-                      {CITATION_OPTIONS.map((item) => (
+                      {citationOptions.map((item) => (
                         <option key={item.value} value={item.value}>
                           {item.label}
                         </option>
@@ -409,35 +413,35 @@ export default function LongformsPage() {
                 <div className="grid gap-3 sm:grid-cols-3">
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      口吻
+                      {t("longform.fieldTone")}
                     </span>
                     <input
                       value={tone}
                       onChange={(event) => setTone(event.target.value)}
                       className="input"
-                      placeholder="冷静克制"
+                      placeholder={t("longform.tonePlaceholder")}
                     />
                   </label>
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      目标读者
+                      {t("longform.fieldAudience")}
                     </span>
                     <input
                       value={audience}
                       onChange={(event) => setAudience(event.target.value)}
                       className="input"
-                      placeholder="后端工程师"
+                      placeholder={t("longform.audiencePlaceholder")}
                     />
                   </label>
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      视角
+                      {t("longform.fieldPov")}
                     </span>
                     <input
                       value={pov}
                       onChange={(event) => setPov(event.target.value)}
                       className="input"
-                      placeholder="第一人称"
+                      placeholder={t("longform.povPlaceholder")}
                     />
                   </label>
                 </div>
@@ -445,7 +449,7 @@ export default function LongformsPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      目标字数
+                      {t("longform.fieldTargetWords")}
                     </span>
                     <input
                       type="number"
@@ -459,14 +463,14 @@ export default function LongformsPage() {
                   </label>
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      生成模式
+                      {t("longform.fieldMode")}
                     </span>
                     <select
                       value={mode}
                       onChange={(event) => setMode(event.target.value as "strict" | "loose")}
                       className="select"
                     >
-                      {MODE_OPTIONS.map((item) => (
+                      {modeOptions.map((item) => (
                         <option key={item.value} value={item.value}>
                           {item.label}
                         </option>
@@ -478,7 +482,7 @@ export default function LongformsPage() {
 
               <div className="mt-5 flex justify-end gap-2">
                 <button type="button" onClick={() => setOpen(false)} className="btn btn-quiet">
-                  取消
+                  {t("common.cancel")}
                 </button>
                 <button
                   type="button"
@@ -491,7 +495,7 @@ export default function LongformsPage() {
                   ) : (
                     <Sparkles size={13} />
                   )}
-                  {creating ? "正在生成大纲…" : "创建并生成大纲"}
+                  {creating ? t("longform.creating") : t("longform.createSubmit")}
                 </button>
               </div>
             </motion.div>

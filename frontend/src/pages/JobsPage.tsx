@@ -17,8 +17,6 @@ import clsx from "clsx";
 import { api } from "@/lib/api";
 import { ConfirmDialog } from "@/components/common/Dialogs";
 import {
-  JOB_KIND_LABEL,
-  JOB_STATUS_LABEL,
   cancelJob,
   isTerminal,
   listJobs,
@@ -26,15 +24,19 @@ import {
 } from "@/lib/jobs";
 import { formatDateTime } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
+import { jobKindLabel, jobStatusLabel } from "@/i18n/labels";
 
 type FilterKey = "all" | "active" | "done" | "failed";
 
-const FILTERS: { key: FilterKey; label: string }[] = [
-  { key: "all", label: "全部" },
-  { key: "active", label: "进行中" },
-  { key: "done", label: "已完成" },
-  { key: "failed", label: "失败" },
-];
+const FILTERS: FilterKey[] = ["all", "active", "done", "failed"];
+
+const FILTER_LABEL: Record<FilterKey, string> = {
+  all: "common.all",
+  active: "jobs.tabActive",
+  done: "jobs.tabDone",
+  failed: "jobs.tabFailed",
+};
 
 function statusTone(status: string): string {
   if (status === "succeeded")
@@ -65,7 +67,7 @@ function formatDuration(job: Job): string {
   return `${minutes}m ${seconds % 60}s`;
 }
 
-function resultLink(job: Job): { href: string; label: string } | null {
+function resultLink(job: Job): { href: string; labelKey: string } | null {
   const result = job.result ?? {};
   const payload = job.payload ?? {};
   const pick = (key: string) => {
@@ -74,15 +76,21 @@ function resultLink(job: Job): { href: string; label: string } | null {
   };
   if (job.kind === "research") {
     const id = pick("research_id");
-    return id ? { href: `/research?id=${encodeURIComponent(id)}`, label: "查看研究" } : null;
+    return id
+      ? { href: `/research?id=${encodeURIComponent(id)}`, labelKey: "jobs.viewResearch" }
+      : null;
   }
   if (job.kind === "longform_create" || job.kind === "longform_generate" || job.kind === "longform_rewrite") {
     const id = pick("longform_id");
-    return id ? { href: `/longforms/${encodeURIComponent(id)}`, label: "打开编辑器" } : null;
+    return id
+      ? { href: `/longforms/${encodeURIComponent(id)}`, labelKey: "jobs.openEditor" }
+      : null;
   }
   if (job.kind === "lesson_generate" || job.kind === "blueprint_generate") {
     const id = pick("course_id");
-    return id ? { href: `/courses/${encodeURIComponent(id)}`, label: "打开课程" } : null;
+    return id
+      ? { href: `/courses/${encodeURIComponent(id)}`, labelKey: "jobs.openCourse" }
+      : null;
   }
   return null;
 }
@@ -96,6 +104,7 @@ function matchesFilter(job: Job, filter: FilterKey): boolean {
 
 export default function JobsPage() {
   const { can } = useSession();
+  const { t } = useI18n();
   const writable = can("write");
 
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -114,7 +123,7 @@ export default function JobsPage() {
       setJobs(data.jobs ?? []);
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "加载任务列表失败");
+      setError(err instanceof Error ? err.message : t("jobs.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -159,10 +168,10 @@ export default function JobsPage() {
     setError("");
     try {
       await cancelJob(job.id);
-      setNotice(`已请求取消 ${JOB_KIND_LABEL[job.kind] ?? job.kind}`);
+      setNotice(t("jobs.cancelRequested", { kind: jobKindLabel(t, job.kind) }));
       await load(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "取消失败");
+      setError(err instanceof Error ? err.message : t("jobs.cancelFailed"));
     } finally {
       setCanceling(null);
     }
@@ -176,11 +185,11 @@ export default function JobsPage() {
     setError("");
     try {
       await api.deleteJob(removing.id);
-      setNotice("任务记录已删除");
+      setNotice(t("jobs.deleted"));
       setRemoving(null);
       await load(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "删除失败");
+      setError(err instanceof Error ? err.message : t("errors.deleteFailed"));
     } finally {
       setCanceling(null);
     }
@@ -198,13 +207,13 @@ export default function JobsPage() {
           <div className="min-w-0">
             <span className="chip-muted inline-flex items-center gap-1.5">
               <ListChecks size={12} />
-              后台队列
+              {t("jobs.badge")}
             </span>
             <h1 className="mt-2.5 text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50 sm:text-2xl">
-              任务中心
+              {t("jobs.title")}
             </h1>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-              研究、长篇生成与讲次生成都在后台排队执行，可随时查看进度或取消。
+              {t("jobs.subtitle")}
             </p>
           </div>
           <button
@@ -214,15 +223,27 @@ export default function JobsPage() {
             disabled={loading}
           >
             <RefreshCw size={13} className={clsx(loading && "animate-spin")} />
-            刷新
+            {t("common.refresh")}
           </button>
         </div>
 
         <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
           {[
-            { label: "进行中", value: counters.active, tone: "text-indigo-600 dark:text-indigo-300" },
-            { label: "成功", value: counters.done, tone: "text-emerald-600 dark:text-emerald-300" },
-            { label: "失败/取消", value: counters.failed, tone: "text-rose-600 dark:text-rose-300" },
+            {
+              label: t("jobs.counterActive"),
+              value: counters.active,
+              tone: "text-indigo-600 dark:text-indigo-300",
+            },
+            {
+              label: t("jobs.counterDone"),
+              value: counters.done,
+              tone: "text-emerald-600 dark:text-emerald-300",
+            },
+            {
+              label: t("jobs.counterFailed"),
+              value: counters.failed,
+              tone: "text-rose-600 dark:text-rose-300",
+            },
           ].map((item) => (
             <div
               key={item.label}
@@ -237,19 +258,19 @@ export default function JobsPage() {
         </div>
 
         <div className="no-scrollbar mt-4 flex gap-1.5 overflow-x-auto">
-          {FILTERS.map((item) => (
+          {FILTERS.map((key) => (
             <button
-              key={item.key}
+              key={key}
               type="button"
-              onClick={() => setFilter(item.key)}
+              onClick={() => setFilter(key)}
               className={clsx(
-                "shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium transition",
-                filter === item.key
+                "shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition",
+                filter === key
                   ? "brand-gradient text-white shadow-brand"
                   : "border border-white/50 bg-white/55 text-slate-600 hover:text-indigo-600 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-300 dark:hover:text-indigo-200",
               )}
             >
-              {item.label}
+              {t(FILTER_LABEL[key])}
             </button>
           ))}
         </div>
@@ -272,7 +293,7 @@ export default function JobsPage() {
         {loading && !jobs.length ? (
           <div className="glass flex items-center gap-2 rounded-3xl px-5 py-8 text-sm text-slate-500 shadow-glass dark:text-slate-400">
             <Loader2 size={15} className="animate-spin" />
-            正在加载任务…
+            {t("jobs.loading")}
           </div>
         ) : null}
 
@@ -282,18 +303,18 @@ export default function JobsPage() {
               <ListChecks size={20} />
             </div>
             <p className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">
-              暂无任务
+              {t("jobs.emptyTitle")}
             </p>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              在深度研究或长篇写作页发起长任务后，会出现在这里。
+              {t("jobs.emptyDesc")}
             </p>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
-              <Link to="/research" className="btn btn-primary">
-                去深度研究
+              <Link to="/research" className="btn btn-primary whitespace-nowrap">
+                {t("jobs.goResearch")}
                 <ArrowRight size={13} />
               </Link>
-              <Link to="/longforms" className="btn btn-ghost">
-                去长篇写作
+              <Link to="/longforms" className="btn btn-ghost whitespace-nowrap">
+                {t("jobs.goLongforms")}
               </Link>
             </div>
           </div>
@@ -315,7 +336,7 @@ export default function JobsPage() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                      {JOB_KIND_LABEL[job.kind] ?? job.kind}
+                      {jobKindLabel(t, job.kind)}
                     </span>
                     <span
                       className={clsx(
@@ -324,10 +345,11 @@ export default function JobsPage() {
                       )}
                     >
                       {statusIcon(job.status)}
-                      {JOB_STATUS_LABEL[job.status] ?? job.status}
+                      {jobStatusLabel(t, job.status)}
                     </span>
                     <span className="text-[11px] text-slate-400 dark:text-slate-500">
-                      {formatDateTime(job.created_at)} · 耗时 {formatDuration(job)}
+                      {formatDateTime(job.created_at)} ·{" "}
+                      {t("jobs.duration", { duration: formatDuration(job) })}
                     </span>
                   </div>
                   <p className="mt-1 truncate font-mono text-[11px] text-slate-400 dark:text-slate-500">
@@ -336,8 +358,8 @@ export default function JobsPage() {
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {link && job.status === "succeeded" ? (
-                    <Link to={link.href} className="btn btn-quiet">
-                      {link.label}
+                    <Link to={link.href} className="btn btn-quiet whitespace-nowrap">
+                      {t(link.labelKey)}
                       <ArrowRight size={12} />
                     </Link>
                   ) : null}
@@ -353,7 +375,7 @@ export default function JobsPage() {
                       ) : (
                         <Ban size={12} />
                       )}
-                      取消
+                      {t("common.cancel")}
                     </button>
                   ) : null}
                   {!running && isTerminal(job.status) ? (
@@ -361,10 +383,10 @@ export default function JobsPage() {
                       type="button"
                       onClick={() => setRemoving(job)}
                       className="btn-quiet px-2 py-1 text-[11px] text-rose-600 dark:text-rose-300"
-                      title="删除任务记录"
+                      title={t("jobs.deleteTitle")}
                     >
                       <Trash2 size={12} />
-                      删除
+                      {t("common.delete")}
                     </button>
                   ) : null}
                 </div>
@@ -379,7 +401,9 @@ export default function JobsPage() {
                     />
                   </div>
                   <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                    <span>{job.status === "queued" ? "排队中，等待 worker 领取" : "执行中"}</span>
+                    <span>
+                      {job.status === "queued" ? t("jobs.queuedHint") : t("jobs.executing")}
+                    </span>
                     <span className="tabular-nums">{percent}%</span>
                   </div>
                 </div>
@@ -393,7 +417,7 @@ export default function JobsPage() {
                     className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-600 dark:text-rose-300"
                   >
                     <AlertTriangle size={11} />
-                    {expanded === job.id ? "收起错误" : "查看错误"}
+                    {expanded === job.id ? t("jobs.hideError") : t("jobs.showError")}
                   </button>
                   <AnimatePresence initial={false}>
                     {expanded === job.id ? (
@@ -426,8 +450,8 @@ export default function JobsPage() {
 
       <ConfirmDialog
         open={Boolean(removing)}
-        title="删除任务记录"
-        description={`将删除任务 ${removing?.id ?? ""} 的记录，不影响已生成的内容。`}
+        title={t("jobs.deleteTitle")}
+        description={t("jobs.deleteDesc", { id: removing?.id ?? "" })}
         busy={Boolean(removing && canceling === removing.id)}
         onConfirm={() => void handleRemove()}
         onClose={() => setRemoving(null)}

@@ -25,21 +25,13 @@ import { jobResultNumber, jobResultString, runJob } from "@/lib/jobs";
 import { formatDateTime } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
 import { PromptDialog } from "@/components/common/Dialogs";
+import { useI18n } from "@/i18n/I18nProvider";
 
-const DEPTH_OPTIONS = [
-  { value: 1, label: "1 · 快速扫描" },
-  { value: 2, label: "2 · 标准深挖" },
-  { value: 3, label: "3 · 详尽论证" },
-];
+const DEPTH_OPTIONS = [1, 2, 3];
+
+const STATUS_KEYS = ["queued", "running", "completed", "failed"] as const;
 
 const TOPK_OPTIONS = [3, 5, 8];
-
-const STATUS_TEXT: Record<string, string> = {
-  queued: "排队中",
-  running: "研究中",
-  completed: "已完成",
-  failed: "失败",
-};
 
 function statusClass(status: string): string {
   if (status === "completed") {
@@ -51,9 +43,9 @@ function statusClass(status: string): string {
   return "bg-indigo-500/12 text-indigo-600 ring-indigo-400/25 dark:bg-indigo-400/15 dark:text-indigo-300 dark:ring-indigo-300/25";
 }
 
-function briefExcerpt(run: ResearchRun, limit = 60): string {
+function briefExcerpt(run: ResearchRun, fallback: string, limit = 60): string {
   const text = (run.brief?.summary || run.topic || "").replace(/\s+/g, " ").trim();
-  if (text.length <= limit) return text || "尚无摘要";
+  if (text.length <= limit) return text || fallback;
   return `${text.slice(0, limit)}…`;
 }
 
@@ -138,6 +130,7 @@ function CollapsibleBlock({
 
 export default function ResearchPage() {
   const { can, roleName } = useSession();
+  const { t } = useI18n();
   const writable = can("write");
 
   const [topic, setTopic] = useState("");
@@ -182,9 +175,9 @@ export default function ResearchPage() {
       );
       setRun((prev) => (prev && prev.id === updated.id ? { ...prev, topic: updated.topic } : prev));
       setRenaming(null);
-      setNotice("研究主题已更新");
+      setNotice(t("research.topicUpdated"));
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "重命名失败");
+      setDialogError(err instanceof Error ? err.message : t("research.renameFailed"));
     } finally {
       setDialogBusy(false);
     }
@@ -196,7 +189,7 @@ export default function ResearchPage() {
       const data = await api.listResearch();
       setHistory(data.runs);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "加载历史研究失败");
+      setError(err instanceof Error ? err.message : t("research.historyLoadFailed"));
     } finally {
       setHistoryLoading(false);
     }
@@ -214,10 +207,10 @@ export default function ResearchPage() {
         const detail = await api.getResearch(focusId);
         if (cancelled) return;
         setRun(detail);
-        setNotice(`已从任务中心载入研究「${detail.topic}」`);
+        setNotice(t("research.loadedFromJobs", { topic: detail.topic }));
       } catch (err) {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "加载研究详情失败");
+        setError(err instanceof Error ? err.message : t("research.detailLoadFailed"));
       }
     })();
     return () => {
@@ -237,7 +230,7 @@ export default function ResearchPage() {
     const text = topic.trim();
     if (!text || running) return;
     if (!writable) {
-      setError("当前角色只读，无法发起研究");
+      setError(t("research.readOnlyStart"));
       return;
     }
     setRunning(true);
@@ -270,15 +263,20 @@ export default function ResearchPage() {
         researchId = result.id;
         citations = result.citations.length;
       }
-      if (!researchId) throw new Error("任务已完成但未返回研究结果");
+      if (!researchId) throw new Error(t("research.noResult"));
       const detail = await api.getResearch(researchId);
       setProgress(1);
       setRun(detail);
       const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-      setNotice(`研究完成 · 用时 ${seconds} 秒 · ${citations || detail.citations.length} 条证据`);
+      setNotice(
+        t("research.completedNotice", {
+          seconds,
+          count: citations || detail.citations.length,
+        }),
+      );
       await loadHistory();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "研究失败");
+      setError(err instanceof Error ? err.message : t("research.failed"));
     } finally {
       setRunning(false);
       setJobId(null);
@@ -295,7 +293,7 @@ export default function ResearchPage() {
 
   const removeRun = async (target: ResearchRun) => {
     if (!writable || deleting) return;
-    const confirmed = window.confirm(`删除研究「${target.topic}」？该操作不可撤销。`);
+    const confirmed = window.confirm(t("research.confirmDelete", { topic: target.topic }));
     if (!confirmed) return;
     setDeleting(target.id);
     setError("");
@@ -304,7 +302,7 @@ export default function ResearchPage() {
       setHistory((prev) => prev.filter((item) => item.id !== target.id));
       setRun((prev) => (prev?.id === target.id ? null : prev));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "删除失败");
+      setError(err instanceof Error ? err.message : t("errors.deleteFailed"));
     } finally {
       setDeleting(null);
     }
@@ -330,7 +328,7 @@ export default function ResearchPage() {
       setBlueprintResult({ courseId: result.course_id });
       setBlueprintOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "生成蓝图失败");
+      setError(err instanceof Error ? err.message : t("research.blueprintFailed"));
     } finally {
       setBlueprintBusy(false);
     }
@@ -342,7 +340,7 @@ export default function ResearchPage() {
     <div className="space-y-5">
       {!writable ? (
         <div className="rounded-2xl border border-amber-300/50 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-300">
-          你以 {roleName || "只读"} 身份访问，仅可查看研究结果
+          {t("research.readOnlyView", { role: roleName || t("common.readOnly") })}
         </div>
       ) : null}
 
@@ -357,29 +355,29 @@ export default function ResearchPage() {
           <div className="flex flex-wrap items-center gap-3">
             <span className="chip">
               <BrainCircuit size={11} />
-              深度研究
+              {t("research.badge")}
             </span>
             <h1 className="text-xl font-semibold tracking-tight text-slate-800 dark:text-slate-100 sm:text-2xl">
-              把一个主题拆成可验证的证据链
+              {t("research.heroTitle")}
             </h1>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-end">
             <label className="block">
               <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                研究主题
+                {t("research.fieldTopic")}
               </span>
               <input
                 value={topic}
                 onChange={(event) => setTopic(event.target.value)}
-                placeholder="例如：向量索引调优"
+                placeholder={t("research.topicPlaceholder")}
                 className="input"
                 disabled={running}
               />
             </label>
             <label className="block">
               <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                研究深度
+                {t("research.fieldDepth")}
               </span>
               <select
                 value={depth}
@@ -387,16 +385,16 @@ export default function ResearchPage() {
                 className="select"
                 disabled={running}
               >
-                {DEPTH_OPTIONS.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
+                {DEPTH_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {t(`research.depth${value}`)}
                   </option>
                 ))}
               </select>
             </label>
             <label className="block">
               <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                证据条数
+                {t("research.fieldTopK")}
               </span>
               <select
                 value={topK}
@@ -406,7 +404,7 @@ export default function ResearchPage() {
               >
                 {TOPK_OPTIONS.map((value) => (
                   <option key={value} value={value}>
-                    {value} 条
+                    {t("research.evidenceCount", { count: value })}
                   </option>
                 ))}
               </select>
@@ -416,10 +414,10 @@ export default function ResearchPage() {
               onClick={startResearch}
               disabled={running || !topic.trim() || !writable}
               className="btn btn-primary h-[42px] whitespace-nowrap"
-              title={!writable ? "当前角色只读" : undefined}
+              title={!writable ? t("common.readOnlyRole") : undefined}
             >
               {running ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-              {running ? "研究中…" : "开始研究"}
+              {running ? t("research.runningBtn") : t("research.start")}
             </button>
           </div>
 
@@ -427,10 +425,10 @@ export default function ResearchPage() {
             <div className="rounded-2xl border border-indigo-300/40 bg-indigo-50/60 px-4 py-3 text-xs text-indigo-700 dark:border-indigo-300/20 dark:bg-indigo-400/10 dark:text-indigo-200">
               <div className="flex items-center gap-2 font-medium">
                 <Loader2 size={13} className="animate-spin" />
-                正在拆解子问题、检索证据…
+                {t("research.runningTitle")}
                 <span className="ml-auto inline-flex items-center gap-1 tabular-nums">
                   <Clock3 size={12} />
-                  已耗时 {elapsed}s
+                  {t("longform.elapsed", { seconds: elapsed })}
                 </span>
               </div>
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/60 dark:bg-white/10">
@@ -441,7 +439,7 @@ export default function ResearchPage() {
               </div>
               <p className="mt-1.5 flex items-center justify-between leading-relaxed opacity-80">
                 <span>
-                  {jobId ? "已进入后台队列，可离开本页" : "同步请求，通常需要 5–30 秒"}
+                  {jobId ? t("research.queueHint") : t("research.syncHint")}
                 </span>
                 <span className="tabular-nums">{Math.round(progress * 100)}%</span>
               </p>
@@ -464,12 +462,12 @@ export default function ResearchPage() {
           {blueprintResult ? (
             <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-emerald-300/50 bg-emerald-50/70 px-4 py-2.5 text-xs text-emerald-700 dark:border-emerald-300/25 dark:bg-emerald-400/10 dark:text-emerald-300">
               <BookMarked size={13} />
-              已生成课程蓝图
+              {t("research.blueprintDone")}
               <Link
                 to={`/courses/${blueprintResult.courseId}`}
                 className="inline-flex items-center gap-1 font-semibold underline decoration-dotted"
               >
-                前往课程
+                {t("research.goToCourse")}
                 <ArrowRight size={12} />
               </Link>
             </div>
@@ -496,10 +494,16 @@ export default function ResearchPage() {
                         statusClass(run.status),
                       )}
                     >
-                      {STATUS_TEXT[run.status] ?? run.status}
+                      {(STATUS_KEYS as readonly string[]).includes(run.status)
+                        ? t(`research.status.${run.status}`)
+                        : run.status}
                     </span>
-                    <span className="chip-muted">深度 {run.depth}</span>
-                    <span className="chip-muted">证据 {run.citations.length}</span>
+                    <span className="chip-muted">
+                      {t("research.depthBadge", { depth: run.depth })}
+                    </span>
+                    <span className="chip-muted">
+                      {t("research.evidenceBadge", { count: run.citations.length })}
+                    </span>
                     {run.provider ? <span className="chip-muted">{run.provider}</span> : null}
                   </div>
                   <h2 className="mt-2 text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100">
@@ -515,24 +519,24 @@ export default function ResearchPage() {
                     onClick={openBlueprintForm}
                     disabled={!writable}
                     className="btn btn-quiet"
-                    title={!writable ? "当前角色只读" : undefined}
+                    title={!writable ? t("common.readOnlyRole") : undefined}
                   >
                     <Wand2 size={13} />
-                    转成课程蓝图
+                    {t("research.toBlueprint")}
                   </button>
                   <button
                     type="button"
                     onClick={() => removeRun(run)}
                     disabled={!writable || deleting === run.id}
                     className="btn btn-quiet text-rose-600 dark:text-rose-300"
-                    title={!writable ? "当前角色只读" : undefined}
+                    title={!writable ? t("common.readOnlyRole") : undefined}
                   >
                     {deleting === run.id ? (
                       <Loader2 size={13} className="animate-spin" />
                     ) : (
                       <Trash2 size={13} />
                     )}
-                    删除
+                    {t("common.delete")}
                   </button>
                 </div>
               </header>
@@ -548,7 +552,7 @@ export default function ResearchPage() {
                 <div>
                   <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500">
                     <HelpCircle size={12} />
-                    子问题
+                    {t("research.questions")}
                   </h3>
                   <ol className="flex flex-wrap gap-2">
                     {run.questions.map((question, index) => (
@@ -570,7 +574,7 @@ export default function ResearchPage() {
                 <div>
                   <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500">
                     <Compass size={12} />
-                    摘要
+                    {t("research.summary")}
                   </h3>
                   <p className="whitespace-pre-wrap text-[13px] leading-[1.85] text-slate-700 dark:text-slate-200">
                     {brief.summary}
@@ -582,7 +586,7 @@ export default function ResearchPage() {
                 <div>
                   <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500">
                     <FlaskConical size={12} />
-                    关键发现
+                    {t("research.findings")}
                   </h3>
                   <div className="space-y-2.5">
                     {brief.findings.map((finding, index) => (
@@ -591,7 +595,7 @@ export default function ResearchPage() {
                         className="rounded-2xl border border-white/45 bg-white/45 p-3.5 transition hover:border-indigo-300/50 dark:border-white/10 dark:bg-white/[0.04]"
                       >
                         <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">
-                          {finding.title || `发现 ${index + 1}`}
+                          {finding.title || t("research.findingFallback", { index: index + 1 })}
                         </p>
                         <p className="mt-1 whitespace-pre-wrap text-[12.5px] leading-[1.8] text-slate-600 dark:text-slate-300">
                           {finding.detail}
@@ -632,13 +636,19 @@ export default function ResearchPage() {
                                 >
                                   <p className="mb-1 flex flex-wrap items-center gap-1 font-semibold text-indigo-700 dark:text-indigo-200">
                                     <FileText size={11} />
-                                    {citation?.source_name || "证据"}
+                                    {citation?.source_name || t("research.evidence")}
                                     <span className="font-normal text-slate-400">
-                                      {citation ? `· 片段 #${citation.chunk_index}` : "· 未找到原文"}
+                                      {citation
+                                        ? t("research.snippetNo", {
+                                            index: citation.chunk_index,
+                                          })
+                                        : t("research.noSource")}
                                     </span>
                                   </p>
                                   <p className="max-h-40 overflow-y-auto whitespace-pre-wrap">
-                                    {citation?.snippet || citation?.text || "该标记没有匹配到引用原文。"}
+                                    {citation?.snippet ||
+                                      citation?.text ||
+                                      t("research.noCitationText")}
                                   </p>
                                 </div>
                               );
@@ -654,7 +664,7 @@ export default function ResearchPage() {
               <div className="space-y-2">
                 {brief?.contradictions?.length ? (
                   <CollapsibleBlock
-                    title="矛盾点"
+                    title={t("research.contradictions")}
                     icon={<AlertTriangle size={13} />}
                     count={brief.contradictions.length}
                     tone="rose"
@@ -668,7 +678,9 @@ export default function ResearchPage() {
                           {item.claim}
                         </p>
                         <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                          证据：{item.evidence.join("、") || "无"}
+                          {t("research.evidenceList", {
+                            list: item.evidence.join(", ") || t("research.none"),
+                          })}
                         </p>
                       </div>
                     ))}
@@ -677,7 +689,7 @@ export default function ResearchPage() {
 
                 {brief?.gaps?.length ? (
                   <CollapsibleBlock
-                    title="资料缺口"
+                    title={t("research.gaps")}
                     icon={<Compass size={13} />}
                     count={brief.gaps.length}
                     tone="amber"
@@ -692,7 +704,7 @@ export default function ResearchPage() {
 
                 {brief?.next_steps?.length ? (
                   <CollapsibleBlock
-                    title="下一步"
+                    title={t("research.nextSteps")}
                     icon={<ArrowRight size={13} />}
                     count={brief.next_steps.length}
                     tone="indigo"
@@ -710,7 +722,7 @@ export default function ResearchPage() {
                 <div>
                   <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500">
                     <FileText size={12} />
-                    来源
+                    {t("research.sources")}
                   </h3>
                   <ul className="space-y-1.5">
                     {run.citations.map((citation, index) => (
@@ -722,9 +734,11 @@ export default function ResearchPage() {
                           {index + 1}
                         </span>
                         <span className="min-w-0 flex-1 truncate font-medium">
-                          {citation.source_name || "未知来源"}
+                          {citation.source_name || t("research.unknownSource")}
                         </span>
-                        <span className="chip-muted">片段 #{citation.chunk_index}</span>
+                        <span className="chip-muted">
+                          {t("research.snippet", { index: citation.chunk_index })}
+                        </span>
                         <span className="text-slate-400 dark:text-slate-500">
                           {citation.score.toFixed(2)}
                         </span>
@@ -740,14 +754,14 @@ export default function ResearchPage() {
                 <BrainCircuit size={20} />
               </div>
               <p className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">
-                还没有研究结果
+                {t("research.emptyTitle")}
               </p>
               <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                输入一个主题开始。先上传资料到知识库，研究质量会更好 —— 子问题、关键发现与矛盾点都建立在检索到的证据之上。
+                {t("research.emptyDesc")}
               </p>
               <Link to="/kb" className="btn btn-quiet mx-auto mt-4">
                 <FileText size={13} />
-                去知识库上传资料
+                {t("research.goKb")}
               </Link>
             </div>
           )}
@@ -757,7 +771,7 @@ export default function ResearchPage() {
           <div className="flex items-center justify-between px-1">
             <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
               <Clock3 size={12} />
-              历史研究
+              {t("research.history")}
             </h2>
             <span className="text-[10px] text-slate-400 dark:text-slate-500">
               {history.length}
@@ -765,10 +779,12 @@ export default function ResearchPage() {
           </div>
           <div className="no-scrollbar mt-2.5 max-h-[560px] space-y-1.5 overflow-y-auto pr-1">
             {historyLoading ? (
-              <p className="px-1 py-3 text-[11px] text-slate-400">加载中…</p>
+              <p className="px-1 py-3 text-[11px] text-slate-400">
+                {t("common.loading")}
+              </p>
             ) : history.length === 0 ? (
               <p className="px-1 py-3 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-                还没有历史记录。
+                {t("research.historyEmpty")}
               </p>
             ) : (
               history.map((item) => (
@@ -812,7 +828,7 @@ export default function ResearchPage() {
                             ? "text-white/70 hover:text-white"
                             : "text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-300",
                         )}
-                        aria-label="重命名研究"
+                        aria-label={t("research.renameTitle")}
                       >
                         <Pencil size={11} />
                       </button>
@@ -826,7 +842,7 @@ export default function ResearchPage() {
                         : "text-slate-400 dark:text-slate-500",
                     )}
                   >
-                    {briefExcerpt(item)}
+                    {briefExcerpt(item, t("research.noSummary"))}
                   </span>
                   <span
                     className={clsx(
@@ -848,7 +864,7 @@ export default function ResearchPage() {
             className="btn btn-quiet mt-3 w-full"
           >
             <Clock3 size={12} />
-            刷新列表
+            {t("research.refreshList")}
           </button>
         </aside>
       </div>
@@ -870,10 +886,10 @@ export default function ResearchPage() {
               <div className="flex items-start justify-between">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                    转成课程蓝图
+                    {t("research.toBlueprint")}
                   </h3>
                   <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                    研究结论会作为焦点，生成一份新的课程蓝图与讲次大纲。
+                    {t("research.blueprintDesc")}
                   </p>
                 </div>
                 <button
@@ -886,7 +902,7 @@ export default function ResearchPage() {
               </div>
               <label className="mt-4 block">
                 <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  课程名称
+                  {t("research.courseName")}
                 </span>
                 <input
                   value={blueprintTitle}
@@ -897,7 +913,7 @@ export default function ResearchPage() {
               </label>
               <label className="mt-3 block">
                 <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  生成模式
+                  {t("longform.fieldMode")}
                 </span>
                 <select
                   value={blueprintMode}
@@ -906,8 +922,8 @@ export default function ResearchPage() {
                   }
                   className="select"
                 >
-                  <option value="loose">非严格 · 允许自由补全</option>
-                  <option value="strict">严格 · 必须有出处</option>
+                  <option value="loose">{t("longform.modeLooseOption")}</option>
+                  <option value="strict">{t("longform.modeStrictCiteOption")}</option>
                 </select>
               </label>
               <div className="mt-5 flex justify-end gap-2">
@@ -916,7 +932,7 @@ export default function ResearchPage() {
                   onClick={() => setBlueprintOpen(false)}
                   className="btn btn-quiet"
                 >
-                  取消
+                  {t("common.cancel")}
                 </button>
                 <button
                   type="button"
@@ -929,7 +945,7 @@ export default function ResearchPage() {
                   ) : (
                     <Wand2 size={13} />
                   )}
-                  生成蓝图
+                  {t("research.generateBlueprint")}
                 </button>
               </div>
             </motion.div>
@@ -939,8 +955,8 @@ export default function ResearchPage() {
 
       <PromptDialog
         open={Boolean(renaming)}
-        title="重命名研究"
-        label="研究主题"
+        title={t("research.renameTitle")}
+        label={t("research.fieldTopic")}
         initial={renaming?.topic ?? ""}
         busy={dialogBusy}
         error={dialogError}

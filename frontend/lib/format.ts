@@ -74,6 +74,11 @@ export function statusTone(value: string): StatusTone {
 }
 
 export function formatChars(count: number): string {
+  if (formatLocale === "en") {
+    if (count >= 10000) return `${Math.round(count / 1000)}k chars`;
+    if (count >= 1000) return `${(count / 1000).toFixed(1)}k chars`;
+    return `${count} chars`;
+  }
   if (count >= 10000) return `${(count / 10000).toFixed(1)} 万字`;
   if (count >= 1000) return `${(count / 1000).toFixed(1)}k 字`;
   return `${count} 字`;

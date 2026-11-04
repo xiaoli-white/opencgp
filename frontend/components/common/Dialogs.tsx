@@ -70,7 +70,7 @@ export function Modal({
                 type="button"
                 onClick={onClose}
                 className="btn-quiet grid h-8 w-8 shrink-0 place-items-center rounded-full"
-                aria-label={t("common.close")}
+                aria-label={t("dialogs.close")}
               >
                 <X size={14} />
               </button>
@@ -141,7 +141,7 @@ export function ConfirmDialog({
         ) : null}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="btn btn-quiet">
-            {t("common.cancel")}
+            {t("dialogs.cancel")}
           </button>
           <button
             type="button"
@@ -150,7 +150,7 @@ export function ConfirmDialog({
             className="btn bg-rose-500 text-white shadow-[0_10px_22px_-14px_rgba(244,63,94,0.9)] hover:bg-rose-600 disabled:opacity-50"
           >
             {busy ? <Loader2 size={13} className="animate-spin" /> : null}
-            {confirmLabel || t("common.confirmDelete")}
+            {confirmLabel || t("dialogs.confirmDelete")}
           </button>
         </div>
       </div>
@@ -208,7 +208,7 @@ export function PromptDialog({
         ) : null}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="btn btn-quiet">
-            {t("common.cancel")}
+            {t("dialogs.cancel")}
           </button>
           <button
             type="button"
@@ -217,7 +217,7 @@ export function PromptDialog({
             className="btn btn-primary"
           >
             {busy ? <Loader2 size={13} className="animate-spin" /> : null}
-            {confirmLabel || t("common.save")}
+            {confirmLabel || t("dialogs.save")}
           </button>
         </div>
       </div>
@@ -266,7 +266,7 @@ export function RowMenu({
           setOpen((prev) => !prev);
         }}
         className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 transition hover:bg-white/70 hover:text-indigo-600 dark:hover:bg-white/10 dark:hover:text-indigo-300"
-        aria-label={label || t("common.actions")}
+        aria-label={label || t("dialogs.actions")}
       >
         <MoreHorizontal size={14} />
       </button>

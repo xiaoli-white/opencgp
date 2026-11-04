@@ -42,6 +42,7 @@ import MarkdownReader from "@/components/reader/MarkdownReader";
 import VersionDiffDialog from "@/components/reader/VersionDiffDialog";
 import VersionPreviewDialog from "@/components/reader/VersionPreviewDialog";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
 import SharePanel, { type ShareMember } from "@/components/sharing/SharePanel";
 import ShareLinksDialog from "@/components/share/ShareLinksDialog";
 import ExportMenu from "@/components/export/ExportMenu";
@@ -53,13 +54,7 @@ import {
   RowMenu,
 } from "@/components/common/Dialogs";
 
-const GENRE_LABELS: Record<string, string> = {
-  article: "文章",
-  report: "报告",
-  essay: "随笔",
-  tutorial: "教程",
-  custom: "自定义",
-};
+const GENRE_VALUES = ["article", "report", "essay", "tutorial", "custom"] as const;
 
 function useElapsed(active: boolean): number {
   const [seconds, setSeconds] = useState(0);
@@ -85,7 +80,13 @@ export default function LongformEditorPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const { can, roleName, tenant } = useSession();
+  const { t } = useI18n();
   const writable = can("write");
+
+  const genreLabel = (value: string) =>
+    (GENRE_VALUES as readonly string[]).includes(value)
+      ? t(`longform.genre.${value}`)
+      : t("longform.genre.article");
 
   const [longform, setLongform] = useState<Longform | null>(null);
   const [versions, setVersions] = useState<LongformVersion[]>([]);
@@ -160,7 +161,7 @@ export default function LongformEditorPage() {
           user_email: member.user_email,
           user_display_name: member.user_display_name,
           avatar_url: member.avatar_url,
-          note: "空间成员",
+          note: t("sharing.memberNote"),
         })),
       );
       const next: Record<string, string | null> = {};
@@ -170,11 +171,11 @@ export default function LongformEditorPage() {
       }
       setShareLevels(next);
     } catch (err) {
-      setShareError(err instanceof Error ? err.message : "共享信息加载失败");
+      setShareError(err instanceof Error ? err.message : t("longform.shareLoadFailed"));
     } finally {
       setShareLoading(false);
     }
-  }, [id, tenant]);
+  }, [id, tenant, t]);
 
   const saveShare = useCallback(
     async (entries: { user_id: string; level: string }[]) => {
@@ -183,15 +184,15 @@ export default function LongformEditorPage() {
       setShareError("");
       try {
         await api.saveLongformGrants(id, entries);
-        setNotice("共享权限已保存");
+        setNotice(t("longform.shareSaved"));
         setShareOpen(false);
       } catch (err) {
-        setShareError(err instanceof Error ? err.message : "保存失败");
+        setShareError(err instanceof Error ? err.message : t("errors.saveFailed"));
       } finally {
         setShareSaving(false);
       }
     },
-    [id],
+    [id, t],
   );
 
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -208,12 +209,12 @@ export default function LongformEditorPage() {
         setLongform(detail);
         setVersions(versionData.versions);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "加载长篇失败");
+        setError(err instanceof Error ? err.message : t("longform.loadFailed"));
       } finally {
         setLoading(false);
       }
     },
-    [id],
+    [id, t],
   );
 
   useEffect(() => {
@@ -228,7 +229,7 @@ export default function LongformEditorPage() {
   const generateAll = async () => {
     if (!longform || busy) return;
     if (!writable) {
-      setError("当前角色只读，无法生成正文");
+      setError(t("longform.readOnlyGenerate"));
       return;
     }
     setBusy("all");
@@ -263,9 +264,14 @@ export default function LongformEditorPage() {
       const versionData = await api.listLongformVersions(longform.id);
       setVersions(versionData.versions);
       const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-      setNotice(`全文已生成 · ${seconds} 秒 · v${updated.current_version}`);
+      setNotice(
+        t("longform.generatedFull", {
+          seconds,
+          version: updated.current_version,
+        }),
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "生成失败");
+      setError(err instanceof Error ? err.message : t("longform.generateFailed"));
     } finally {
       setBusy("");
       setJobId(null);
@@ -275,7 +281,7 @@ export default function LongformEditorPage() {
   const generateOne = async (sectionId: string) => {
     if (!longform || busy) return;
     if (!writable) {
-      setError("当前角色只读，无法生成章节");
+      setError(t("longform.readOnlyGenerateSection"));
       return;
     }
     setBusy(sectionId);
@@ -290,9 +296,9 @@ export default function LongformEditorPage() {
       const versionData = await api.listLongformVersions(longform.id);
       setVersions(versionData.versions);
       const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-      setNotice(`本节已生成 · ${seconds} 秒`);
+      setNotice(t("longform.generatedSection", { seconds }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "生成章节失败");
+      setError(err instanceof Error ? err.message : t("longform.generateSectionFailed"));
     } finally {
       setBusy("");
     }
@@ -302,7 +308,7 @@ export default function LongformEditorPage() {
     const text = instruction.trim();
     if (!longform || !text || busy) return;
     if (!writable) {
-      setError("当前角色只读，无法重写正文");
+      setError(t("longform.readOnlyRewrite"));
       return;
     }
     setBusy("rewrite");
@@ -340,9 +346,14 @@ export default function LongformEditorPage() {
       setRewriteOpen(false);
       setInstruction("");
       const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-      setNotice(`重写完成 · ${seconds} 秒 · v${updated.current_version}`);
+      setNotice(
+        t("longform.rewriteDone", {
+          seconds,
+          version: updated.current_version,
+        }),
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "重写失败");
+      setError(err instanceof Error ? err.message : t("longform.rewriteFailed"));
     } finally {
       setBusy("");
       setJobId(null);
@@ -353,9 +364,9 @@ export default function LongformEditorPage() {
     if (!jobId) return;
     try {
       await cancelJob(jobId);
-      setNotice("已请求取消任务");
+      setNotice(t("longform.cancelRequested"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "取消失败");
+      setError(err instanceof Error ? err.message : t("longform.cancelFailed"));
     }
   };
 
@@ -379,7 +390,7 @@ export default function LongformEditorPage() {
   const revert = async (version: number) => {
     if (!longform || busy) return;
     if (!writable) return;
-    const confirmed = window.confirm(`回滚到 v${version}？回滚会生成一个新的版本记录。`);
+    const confirmed = window.confirm(t("longform.confirmRevert", { version }));
     if (!confirmed) return;
     setBusy(`revert-${version}`);
     setError("");
@@ -388,9 +399,9 @@ export default function LongformEditorPage() {
       setLongform(updated);
       const versionData = await api.listLongformVersions(longform.id);
       setVersions(versionData.versions);
-      setNotice(`已回滚到 v${version}（当前 v${updated.current_version}）`);
+      setNotice(t("longform.reverted", { version, current: updated.current_version }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "回滚失败");
+      setError(err instanceof Error ? err.message : t("longform.revertFailed"));
     } finally {
       setBusy("");
     }
@@ -398,13 +409,15 @@ export default function LongformEditorPage() {
 
   const remove = async () => {
     if (!longform || !writable) return;
-    const confirmed = window.confirm(`删除长篇「${longform.title}」？该操作不可撤销。`);
+    const confirmed = window.confirm(
+      t("longform.confirmDelete", { title: longform.title }),
+    );
     if (!confirmed) return;
     try {
       await api.deleteLongform(longform.id);
       navigate("/longforms");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "删除失败");
+      setError(err instanceof Error ? err.message : t("errors.deleteFailed"));
     }
   };
 
@@ -437,16 +450,16 @@ export default function LongformEditorPage() {
     try {
       const updated = await api.saveLongformContent(longform.id, {
         content: manualText,
-        note: "手动编辑",
+        note: t("longform.manualNote"),
         expected_version: longform.current_version,
       });
       setLongform(updated);
       const versionData = await api.listLongformVersions(longform.id);
       setVersions(versionData.versions);
       setManualOpen(false);
-      setNotice(`已保存为 v${updated.current_version}`);
+      setNotice(t("longform.savedAsVersion", { version: updated.current_version }));
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "保存失败");
+      setDialogError(err instanceof Error ? err.message : t("errors.saveFailed"));
     } finally {
       setDialogBusy(false);
     }
@@ -460,9 +473,9 @@ export default function LongformEditorPage() {
       const updated = await api.updateLongform(longform.id, { title: value });
       setLongform(updated);
       setTitleEditOpen(false);
-      setNotice("标题已更新");
+      setNotice(t("longform.titleUpdated"));
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "更新失败");
+      setDialogError(err instanceof Error ? err.message : t("longform.updateFailed"));
     } finally {
       setDialogBusy(false);
     }
@@ -472,7 +485,7 @@ export default function LongformEditorPage() {
     if (!longform) return;
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed <= 0) {
-      setDialogError("请输入大于 0 的目标字数");
+      setDialogError(t("longform.targetWordsInvalid"));
       return;
     }
     setDialogBusy(true);
@@ -483,9 +496,9 @@ export default function LongformEditorPage() {
       });
       setLongform(updated);
       setTargetEditOpen(false);
-      setNotice("目标字数已更新");
+      setNotice(t("longform.targetUpdated"));
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "更新失败");
+      setDialogError(err instanceof Error ? err.message : t("longform.updateFailed"));
     } finally {
       setDialogBusy(false);
     }
@@ -501,9 +514,9 @@ export default function LongformEditorPage() {
       });
       setLongform(updated);
       setSectionRename(null);
-      setNotice("章节已重命名");
+      setNotice(t("longform.sectionRenamed"));
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "重命名失败");
+      setDialogError(err instanceof Error ? err.message : t("longform.renameFailed"));
     } finally {
       setDialogBusy(false);
     }
@@ -522,9 +535,9 @@ export default function LongformEditorPage() {
       });
       setLongform(updated);
       setSectionForm(null);
-      setNotice("章节内容已保存");
+      setNotice(t("longform.sectionSaved"));
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "保存失败");
+      setDialogError(err instanceof Error ? err.message : t("errors.saveFailed"));
     } finally {
       setDialogBusy(false);
     }
@@ -543,9 +556,9 @@ export default function LongformEditorPage() {
       });
       setLongform(result.longform);
       setSectionCreate(null);
-      setNotice("已新增章节");
+      setNotice(t("longform.sectionCreated"));
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "新增失败");
+      setDialogError(err instanceof Error ? err.message : t("longform.createFailed"));
     } finally {
       setDialogBusy(false);
     }
@@ -559,9 +572,9 @@ export default function LongformEditorPage() {
       const updated = await api.deleteLongformSection(longform.id, sectionDelete.id);
       setLongform(updated);
       setSectionDelete(null);
-      setNotice("章节已删除");
+      setNotice(t("longform.sectionDeleted"));
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "删除失败");
+      setDialogError(err instanceof Error ? err.message : t("errors.deleteFailed"));
     } finally {
       setDialogBusy(false);
     }
@@ -579,15 +592,15 @@ export default function LongformEditorPage() {
     try {
       const updated = await api.reorderLongformSections(longform.id, next);
       setLongform(updated);
-      setNotice("章节顺序已更新");
+      setNotice(t("longform.orderUpdated"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "排序失败");
+      setError(err instanceof Error ? err.message : t("longform.reorderFailed"));
     }
   };
 
   const sectionMenuItems = (sectionId: string, sectionTitle: string, index: number) => [
     {
-      label: "重命名",
+      label: t("common.rename"),
       icon: <Pencil size={11} />,
       onClick: () => {
         setDialogError("");
@@ -595,7 +608,7 @@ export default function LongformEditorPage() {
       },
     },
     {
-      label: "编辑目录信息 / 正文",
+      label: t("longform.editSection"),
       icon: <FileText size={11} />,
       onClick: () => {
         const target = longform?.outline.find((item) => item.id === sectionId);
@@ -611,7 +624,7 @@ export default function LongformEditorPage() {
       },
     },
     {
-      label: "在下方加一节",
+      label: t("longform.addSectionBelow"),
       icon: <Plus size={11} />,
       onClick: () => {
         setDialogError("");
@@ -624,19 +637,19 @@ export default function LongformEditorPage() {
       },
     },
     {
-      label: "上移",
+      label: t("longform.moveUp"),
       icon: <ArrowUp size={11} />,
       disabled: index === 0,
       onClick: () => void moveSection(sectionId, -1),
     },
     {
-      label: "下移",
+      label: t("longform.moveDown"),
       icon: <ArrowDown size={11} />,
       disabled: index === (longform?.outline.length ?? 0) - 1,
       onClick: () => void moveSection(sectionId, 1),
     },
     {
-      label: "删除本节",
+      label: t("longform.deleteSection"),
       icon: <Trash2 size={11} />,
       danger: true,
       onClick: () => {
@@ -657,20 +670,21 @@ export default function LongformEditorPage() {
     return (
       <div className="glass rounded-3xl p-10 text-center shadow-glass">
         <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-          长篇不存在或已被删除
+          {t("longform.notFound")}
         </p>
         {error ? (
           <p className="mt-2 break-words text-xs text-rose-600 dark:text-rose-300">{error}</p>
         ) : null}
         <Link to="/longforms" className="btn btn-quiet mx-auto mt-4">
           <ArrowLeft size={13} />
-          返回长篇列表
+          {t("longform.backToList")}
         </Link>
       </div>
     );
   }
 
-  const modeText = longform.last_mode === "loose" ? "非严格" : "严格";
+  const modeText =
+    longform.last_mode === "loose" ? t("longform.loose") : t("longform.strict");
   const progress = longform.target_words
     ? Math.min(100, Math.round((words / longform.target_words) * 100))
     : 0;
@@ -682,13 +696,13 @@ export default function LongformEditorPage() {
           <Link
             to="/longforms"
             className="btn-quiet grid h-9 w-9 shrink-0 place-items-center rounded-full"
-            title="返回列表"
+            title={t("longform.backToListTitle")}
           >
             <ArrowLeft size={15} />
           </Link>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="chip">{GENRE_LABELS[longform.profile?.genre ?? ""] ?? "文章"}</span>
+              <span className="chip">{genreLabel(longform.profile?.genre ?? "")}</span>
               <span
                 className={clsx(
                   "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1",
@@ -700,7 +714,9 @@ export default function LongformEditorPage() {
                 {modeText}
               </span>
               <span className="chip-muted">v{longform.current_version}</span>
-              <span className="chip-muted">{longform.outline.length} 节</span>
+              <span className="chip-muted">
+                {t("longform.sectionCount", { count: longform.outline.length })}
+              </span>
             </div>
             <h1 className="mt-2 flex items-center gap-1.5 text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100 sm:text-xl">
               <span className="min-w-0 break-words">{longform.title}</span>
@@ -712,7 +728,7 @@ export default function LongformEditorPage() {
                     setTitleEditOpen(true);
                   }}
                   className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white/70 hover:text-indigo-600 dark:hover:bg-white/10 dark:hover:text-indigo-300"
-                  aria-label="编辑标题"
+                  aria-label={t("longform.editTitle")}
                 >
                   <Pencil size={13} />
                 </button>
@@ -720,7 +736,10 @@ export default function LongformEditorPage() {
             </h1>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
               <span className="tabular-nums">
-                {formatChars(words)} / 目标 {formatChars(longform.target_words)}
+                {t("longform.charsOfTarget", {
+                  current: formatChars(words),
+                  target: formatChars(longform.target_words),
+                })}
               </span>
               {writable ? (
                 <button
@@ -731,7 +750,7 @@ export default function LongformEditorPage() {
                   }}
                   className="rounded-full px-1.5 py-0.5 text-[10px] text-indigo-600 transition hover:bg-indigo-500/10 dark:text-indigo-300"
                 >
-                  改目标
+                  {t("longform.editTarget")}
                 </button>
               ) : null}
               <span className="h-1.5 w-28 overflow-hidden rounded-full bg-slate-500/15 dark:bg-white/10">
@@ -742,7 +761,9 @@ export default function LongformEditorPage() {
               </span>
               <span>{progress}%</span>
               <span className="text-slate-400 dark:text-slate-500">
-                更新 {formatDateTime(longform.updated_at || longform.created_at)}
+                {t("longform.updatedAt", {
+                  time: formatDateTime(longform.updated_at || longform.created_at),
+                })}
               </span>
             </div>
           </div>
@@ -753,74 +774,74 @@ export default function LongformEditorPage() {
               onClick={generateAll}
               disabled={Boolean(busy) || !writable}
               className="btn btn-primary whitespace-nowrap"
-              title={!writable ? "当前角色只读" : undefined}
+              title={!writable ? t("common.readOnlyRole") : undefined}
             >
               {busy === "all" ? (
                 <Loader2 size={13} className="animate-spin" />
               ) : (
                 <Play size={13} />
               )}
-              全文生成
+              {t("longform.generateAll")}
             </button>
             <a
               href={`/read/longform/${longform.id}`}
               target="_blank"
               rel="noreferrer"
               className="btn btn-quiet whitespace-nowrap"
-              title="在新标签页打开独立阅读模式"
+              title={t("longform.readerHint")}
             >
               <BookOpen size={13} />
-              阅读模式
+              {t("longform.readerMode")}
             </a>
             <button
               type="button"
               onClick={() => setRewriteOpen(true)}
               disabled={Boolean(busy) || !writable}
               className="btn btn-quiet whitespace-nowrap"
-              title={!writable ? "当前角色只读" : undefined}
+              title={!writable ? t("common.readOnlyRole") : undefined}
             >
               <Wand2 size={13} />
-              重写
+              {t("longform.rewrite")}
             </button>
             <button
               type="button"
               onClick={() => void openShare()}
               disabled={!canShare}
               className="btn btn-quiet whitespace-nowrap"
-              title={canShare ? "共享给空间成员" : "需要成员管理权限"}
+              title={canShare ? t("longform.shareHint") : t("longform.shareNoPermission")}
             >
               <Share2 size={13} />
-              共享
+              {t("common.share")}
             </button>
             <button
               type="button"
               onClick={() => setShareLinksOpen(true)}
               disabled={!writable}
               className="btn btn-quiet whitespace-nowrap"
-              title={writable ? "生成只读分享链接" : "当前角色只读"}
+              title={writable ? t("longform.shareLinkHint") : t("common.readOnlyRole")}
             >
               <Link2 size={13} />
-              分享链接
+              {t("longform.shareLink")}
             </button>
             <button
               type="button"
               onClick={openManual}
               disabled={Boolean(busy) || !writable}
               className="btn btn-quiet whitespace-nowrap"
-              title={!writable ? "当前角色只读" : "手动编辑整篇 Markdown"}
+              title={!writable ? t("common.readOnlyRole") : t("longform.manualHint")}
             >
               <PenLine size={13} />
-              手动编辑整篇
+              {t("longform.manualEdit")}
             </button>
             <button
               type="button"
               onClick={() => setPickOpen(true)}
               disabled={Boolean(busy) || !writable}
               className="btn btn-quiet whitespace-nowrap"
-              title={!writable ? "当前角色只读" : "从图片库插入图片到章节末尾"}
+              title={!writable ? t("common.readOnlyRole") : t("longform.insertImageHint")}
             >
               <ImagePlus size={13} />
-              插入图片
+              {t("longform.insertImage")}
             </button>
             <ExportMenu
               sourceType="longform"
@@ -834,7 +855,7 @@ export default function LongformEditorPage() {
               className="btn btn-quiet whitespace-nowrap"
             >
               <RotateCcw size={13} />
-              刷新
+              {t("common.refresh")}
             </button>
             <button
               type="button"
@@ -843,7 +864,7 @@ export default function LongformEditorPage() {
               className="btn btn-quiet whitespace-nowrap text-rose-600 dark:text-rose-300"
             >
               <X size={13} />
-              删除
+              {t("common.delete")}
             </button>
           </div>
         </div>
@@ -853,15 +874,15 @@ export default function LongformEditorPage() {
             <span className="flex items-center gap-2 font-medium">
               <Loader2 size={13} className="animate-spin" />
               {busy === "all"
-                ? "正在生成全文，逐节写作中…"
+                ? t("longform.busyFull")
                 : busy === "rewrite"
-                  ? "正在按指令重写…"
+                  ? t("longform.busyRewrite")
                   : busy.startsWith("revert-")
-                    ? "正在回滚…"
-                    : "正在生成这一节…"}
+                    ? t("longform.busyRevert")
+                    : t("longform.busySection")}
               <span className="ml-auto inline-flex items-center gap-1 tabular-nums">
                 <Clock3 size={12} />
-                已耗时 {elapsed}s
+                {t("longform.elapsed", { seconds: elapsed })}
               </span>
             </span>
             {busy === "all" || busy === "rewrite" ? (
@@ -879,7 +900,7 @@ export default function LongformEditorPage() {
                     onClick={() => void cancelActive()}
                     className="rounded-full border border-current/30 px-2 py-0.5 text-[11px] font-medium"
                   >
-                    取消
+                    {t("common.cancel")}
                   </button>
                 ) : null}
               </div>
@@ -902,7 +923,7 @@ export default function LongformEditorPage() {
 
         {!writable ? (
           <div className="mt-3 rounded-2xl border border-amber-300/50 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-300">
-            你以 {roleName || "只读"} 身份访问，仅可阅读
+            {t("longform.readOnlyView", { role: roleName || t("common.readOnly") })}
           </div>
         ) : null}
       </div>
@@ -915,7 +936,7 @@ export default function LongformEditorPage() {
         >
           <span className="flex items-center gap-1.5">
             <Layers size={13} />
-            大纲 · {longform.outline.length} 节
+            {t("longform.outlineWithCount", { count: longform.outline.length })}
           </span>
           <ChevronDown size={14} className={clsx("transition", outlineOpen && "rotate-180")} />
         </button>
@@ -945,9 +966,13 @@ export default function LongformEditorPage() {
                         {section.title}
                       </span>
                       <span className="mt-1 flex items-center gap-1.5 text-[10px] text-slate-400 dark:text-slate-500">
-                        <span>{section.target_words} 字</span>
+                        <span>
+                          {t("common.words", { count: section.target_words })}
+                        </span>
                         <span>·</span>
-                        <span>{section.content ? "已写" : "待写"}</span>
+                        <span>
+                          {section.content ? t("longform.written") : t("longform.pending")}
+                        </span>
                       </span>
                     </button>
                     <div className="mt-1.5 flex items-center gap-1">
@@ -962,11 +987,11 @@ export default function LongformEditorPage() {
                         ) : (
                           <Sparkles size={11} />
                         )}
-                        生成本节
+                        {t("longform.generateSection")}
                       </button>
                       {writable ? (
                         <RowMenu
-                          label={`章节 ${section.title} 操作`}
+                          label={t("longform.sectionMenuLabel", { title: section.title })}
                           items={sectionMenuItems(section.id, section.title, index)}
                         />
                       ) : null}
@@ -992,7 +1017,7 @@ export default function LongformEditorPage() {
             className="btn-quiet mt-2 w-full text-[11px]"
           >
             <Plus size={11} />
-            在末尾加一节
+            {t("longform.addSectionEnd")}
           </button>
         ) : null}
       </div>
@@ -1001,11 +1026,13 @@ export default function LongformEditorPage() {
         <aside className="glass hidden h-fit rounded-3xl p-3.5 shadow-glass lg:block">
           <h2 className="flex items-center gap-1.5 px-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
             <Layers size={12} />
-            大纲
+            {t("longform.outline")}
           </h2>
           <div className="no-scrollbar mt-2.5 max-h-[70vh] space-y-1.5 overflow-y-auto pr-1">
             {longform.outline.length === 0 ? (
-              <p className="px-1 py-2 text-[11px] text-slate-400">还没有大纲。</p>
+              <p className="px-1 py-2 text-[11px] text-slate-400">
+                {t("longform.outlineEmpty")}
+              </p>
             ) : (
               longform.outline.map((section, index) => (
                 <div
@@ -1024,7 +1051,9 @@ export default function LongformEditorPage() {
                       <span className="min-w-0">{section.title}</span>
                     </span>
                     <span className="mt-1 flex flex-wrap items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500">
-                      <span>{section.target_words} 字</span>
+                      <span>
+                        {t("common.words", { count: section.target_words })}
+                      </span>
                       <span
                         className={clsx(
                           "rounded-full px-1.5 py-0.5 font-medium",
@@ -1033,7 +1062,7 @@ export default function LongformEditorPage() {
                             : "bg-slate-500/10 text-slate-500 dark:bg-white/10 dark:text-slate-400",
                         )}
                       >
-                        {section.content ? "已写" : "待写"}
+                        {section.content ? t("longform.written") : t("longform.pending")}
                       </span>
                     </span>
                   </button>
@@ -1043,18 +1072,18 @@ export default function LongformEditorPage() {
                       onClick={() => void generateOne(section.id)}
                       disabled={Boolean(busy) || !writable}
                       className="btn-quiet flex-1 text-[11px]"
-                      title={!writable ? "当前角色只读" : undefined}
+                      title={!writable ? t("common.readOnlyRole") : undefined}
                     >
                       {busy === section.id ? (
                         <Loader2 size={11} className="animate-spin" />
                       ) : (
                         <Sparkles size={11} />
                       )}
-                      生成本节
+                      {t("longform.generateSection")}
                     </button>
                     {writable ? (
                       <RowMenu
-                        label={`章节 ${section.title} 操作`}
+                        label={t("longform.sectionMenuLabel", { title: section.title })}
                         items={sectionMenuItems(section.id, section.title, index)}
                       />
                     ) : null}
@@ -1078,7 +1107,7 @@ export default function LongformEditorPage() {
               className="btn-quiet mt-1.5 w-full text-[11px]"
             >
               <Plus size={11} />
-              在末尾加一节
+              {t("longform.addSectionEnd")}
             </button>
           ) : null}
         </aside>
@@ -1093,10 +1122,10 @@ export default function LongformEditorPage() {
                   <PenLine size={20} />
                 </div>
                 <p className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">
-                  正文还是空的
+                  {t("longform.contentEmpty")}
                 </p>
                 <p className="mx-auto mt-1.5 max-w-sm text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                  点右上「全文生成」一次写完，或在左侧逐节生成。生成过程是同步请求，可能需要 10–40 秒。
+                  {t("longform.contentEmptyDesc")}
                 </p>
                 <button
                   type="button"
@@ -1109,7 +1138,7 @@ export default function LongformEditorPage() {
                   ) : (
                     <Play size={13} />
                   )}
-                  全文生成
+                  {t("longform.generateAll")}
                 </button>
               </div>
             )}
@@ -1119,11 +1148,13 @@ export default function LongformEditorPage() {
         <aside className="glass h-fit rounded-3xl p-3.5 shadow-glass">
           <h2 className="flex items-center gap-1.5 px-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
             <History size={12} />
-            版本
+            {t("longform.versions")}
           </h2>
           <div className="no-scrollbar mt-2.5 max-h-[60vh] space-y-1.5 overflow-y-auto pr-1">
             {versions.length === 0 ? (
-              <p className="px-1 py-2 text-[11px] text-slate-400">还没有版本记录。</p>
+              <p className="px-1 py-2 text-[11px] text-slate-400">
+                {t("longform.versionsEmpty")}
+              </p>
             ) : (
               [...versions]
                 .sort((a, b) => b.version - a.version)
@@ -1151,12 +1182,14 @@ export default function LongformEditorPage() {
                           v{version.version}
                           {current ? (
                             <span className="rounded-full bg-emerald-500/12 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300">
-                              当前
+                              {t("longform.current")}
                             </span>
                           ) : null}
                           {version.mode ? (
                             <span className="text-[9px] font-normal text-slate-400">
-                              {version.mode === "loose" ? "非严格" : "严格"}
+                              {version.mode === "loose"
+                                ? t("longform.loose")
+                                : t("longform.strict")}
                             </span>
                           ) : null}
                         </span>
@@ -1177,7 +1210,7 @@ export default function LongformEditorPage() {
                           className="btn-quiet px-2 py-1 text-[10.5px]"
                         >
                           <Eye size={11} />
-                          预览
+                          {t("longform.preview")}
                         </button>
                         <button
                           type="button"
@@ -1185,7 +1218,7 @@ export default function LongformEditorPage() {
                           className="btn-quiet px-2 py-1 text-[10.5px]"
                         >
                           <GitCompare size={11} />
-                          对比
+                          {t("longform.compare")}
                         </button>
                       </div>
                       {active && !current ? (
@@ -1194,14 +1227,14 @@ export default function LongformEditorPage() {
                           onClick={() => void revert(version.version)}
                           disabled={Boolean(busy) || !writable}
                           className="btn-quiet mt-1.5 w-full text-[11px]"
-                          title={!writable ? "当前角色只读" : undefined}
+                          title={!writable ? t("common.readOnlyRole") : undefined}
                         >
                           {busy === `revert-${version.version}` ? (
                             <Loader2 size={11} className="animate-spin" />
                           ) : (
                             <RotateCcw size={11} />
                           )}
-                          回滚到此版本
+                          {t("longform.revertTo")}
                         </button>
                       ) : null}
                     </div>
@@ -1210,7 +1243,7 @@ export default function LongformEditorPage() {
             )}
           </div>
           <p className="mt-2 px-1 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
-            版本列表只返回元信息，预览与对比会按需拉取完整内容。
+            {t("longform.versionsHint")}
           </p>
         </aside>
       </div>
@@ -1233,10 +1266,10 @@ export default function LongformEditorPage() {
                 <div>
                   <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-800 dark:text-slate-100">
                     <Wand2 size={14} className="text-indigo-500" />
-                    整篇重写
+                    {t("longform.rewriteTitle")}
                   </h3>
                   <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                    写清要改什么，例如「更口语化」「加一个真实案例」「删掉第二部分」。
+                    {t("longform.rewriteDesc")}
                   </p>
                 </div>
                 <button
@@ -1249,19 +1282,19 @@ export default function LongformEditorPage() {
               </div>
               <label className="mt-4 block">
                 <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  重写指令
+                  {t("longform.instructionLabel")}
                 </span>
                 <textarea
                   value={instruction}
                   onChange={(event) => setInstruction(event.target.value)}
                   rows={4}
                   className="input resize-y"
-                  placeholder="更口语化，并给每节加一句结论"
+                  placeholder={t("longform.instructionPlaceholder")}
                 />
               </label>
               <label className="mt-3 block">
                 <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  生成模式
+                  {t("longform.fieldMode")}
                 </span>
                 <select
                   value={rewriteMode}
@@ -1270,8 +1303,8 @@ export default function LongformEditorPage() {
                   }
                   className="select"
                 >
-                  <option value="loose">非严格 · 允许自由补全</option>
-                  <option value="strict">严格 · 必须有出处</option>
+                  <option value="loose">{t("longform.modeLooseOption")}</option>
+                  <option value="strict">{t("longform.modeStrictCiteOption")}</option>
                 </select>
               </label>
               <div className="mt-5 flex justify-end gap-2">
@@ -1280,7 +1313,7 @@ export default function LongformEditorPage() {
                   onClick={() => setRewriteOpen(false)}
                   className="btn btn-quiet"
                 >
-                  取消
+                  {t("common.cancel")}
                 </button>
                 <button
                   type="button"
@@ -1293,7 +1326,7 @@ export default function LongformEditorPage() {
                   ) : (
                     <FileText size={13} />
                   )}
-                  开始重写
+                  {t("longform.startRewrite")}
                 </button>
               </div>
             </motion.div>
@@ -1311,13 +1344,13 @@ export default function LongformEditorPage() {
 
       <SharePanel
         open={shareOpen}
-        title="共享这篇长篇"
+        title={t("longform.shareTitle")}
         subtitle={longform ? longform.title : undefined}
         members={shareMembers}
         value={shareLevels}
         options={[
-          { value: "read", label: "可读", desc: "可查看正文与版本" },
-          { value: "write", label: "可写", desc: "可生成、重写与回滚" },
+          { value: "read", label: t("sharing.read"), desc: t("longform.readDesc") },
+          { value: "write", label: t("sharing.write"), desc: t("longform.writeDesc") },
         ]}
         loading={shareLoading}
         saving={shareSaving}
@@ -1341,8 +1374,8 @@ export default function LongformEditorPage() {
 
       <PromptDialog
         open={titleEditOpen}
-        title="编辑标题"
-        label="长篇标题"
+        title={t("longform.editTitle")}
+        label={t("longform.longformTitle")}
         initial={longform?.title ?? ""}
         busy={dialogBusy}
         error={dialogError}
@@ -1352,8 +1385,8 @@ export default function LongformEditorPage() {
 
       <PromptDialog
         open={targetEditOpen}
-        title="修改目标字数"
-        label="目标字数"
+        title={t("longform.editTargetTitle")}
+        label={t("longform.fieldTargetWords")}
         initial={String(longform?.target_words ?? 0)}
         busy={dialogBusy}
         error={dialogError}
@@ -1363,8 +1396,8 @@ export default function LongformEditorPage() {
 
       <PromptDialog
         open={Boolean(sectionRename)}
-        title="重命名章节"
-        label="章节标题"
+        title={t("longform.renameSection")}
+        label={t("longform.sectionTitle")}
         initial={sectionRename?.title ?? ""}
         busy={dialogBusy}
         error={dialogError}
@@ -1374,15 +1407,15 @@ export default function LongformEditorPage() {
 
       <Modal
         open={Boolean(sectionForm)}
-        title="编辑章节"
-        subtitle="可修改目录信息与本节正文，保存后写回大纲。"
+        title={t("longform.editSectionTitle")}
+        subtitle={t("longform.editSectionDesc")}
         onClose={() => setSectionForm(null)}
         wide
       >
         {sectionForm ? (
           <div className="space-y-3">
             <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-              标题
+              {t("longform.fieldTitle")}
               <input
                 value={sectionForm.title}
                 onChange={(event) =>
@@ -1393,7 +1426,7 @@ export default function LongformEditorPage() {
             </label>
             <div className="grid gap-3 sm:grid-cols-[1fr_130px]">
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                目录摘要
+                {t("longform.fieldSummary")}
                 <input
                   value={sectionForm.summary}
                   onChange={(event) =>
@@ -1403,7 +1436,7 @@ export default function LongformEditorPage() {
                 />
               </label>
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                目标字数
+                {t("longform.fieldTargetWords")}
                 <input
                   type="number"
                   value={sectionForm.targetWords}
@@ -1418,7 +1451,7 @@ export default function LongformEditorPage() {
               </label>
             </div>
             <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-              本节正文（Markdown）
+              {t("longform.fieldSectionContent")}
               <textarea
                 value={sectionForm.content}
                 onChange={(event) =>
@@ -1439,7 +1472,7 @@ export default function LongformEditorPage() {
                 onClick={() => setSectionForm(null)}
                 className="btn btn-quiet"
               >
-                取消
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -1448,7 +1481,7 @@ export default function LongformEditorPage() {
                 className="btn btn-primary"
               >
                 {dialogBusy ? <Loader2 size={13} className="animate-spin" /> : null}
-                保存章节
+                {t("longform.saveSection")}
               </button>
             </div>
           </div>
@@ -1457,13 +1490,13 @@ export default function LongformEditorPage() {
 
       <Modal
         open={Boolean(sectionCreate)}
-        title="新增章节"
+        title={t("longform.addSectionTitle")}
         onClose={() => setSectionCreate(null)}
       >
         {sectionCreate ? (
           <div className="space-y-3">
             <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-              章节标题
+              {t("longform.sectionTitle")}
               <input
                 autoFocus
                 value={sectionCreate.title}
@@ -1471,12 +1504,12 @@ export default function LongformEditorPage() {
                   setSectionCreate({ ...sectionCreate, title: event.target.value })
                 }
                 className="input mt-1"
-                placeholder="例如：实战案例"
+                placeholder={t("longform.sectionTitlePlaceholder")}
               />
             </label>
             <div className="grid gap-3 sm:grid-cols-[1fr_130px]">
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                目录摘要
+                {t("longform.fieldSummary")}
                 <input
                   value={sectionCreate.summary}
                   onChange={(event) =>
@@ -1486,7 +1519,7 @@ export default function LongformEditorPage() {
                 />
               </label>
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                目标字数
+                {t("longform.fieldTargetWords")}
                 <input
                   type="number"
                   value={sectionCreate.targetWords}
@@ -1501,7 +1534,9 @@ export default function LongformEditorPage() {
               </label>
             </div>
             <p className="text-[10.5px] text-slate-400 dark:text-slate-500">
-              {sectionCreate.afterId ? "将插入到选中章节之后" : "将追加到大纲末尾"}
+              {sectionCreate.afterId
+                ? t("longform.insertAfter")
+                : t("longform.appendEnd")}
             </p>
             {dialogError ? (
               <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-700 dark:text-rose-300">
@@ -1514,7 +1549,7 @@ export default function LongformEditorPage() {
                 onClick={() => setSectionCreate(null)}
                 className="btn btn-quiet"
               >
-                取消
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -1523,7 +1558,7 @@ export default function LongformEditorPage() {
                 className="btn btn-primary"
               >
                 {dialogBusy ? <Loader2 size={13} className="animate-spin" /> : null}
-                新增章节
+                {t("longform.addSectionTitle")}
               </button>
             </div>
           </div>
@@ -1532,8 +1567,10 @@ export default function LongformEditorPage() {
 
       <ConfirmDialog
         open={Boolean(sectionDelete)}
-        title="删除章节"
-        description={`将删除「${sectionDelete?.title ?? ""}」及其正文，至少需保留 1 节。`}
+        title={t("longform.deleteSectionTitle")}
+        description={t("longform.deleteSectionDesc", {
+          title: sectionDelete?.title ?? "",
+        })}
         busy={dialogBusy}
         error={dialogError}
         onConfirm={() => void deleteSection()}
@@ -1542,8 +1579,10 @@ export default function LongformEditorPage() {
 
       <Modal
         open={manualOpen}
-        title="手动编辑整篇"
-        subtitle={`将保存为新版本（当前 v${longform?.current_version ?? 0}）。`}
+        title={t("longform.manualEditTitle")}
+        subtitle={t("longform.manualEditDesc", {
+          version: longform?.current_version ?? 0,
+        })}
         onClose={() => setManualOpen(false)}
         wide
       >
@@ -1553,10 +1592,10 @@ export default function LongformEditorPage() {
             onChange={(event) => setManualText(event.target.value)}
             rows={16}
             className="input w-full font-mono text-[12px] leading-relaxed"
-            placeholder="# 标题&#10;&#10;正文内容…"
+            placeholder={t("longform.manualPlaceholder")}
           />
           <div className="flex items-center justify-between gap-2 text-[10.5px] text-slate-400 dark:text-slate-500">
-            <span>{manualText.length} 字符</span>
+            <span>{t("longform.charCount", { count: manualText.length })}</span>
             {dialogError ? (
               <span className="text-rose-600 dark:text-rose-300">{dialogError}</span>
             ) : null}
@@ -1567,7 +1606,7 @@ export default function LongformEditorPage() {
               onClick={() => setManualOpen(false)}
               className="btn btn-quiet"
             >
-              取消
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -1576,7 +1615,7 @@ export default function LongformEditorPage() {
               className="btn btn-primary"
             >
               {dialogBusy ? <Loader2 size={13} className="animate-spin" /> : null}
-              保存为新版本
+              {t("longform.saveAsVersion")}
             </button>
           </div>
         </div>

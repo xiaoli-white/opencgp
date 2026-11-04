@@ -19,15 +19,17 @@ import {
   mediaUrl,
   type MediaAsset,
 } from "@/lib/api";
-import { assetMarkdown, assetSrc, formatBytes, formatStamp, mediaKindLabel } from "@/lib/media";
+import { assetMarkdown, assetSrc, formatBytes, formatStamp } from "@/lib/media";
 import { useSession } from "@/components/auth/SessionProvider";
 import { ConfirmDialog, Modal } from "@/components/common/Dialogs";
 import ImageInsertDialog from "@/components/media/ImageInsertDialog";
+import { useI18n } from "@/i18n/I18nProvider";
 
 const SIZES = ["512x512", "1024x1024", "1024x1536"];
 
 export default function MediaPage() {
   const { can } = useSession();
+  const { t } = useI18n();
   const writable = can("write");
 
   const [assets, setAssets] = useState<MediaAsset[]>([]);
@@ -57,7 +59,7 @@ export default function MediaPage() {
       setAssets(data.assets);
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "图片加载失败");
+      setError(err instanceof Error ? err.message : t("media.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -79,9 +81,9 @@ export default function MediaPage() {
     try {
       const asset = await api.uploadMedia(file);
       setAssets((current) => [asset, ...current]);
-      setNotice("图片已上传");
+      setNotice(t("media.uploaded"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "上传失败");
+      setError(err instanceof Error ? err.message : t("media.uploadFailed"));
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -100,14 +102,14 @@ export default function MediaPage() {
         n: genCount,
       });
       setAssets((current) => [...data.assets, ...current]);
-      setNotice(`已生成 ${data.assets.length} 张图片`);
+      setNotice(t("media.generatedNotice", { count: data.assets.length }));
       setGenOpen(false);
       setGenPrompt("");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "生成失败";
+      const message = err instanceof Error ? err.message : t("media.generateFailed");
       setGenError(message);
       if (err instanceof ApiError && err.status === 503) {
-        setGenHint("需要后端配置 IMAGE_API_KEY 后才能启用图片生成通道。");
+        setGenHint(t("media.genHint"));
       }
     } finally {
       setGenerating(false);
@@ -120,7 +122,7 @@ export default function MediaPage() {
       setCopiedId(asset.id);
       window.setTimeout(() => setCopiedId(""), 1600);
     } catch {
-      setError("复制失败，请手动选择文本");
+      setError(t("media.copyFailed"));
     }
   };
 
@@ -139,9 +141,9 @@ export default function MediaPage() {
     try {
       await api.deleteMedia(removeTarget.id);
       setAssets((current) => current.filter((item) => item.id !== removeTarget.id));
-      setNotice("图片已删除");
+      setNotice(t("media.deleted"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "删除失败");
+      setError(err instanceof Error ? err.message : t("media.deleteFailed"));
     } finally {
       setRemoveTarget(null);
     }
@@ -163,11 +165,17 @@ export default function MediaPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-2xl">
-              图片库
+              {t("media.title")}
             </h1>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-              <span className="chip-muted">{assets.length} 张</span>
-              <span className="chip-muted">合计 {formatBytes(total)}</span>
+              <span className="chip-muted">
+                {assets.length === 1
+                  ? t("media.countOne")
+                  : t("media.count", { count: assets.length })}
+              </span>
+              <span className="chip-muted">
+                {t("media.total", { size: formatBytes(total) })}
+              </span>
             </div>
           </div>
           <div className="no-scrollbar -mx-1 flex w-full items-center gap-2 overflow-x-auto px-1 sm:w-auto">
@@ -185,11 +193,11 @@ export default function MediaPage() {
               type="button"
               onClick={() => fileRef.current?.click()}
               disabled={!writable || uploading}
-              title={!writable ? "当前角色只读" : undefined}
+              title={!writable ? t("common.readOnlyRole") : undefined}
               className="btn btn-quiet shrink-0 whitespace-nowrap"
             >
               {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-              上传图片
+              {t("media.upload")}
             </button>
             <button
               type="button"
@@ -199,18 +207,18 @@ export default function MediaPage() {
                 setGenOpen(true);
               }}
               disabled={!writable}
-              title={!writable ? "当前角色只读" : undefined}
+              title={!writable ? t("common.readOnlyRole") : undefined}
               className="btn btn-primary shrink-0 whitespace-nowrap"
             >
               <Sparkles size={13} />
-              AI 生图
+              {t("media.generateAi")}
             </button>
             <button
               type="button"
               onClick={() => void load()}
               disabled={loading}
               className="btn btn-quiet shrink-0"
-              aria-label="刷新"
+              aria-label={t("common.refresh")}
             >
               {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
             </button>
@@ -247,10 +255,10 @@ export default function MediaPage() {
             className="mx-auto text-slate-300 dark:text-slate-600"
           />
           <p className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">
-            图片库还是空的
+            {t("media.emptyTitle")}
           </p>
           <p className="mx-auto mt-1.5 max-w-md text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-            上传本地图片（png / jpg / webp，≤8MB），或配置图片生成通道后用「AI 生图」直接产出配图，再插入到长篇或课程正文。
+            {t("media.emptyDesc")}
           </p>
           <button
             type="button"
@@ -259,7 +267,7 @@ export default function MediaPage() {
             className="btn btn-primary mx-auto mt-4"
           >
             <Upload size={13} />
-            上传第一张图片
+            {t("media.uploadFirst")}
           </button>
         </div>
       ) : (
@@ -295,7 +303,9 @@ export default function MediaPage() {
                         : "bg-slate-500/10 text-slate-600 dark:text-slate-300",
                     )}
                   >
-                    {mediaKindLabel(asset.kind)}
+                    {asset.kind === "generated" || asset.kind === "generate"
+                      ? t("media.kindGenerated")
+                      : t("media.kindUpload")}
                   </span>
                   <span className="text-[10px] text-slate-400 dark:text-slate-500">
                     {asset.width}×{asset.height} · {formatBytes(asset.bytes)}
@@ -305,7 +315,7 @@ export default function MediaPage() {
                   </span>
                 </div>
                 <p className="line-clamp-2 min-h-[2.2em] text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
-                  {asset.prompt || "（无描述）"}
+                  {asset.prompt || t("media.noPrompt")}
                 </p>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <button
@@ -314,7 +324,7 @@ export default function MediaPage() {
                     className="btn-quiet flex-1 text-[11px]"
                   >
                     {copiedId === asset.id ? <Check size={11} /> : <Copy size={11} />}
-                    {copiedId === asset.id ? "已复制" : "复制 Markdown"}
+                    {copiedId === asset.id ? t("media.copied") : t("media.copyMarkdown")}
                   </button>
                   <button
                     type="button"
@@ -322,23 +332,23 @@ export default function MediaPage() {
                     className="btn-quiet text-[11px]"
                   >
                     <Download size={11} />
-                    下载
+                    {t("common.download")}
                   </button>
                   <button
                     type="button"
                     onClick={() => setInsertTarget(asset)}
                     disabled={!writable}
-                    title={!writable ? "当前角色只读" : "插入到长篇章节"}
+                    title={!writable ? t("common.readOnlyRole") : t("media.insertHint")}
                     className="btn-quiet text-[11px]"
                   >
                     <ImagePlus size={11} />
-                    插入到…
+                    {t("media.insertTo")}
                   </button>
                   <button
                     type="button"
                     onClick={() => setRemoveTarget(asset)}
                     disabled={!writable}
-                    title={!writable ? "当前角色只读" : "删除"}
+                    title={!writable ? t("common.readOnlyRole") : t("common.delete")}
                     className="btn-quiet text-[11px] text-rose-600 dark:text-rose-300"
                   >
                     <Trash2 size={11} />
@@ -355,27 +365,27 @@ export default function MediaPage() {
 
       <Modal
         open={genOpen}
-        title="AI 生图"
-        subtitle="调用服务器配置的图片生成通道，图会保存到图片库"
+        title={t("media.generateTitle")}
+        subtitle={t("media.generateSubtitle")}
         onClose={() => setGenOpen(false)}
       >
         <div className="space-y-3">
           <label className="block">
             <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              描述
+              {t("media.fieldPrompt")}
             </span>
             <textarea
               value={genPrompt}
               onChange={(event) => setGenPrompt(event.target.value)}
               rows={3}
-              placeholder="例如：极简风格的向量检索示意图，靛蓝紫渐变背景"
+              placeholder={t("media.promptPlaceholder")}
               className="input w-full resize-y"
             />
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                尺寸
+                {t("media.fieldSize")}
               </span>
               <select
                 value={genSize}
@@ -391,15 +401,15 @@ export default function MediaPage() {
             </label>
             <label className="block">
               <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                数量
+                {t("media.fieldCount")}
               </span>
               <select
                 value={genCount}
                 onChange={(event) => setGenCount(Number(event.target.value))}
                 className="select w-full"
               >
-                <option value={1}>1 张</option>
-                <option value={2}>2 张</option>
+                <option value={1}>{t("media.imageCount", { count: 1 })}</option>
+                <option value={2}>{t("media.imageCount", { count: 2 })}</option>
               </select>
             </label>
           </div>
@@ -411,7 +421,7 @@ export default function MediaPage() {
           ) : null}
           <div className="flex items-center justify-end gap-2">
             <button type="button" onClick={() => setGenOpen(false)} className="btn btn-quiet">
-              取消
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -420,7 +430,7 @@ export default function MediaPage() {
               className="btn btn-primary"
             >
               {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-              {generating ? "生成中…" : "生成"}
+              {generating ? t("media.generating") : t("media.generate")}
             </button>
           </div>
         </div>
@@ -428,9 +438,9 @@ export default function MediaPage() {
 
       <ConfirmDialog
         open={Boolean(removeTarget)}
-        title="删除图片"
-        description={`删除后引用该图片的 Markdown 将失效，确定删除 ${removeTarget?.id ?? ""} 吗？`}
-        confirmLabel="删除"
+        title={t("media.deleteTitle")}
+        description={t("media.deleteDesc", { id: removeTarget?.id ?? "" })}
+        confirmLabel={t("common.delete")}
         onClose={() => setRemoveTarget(null)}
         onConfirm={() => void remove()}
       />

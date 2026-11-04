@@ -3,6 +3,7 @@ import { Database, Loader2, Pencil, Trash2 } from "lucide-react";
 import { api, type KbSource } from "@/lib/api";
 import { formatChars, formatDateTime } from "@/lib/format";
 import { ConfirmDialog, PromptDialog } from "@/components/common/Dialogs";
+import { useI18n } from "@/i18n/I18nProvider";
 
 export default function SourcesCard({
   refreshKey,
@@ -15,6 +16,7 @@ export default function SourcesCard({
   onNotice: (message: string) => void;
   onError: (message: string) => void;
 }) {
+  const { t } = useI18n();
   const [items, setItems] = useState<KbSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [renaming, setRenaming] = useState<KbSource | null>(null);
@@ -28,11 +30,11 @@ export default function SourcesCard({
       const data = await api.listKbSources();
       setItems(data.sources);
     } catch (err) {
-      onError(err instanceof Error ? err.message : "知识源加载失败");
+      onError(err instanceof Error ? err.message : t("kb.sourcesLoadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [onError]);
+  }, [onError, t]);
 
   useEffect(() => {
     void load();
@@ -45,10 +47,10 @@ export default function SourcesCard({
     try {
       await api.renameKbSource(renaming.source_id, value);
       setRenaming(null);
-      onNotice("知识源已重命名");
+      onNotice(t("kb.sourceRenamed"));
       await load();
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "重命名失败");
+      setDialogError(err instanceof Error ? err.message : t("kb.renameFailed"));
     } finally {
       setBusy(false);
     }
@@ -61,10 +63,10 @@ export default function SourcesCard({
     try {
       await api.deleteKbSource(removing.source_id);
       setRemoving(null);
-      onNotice("知识源已删除");
+      onNotice(t("kb.sourceDeleted"));
       await load();
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "删除失败");
+      setDialogError(err instanceof Error ? err.message : t("kb.deleteFailed"));
     } finally {
       setBusy(false);
     }
@@ -78,11 +80,11 @@ export default function SourcesCard({
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-            知识源
+            {t("kb.sourcesTitle")}
             <span className="chip-muted ml-1.5">{items.length}</span>
           </p>
           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-            可重命名显示名，或删除整份来源的全部切片
+            {t("kb.sourcesDesc")}
           </p>
         </div>
         {loading ? (
@@ -93,7 +95,7 @@ export default function SourcesCard({
       <div className="mt-3 space-y-1.5">
         {items.length === 0 && !loading ? (
           <p className="rounded-2xl border border-dashed border-white/60 bg-white/40 px-3 py-3 text-[11px] text-slate-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-400">
-            还没有知识源，先上传一份资料。
+            {t("kb.sourcesEmpty")}
           </p>
         ) : (
           items.map((source) => (
@@ -106,7 +108,7 @@ export default function SourcesCard({
                   {source.source_name}
                 </p>
                 <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400 dark:text-slate-500">
-                  <span>{source.chunk_count} 切片</span>
+                  <span>{t("kb.chunkCount", { count: source.chunk_count })}</span>
                   <span>·</span>
                   <span>{formatChars(source.char_count)}</span>
                   <span>·</span>
@@ -122,7 +124,7 @@ export default function SourcesCard({
                       setRenaming(source);
                     }}
                     className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 transition hover:bg-white/70 hover:text-indigo-600 dark:hover:bg-white/10 dark:hover:text-indigo-300"
-                    aria-label="重命名知识源"
+                    aria-label={t("kb.renameSource")}
                   >
                     <Pencil size={12} />
                   </button>
@@ -133,7 +135,7 @@ export default function SourcesCard({
                       setRemoving(source);
                     }}
                     className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-600"
-                    aria-label="删除知识源"
+                    aria-label={t("kb.deleteSource")}
                   >
                     <Trash2 size={12} />
                   </button>
@@ -146,8 +148,8 @@ export default function SourcesCard({
 
       <PromptDialog
         open={Boolean(renaming)}
-        title="重命名知识源"
-        label="来源显示名"
+        title={t("kb.renameSource")}
+        label={t("kb.sourceNameLabel")}
         initial={renaming?.source_name ?? ""}
         busy={busy}
         error={dialogError}
@@ -156,8 +158,11 @@ export default function SourcesCard({
       />
       <ConfirmDialog
         open={Boolean(removing)}
-        title="删除知识源"
-        description={`将删除「${removing?.source_name ?? ""}」的全部 ${removing?.chunk_count ?? 0} 个切片，已生成的正文不受影响。`}
+        title={t("kb.deleteSource")}
+        description={t("kb.deleteSourceDesc", {
+          name: removing?.source_name ?? "",
+          count: removing?.chunk_count ?? 0,
+        })}
         busy={busy}
         error={dialogError}
         onConfirm={() => void remove()}
