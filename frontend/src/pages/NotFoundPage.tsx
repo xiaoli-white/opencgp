@@ -1,8 +1,11 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Compass, Home } from "lucide-react";
+import { useI18n } from "@/i18n/I18nProvider";
 
 export default function NotFoundPage() {
+  const { t } = useI18n();
+
   return (
     <div className="flex min-h-[60vh] items-center justify-center">
       <motion.section
@@ -20,14 +23,14 @@ export default function NotFoundPage() {
             404
           </p>
           <h1 className="mt-1.5 text-[22px] font-semibold tracking-tight text-slate-900 dark:text-white">
-            这一页还没有被写过
+            {t("notFound.title")}
           </h1>
           <p className="mt-2 font-reading text-[14px] leading-relaxed text-slate-600 dark:text-slate-300">
-            你访问的地址不存在，或者对应的课程已被移除。回到工作台，继续打磨你的课程。
+            {t("notFound.desc")}
           </p>
           <Link to="/" className="btn btn-primary mt-6">
             <Home size={15} />
-            返回工作台
+            {t("notFound.back")}
           </Link>
         </div>
       </motion.section>

@@ -23,8 +23,9 @@ import {
 import { formatChars, sourceLabel } from "@/lib/format";
 import SourcesCard from "@/components/kb/SourcesCard";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
 
-const SUGGESTIONS = ["向量检索的原理", "如何评估检索质量", "课程的写作流程"];
+const SUGGESTIONS = ["kb.suggestVector", "kb.suggestEval", "kb.suggestFlow"];
 
 export default function KbPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -44,6 +45,7 @@ export default function KbPage() {
   const [sourcesTick, setSourcesTick] = useState(0);
   const [notice, setNotice] = useState("");
   const { can } = useSession();
+  const { t } = useI18n();
   const canWrite = can("write");
 
   useEffect(() => {
@@ -77,7 +79,7 @@ export default function KbPage() {
       setSourceName("");
       setSourcesTick((tick) => tick + 1);
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "上传失败");
+      setUploadError(err instanceof Error ? err.message : t("kb.uploadFailed"));
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -93,7 +95,7 @@ export default function KbPage() {
       const result = await api.searchKb(text, topK);
       setSearchResult(result);
     } catch (err) {
-      setSearchError(err instanceof Error ? err.message : "检索失败");
+      setSearchError(err instanceof Error ? err.message : t("kb.searchFailed"));
     } finally {
       setSearching(false);
     }
@@ -102,7 +104,7 @@ export default function KbPage() {
   const removeSource = async (citation: Citation) => {
     if (deleting) return;
     const confirmed = window.confirm(
-      `删除来源「${citation.source_name}」的全部切片？该操作只影响知识库，不影响已生成的正文。`,
+      t("kb.deleteConfirm", { name: citation.source_name }),
     );
     if (!confirmed) return;
     setDeleting(citation.source_id);
@@ -123,7 +125,7 @@ export default function KbPage() {
           : prev,
       );
     } catch (err) {
-      setSearchError(err instanceof Error ? err.message : "删除失败");
+      setSearchError(err instanceof Error ? err.message : t("kb.deleteFailed"));
     } finally {
       setDeleting(null);
     }
@@ -139,7 +141,7 @@ export default function KbPage() {
             type="button"
             onClick={() => setNotice("")}
             className="text-emerald-500 transition hover:text-emerald-700"
-            aria-label="关闭"
+            aria-label={t("common.close")}
           >
             <X size={12} />
           </button>
@@ -155,17 +157,17 @@ export default function KbPage() {
         <div className="relative">
           <span className="chip">
             <Sparkles size={11} />
-            RAG · 引用溯源
+            {t("kb.badge")}
           </span>
           <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-[28px]">
-            知识库：写作与追问的证据底座
+            {t("kb.title")}
           </h1>
           <p className="mt-2 max-w-2xl font-reading text-[15px] leading-relaxed text-slate-600 dark:text-slate-300">
-            上传资料后会解析、分块并索引。生成正文与追问时只基于检索到的证据写作，每段带 [En] 引用标记，可 hover 查看来源。
+            {t("kb.subtitle")}
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px]">
             <span className="chip-muted">API · {API_BASE}</span>
-            <span className="chip-muted">支持 PDF / Markdown / docx / 文本</span>
+            <span className="chip-muted">{t("kb.formats")}</span>
           </div>
         </div>
       </motion.section>
@@ -178,10 +180,10 @@ export default function KbPage() {
             </span>
             <div>
               <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                上传资料
+                {t("kb.uploadTitle")}
               </p>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                入库后即可被生成与追问引用
+                {t("kb.uploadDesc")}
               </p>
             </div>
           </div>
@@ -212,10 +214,10 @@ export default function KbPage() {
               )}
             </div>
             <p className="mt-3 text-[13px] font-medium text-slate-600 dark:text-slate-300">
-              {uploading ? "正在解析并写入索引…" : "拖拽文件到此处，或选择本地文件"}
+              {uploading ? t("kb.uploading") : t("kb.dropHint")}
             </p>
             <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-              解析 → 分块 → 索引，完成后可直接检索测试
+              {t("kb.dropSub")}
             </p>
             <input
               ref={fileInputRef}
@@ -234,18 +236,18 @@ export default function KbPage() {
               ) : (
                 <Upload size={14} />
               )}
-              选择文件
+              {t("kb.selectFile")}
             </button>
           </div>
 
           <div className="mt-3">
             <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              来源显示名（可选）
+              {t("kb.sourceNameField")}
             </label>
             <input
               value={sourceName}
               onChange={(event) => setSourceName(event.target.value)}
-              placeholder="例如：内部技术手册 v2"
+              placeholder={t("kb.sourceNamePlaceholder")}
               className="input"
             />
           </div>
@@ -267,11 +269,11 @@ export default function KbPage() {
               >
                 <p className="flex items-center gap-1.5 text-[12px] font-medium text-emerald-700 dark:text-emerald-300">
                   <Check size={13} />
-                  已入库 · {uploadResult.source_name}
+                  {t("kb.ingested", { name: uploadResult.source_name })}
                 </p>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-                  <span>解析器 · {uploadResult.parser}</span>
-                  <span>{uploadResult.chunk_count} 个切片</span>
+                  <span>{t("kb.parser", { parser: uploadResult.parser })}</span>
+                  <span>{t("kb.chunkCount", { count: uploadResult.chunk_count })}</span>
                   <span>{formatChars(uploadResult.char_count)}</span>
                   <span className="truncate">ID · {uploadResult.source_id}</span>
                 </div>
@@ -291,7 +293,7 @@ export default function KbPage() {
                   className="btn-quiet mt-2 px-0"
                 >
                   <Search size={12} />
-                  用这个来源试检索
+                  {t("kb.trySearch")}
                 </button>
               </motion.div>
             )}
@@ -314,10 +316,10 @@ export default function KbPage() {
               <Search size={15} />
             </span>            <div>
               <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                检索测试
+                {t("kb.searchTitle")}
               </p>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                验证证据能否被生成流程命中
+                {t("kb.searchDesc")}
               </p>
             </div>
           </div>
@@ -329,7 +331,7 @@ export default function KbPage() {
               onKeyDown={(event) => {
                 if (event.key === "Enter") runSearch();
               }}
-              placeholder="输入一个问题或关键词…"
+              placeholder={t("kb.searchPlaceholder")}
               className="input"
             />
             <select
@@ -339,7 +341,7 @@ export default function KbPage() {
             >
               {[3, 5, 8, 12].map((value) => (
                 <option key={value} value={value}>
-                  返回 {value} 条
+                  {t("kb.topK", { count: value })}
                 </option>
               ))}
             </select>
@@ -354,7 +356,7 @@ export default function KbPage() {
               ) : (
                 <Search size={14} />
               )}
-              检索
+              {t("kb.search")}
             </button>
           </div>
 
@@ -363,10 +365,10 @@ export default function KbPage() {
               <button
                 key={item}
                 type="button"
-                onClick={() => setQuery(item)}
+                onClick={() => setQuery(t(item))}
                 className="rounded-full border border-slate-200/80 px-2.5 py-1 text-[10px] text-slate-500 transition hover:border-indigo-300 hover:text-indigo-600 dark:border-white/10 dark:text-slate-400 dark:hover:border-indigo-400/40 dark:hover:text-indigo-200"
               >
-                {item}
+                {t(item)}
               </button>
             ))}
           </div>
@@ -392,12 +394,15 @@ export default function KbPage() {
               searchResult.citations.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-300/70 px-4 py-10 text-center text-[11px] leading-relaxed text-slate-400 dark:border-white/15 dark:text-slate-500">
                   <X size={16} className="mx-auto mb-2 opacity-60" />
-                  没有命中切片。换一个更具体的问法，或先上传相关资料。
+                  {t("kb.noHits")}
                 </div>
               ) : (
                 <>
                   <p className="px-1 text-[11px] text-slate-400 dark:text-slate-500">
-                    「{searchResult.query}」命中 {searchResult.count} 条证据
+                    {t("kb.hits", {
+                      query: searchResult.query,
+                      count: searchResult.count,
+                    })}
                   </p>
                   {searchResult.citations.map((citation) => (
                     <div
@@ -417,7 +422,7 @@ export default function KbPage() {
                           onClick={() => removeSource(citation)}
                           disabled={deleting === citation.source_id}
                           className="text-slate-300 transition hover:text-rose-500 dark:text-slate-600 dark:hover:text-rose-400"
-                          aria-label="删除该来源"
+                          aria-label={t("kb.deleteSource")}
                         >
                           {deleting === citation.source_id ? (
                             <Loader2 size={12} className="animate-spin" />
@@ -444,7 +449,7 @@ export default function KbPage() {
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-300/70 px-4 py-10 text-center text-[11px] leading-relaxed text-slate-400 dark:border-white/15 dark:text-slate-500">
                 <Search size={16} className="mx-auto mb-2 opacity-60" />
-                检索结果会显示来源、切片与匹配度，用于判断生成是否有据可依。
+                {t("kb.searchEmpty")}
               </div>
             )}
           </div>
@@ -453,9 +458,11 @@ export default function KbPage() {
 
       {storage ? (
         <p className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border border-white/45 bg-white/45 px-4 py-2 text-[11px] text-slate-500 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-400">
-          <span>对象存储 · {storage.backend}</span>
+          <span>{t("kb.storage", { backend: storage.backend })}</span>
           {storage.bucket ? <span className="truncate">bucket · {storage.bucket}</span> : null}
-          <span className="tabular-nums">{storage.objects} 个对象</span>
+          <span className="tabular-nums">
+            {t("kb.objects", { count: storage.objects })}
+          </span>
           {storage.prefix ? <span className="truncate font-mono">{storage.prefix}</span> : null}
         </p>
       ) : null}

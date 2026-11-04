@@ -17,7 +17,14 @@ import { useSession } from "@/components/auth/SessionProvider";
 import ProfileSelect, { useWorkProfiles } from "@/components/profiles/ProfileSelect";
 import { useI18n } from "@/i18n/I18nProvider";
 
-const FLOW = ["建课", "建讲", "检索取证", "逐讲生成", "追问 / 改版", "版本回滚"];
+const FLOW = [
+  "home.flow.createCourse",
+  "home.flow.createLesson",
+  "home.flow.research",
+  "home.flow.generate",
+  "home.flow.revise",
+  "home.flow.rollback",
+];
 
 export default function HomePage() {
   const { can, visibleCourseIds } = useSession();
@@ -57,7 +64,7 @@ export default function HomePage() {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "课程列表加载失败");
+          setError(err instanceof Error ? err.message : t("home.loadFailed"));
         }
       })
       .finally(() => {
@@ -86,7 +93,7 @@ export default function HomePage() {
       window.dispatchEvent(new Event("course-studio:refresh"));
       navigate(`/courses/${course.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "创建课程失败");
+      setError(err instanceof Error ? err.message : t("home.createFailed"));
     } finally {
       setCreating(false);
     }
@@ -105,39 +112,39 @@ export default function HomePage() {
         <div className="relative">
           <span className="chip">
             <Sparkles size={11} />
-            对话即作者 · 课程即活文档
+            {t("home.badge")}
           </span>
           <h1 className="mt-3 max-w-2xl text-2xl font-semibold leading-tight tracking-tight text-slate-900 dark:text-white sm:mt-4 sm:text-[38px]">
-            把知识，写成一门
-            <span className="text-gradient">会生长的课程</span>
+            {t("home.heroTitle")}
+            <span className="text-gradient">{t("home.heroAccent")}</span>
           </h1>
           <p className="mt-3 max-w-2xl font-reading text-[14px] leading-relaxed text-slate-600 dark:text-slate-300 sm:text-base">
-            AI 先检索证据、逐段带引用写作，再陪你追问与局部修改。每一次改动都沉淀为可对比、可回滚的版本——课程不是一次性产物，而是一份持续打磨的活文档。
+            {t("home.heroSubtitle")}
           </p>
           <div className="mt-5 flex flex-col gap-2 sm:mt-6 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2.5">
             <button
               type="button"
               onClick={() => setFormOpen(true)}
               disabled={!can("write")}
-              title={can("write") ? "" : "当前角色只读"}
+              title={can("write") ? "" : t("common.readOnlyRole")}
               className="btn btn-primary w-full justify-center sm:w-auto"
             >
               <Plus size={15} />
-              新建课程
+              {t("home.newCourse")}
             </button>
             <Link to="/kb" className="btn btn-ghost w-full justify-center sm:w-auto">
               <BookOpen size={14} />
-              打开知识库
+              {t("home.openKb")}
             </Link>
             <span className="text-center text-[11px] text-slate-400 dark:text-slate-500 sm:text-left">
-              已有 {courses.length} 门课程
+              {t("home.courseCountInline", { count: courses.length })}
             </span>
           </div>
           <div className="mt-6 flex flex-wrap items-center gap-1.5">
             {FLOW.map((step, index) => (
               <span key={step} className="flex items-center gap-1.5">
                 <span className="rounded-full border border-white/60 bg-white/45 px-2.5 py-1 text-[11px] text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-400">
-                  {step}
+                  {t(step)}
                 </span>
                 {index < FLOW.length - 1 && (
                   <span className="text-[10px] text-slate-300 dark:text-slate-600">→</span>
@@ -164,17 +171,17 @@ export default function HomePage() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                    新建课程
+                    {t("home.form.title")}
                   </p>
                   <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                    先给课程一个骨架，正文按讲次逐步生成。
+                    {t("home.form.desc")}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setFormOpen(false)}
                   className="grid h-8 w-8 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10"
-                  aria-label="关闭新建表单"
+                  aria-label={t("home.form.close")}
                 >
                   <X size={15} />
                 </button>
@@ -182,7 +189,7 @@ export default function HomePage() {
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <label className="sm:col-span-2">
                   <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                    课程标题
+                    {t("home.form.courseTitle")}
                   </span>
                   <input
                     autoFocus
@@ -190,40 +197,40 @@ export default function HomePage() {
                     onChange={(event) =>
                       setForm({ ...form, title: event.target.value })
                     }
-                    placeholder="例如：从零理解向量检索"
+                    placeholder={t("home.form.courseTitlePlaceholder")}
                     className="input"
                   />
                 </label>
                 <label className="sm:col-span-2">
                   <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                    副标题
+                    {t("home.form.subtitle")}
                   </span>
                   <input
                     value={form.subtitle}
                     onChange={(event) =>
                       setForm({ ...form, subtitle: event.target.value })
                     }
-                    placeholder="一句话说明这门课解决什么问题"
+                    placeholder={t("home.form.subtitlePlaceholder")}
                     className="input"
                   />
                 </label>
                 <label>
                   <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                    目标受众
+                    {t("home.form.audience")}
                   </span>
                   <input
                     value={form.audience}
                     onChange={(event) =>
                       setForm({ ...form, audience: event.target.value })
                     }
-                    placeholder="例如：后端工程师 / 产品经理"
+                    placeholder={t("home.form.audiencePlaceholder")}
                     className="input"
                   />
                 </label>
                 <div className="grid grid-cols-2 gap-3">
                   <label>
                     <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      难度
+                      {t("home.form.difficulty")}
                     </span>
                     <select
                       value={form.difficulty}
@@ -232,14 +239,16 @@ export default function HomePage() {
                       }
                       className="select w-full"
                     >
-                      <option value="beginner">入门</option>
-                      <option value="intermediate">进阶</option>
-                      <option value="advanced">高级</option>
+                      <option value="beginner">{difficultyLabel("beginner")}</option>
+                      <option value="intermediate">
+                        {difficultyLabel("intermediate")}
+                      </option>
+                      <option value="advanced">{difficultyLabel("advanced")}</option>
                     </select>
                   </label>
                   <label>
                     <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      内容语言
+                      {t("home.form.language")}
                     </span>
                     <select
                       value={form.language}
@@ -248,9 +257,11 @@ export default function HomePage() {
                       }
                       className="select w-full"
                     >
-                      <option value="zh">中文</option>
-                      <option value="en">English</option>
-                      <option value="bilingual">中英对照</option>
+                      <option value="zh">{t("home.form.languageZh")}</option>
+                      <option value="en">{t("home.form.languageEn")}</option>
+                      <option value="bilingual">
+                        {t("home.form.languageBilingual")}
+                      </option>
                     </select>
                   </label>
                 </div>
@@ -271,7 +282,7 @@ export default function HomePage() {
                   onClick={() => setFormOpen(false)}
                   className="btn btn-ghost"
                 >
-                  取消
+                  {t("common.cancel")}
                 </button>
                 <button
                   type="submit"
@@ -283,7 +294,7 @@ export default function HomePage() {
                   ) : (
                     <Plus size={14} />
                   )}
-                  创建课程
+                  {t("home.form.submit")}
                 </button>
               </div>
             </form>
@@ -298,7 +309,7 @@ export default function HomePage() {
           <button
             type="button"
             onClick={() => setError("")}
-            aria-label="关闭错误提示"
+            aria-label={t("common.close")}
             className="text-rose-400 transition hover:text-rose-600"
           >
             <X size={13} />
@@ -310,14 +321,14 @@ export default function HomePage() {
         <div className="mb-3 flex items-end justify-between px-1">
           <div>
             <h2 className="text-sm font-semibold tracking-tight text-slate-800 dark:text-slate-100">
-              课程库
+              {t("home.libraryTitle")}
             </h2>
             <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-              每门课都是可以继续追问与改写的活文档
+              {t("home.libraryDesc")}
             </p>
           </div>
           <span className="text-[11px] text-slate-400 dark:text-slate-500">
-            {courses.length} 门
+            {t("home.courseCount", { count: courses.length })}
           </span>
         </div>
 
@@ -336,10 +347,10 @@ export default function HomePage() {
               <BookOpen size={20} />
             </div>
             <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-200">
-              还没有课程
+              {t("home.emptyTitle")}
             </p>
             <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-              先从主题建一门课，添加第一讲，让 AI 基于知识库证据生成正文。
+              {t("home.emptyDesc")}
             </p>
             <button
               type="button"
@@ -347,7 +358,7 @@ export default function HomePage() {
               className="btn btn-primary mt-4"
             >
               <Plus size={14} />
-              新建第一门课程
+              {t("home.createFirst")}
             </button>
           </div>
         ) : (
@@ -366,7 +377,7 @@ export default function HomePage() {
                   <span className="chip">{difficultyLabel(course.difficulty)}</span>
                   {visibleCourseIds !== "all" &&
                   visibleCourseIds.includes(course.id) ? (
-                    <span className="chip">授权可见</span>
+                    <span className="chip">{t("home.restricted")}</span>
                   ) : null}
                   <span className="text-[10px] text-slate-400 dark:text-slate-500">
                     {formatRelative(course.updated_at)}
@@ -376,15 +387,15 @@ export default function HomePage() {
                   {course.title}
                 </h3>
                 <p className="relative mt-1.5 line-clamp-2 min-h-[2.5rem] text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">
-                  {course.subtitle || "尚未填写副标题"}
+                  {course.subtitle || t("home.noSubtitle")}
                 </p>
                 <div className="relative mt-5 flex items-center justify-between border-t border-slate-200/60 pt-3 text-[11px] text-slate-400 dark:border-white/10 dark:text-slate-500">
                   <span className="inline-flex items-center gap-1.5">
                     <BookOpen size={12} />
-                    {course.audience || "通用受众"}
+                    {course.audience || t("home.genericAudience")}
                   </span>
                   <span className="inline-flex items-center gap-1 text-indigo-500 opacity-0 transition group-hover:opacity-100 dark:text-indigo-300">
-                    打开
+                    {t("home.open")}
                     <ArrowUpRight size={12} />
                   </span>
                 </div>
