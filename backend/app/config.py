@@ -22,7 +22,7 @@ ENV_PREFIX = "COURSE_STUDIO_"
 DATABASE_BACKENDS = ("sqlite", "postgres")
 STORAGE_BACKENDS = ("local", "s3", "rustfs")
 LLM_BACKENDS = ("openai_compat", "dummy")
-VECTORSTORE_BACKENDS = ("simple", "pgvector")
+VECTORSTORE_BACKENDS = ("simple", "postgres", "pgvector")
 EXPORTER_BACKENDS = ("builtin",)
 PARSER_BACKENDS = ("builtin",)
 EMBEDDING_BACKENDS = ("none", "openai_compat")
@@ -127,6 +127,8 @@ class VectorStoreConfig:
     backend: str = "simple"
     path: str = "data/vectorstore"
     min_score: float = 0.15
+    dsn: str = ""
+    pool_size: int = 8
 
     @classmethod
     def from_env(cls) -> "VectorStoreConfig":
@@ -134,6 +136,8 @@ class VectorStoreConfig:
             backend=_env("VECTORSTORE_BACKEND", "simple"),
             path=_env("VECTORSTORE_PATH", "data/vectorstore"),
             min_score=float(_env("SEARCH_MIN_SCORE", "0.15") or 0.15),
+            dsn=_env("VECTORSTORE_DSN", "") or _env("DATABASE_DSN", ""),
+            pool_size=int(_env("VECTORSTORE_POOL_SIZE", "8") or 8),
         )
 
 
@@ -332,7 +336,7 @@ class JobsConfig:
         return cls(
             queue_backend=_env("QUEUE_BACKEND", "local") or "local",
             redis_url=_env("REDIS_URL", ""),
-            concurrency=max(1, int(_env("JOB_CONCURRENCY", "2") or 2)),
+            concurrency=max(0, int(_env("JOB_CONCURRENCY", "2") or 2)),
             sse_interval=max(0.1, float(_env("JOB_SSE_INTERVAL", "0.6") or 0.6)),
             sse_max_seconds=max(10.0, float(_env("JOB_SSE_MAX_SECONDS", "600") or 600)),
             sse_ping_seconds=max(1.0, float(_env("JOB_SSE_PING_SECONDS", "15") or 15)),

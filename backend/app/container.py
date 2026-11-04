@@ -163,13 +163,24 @@ class Container:
 
     def vectorstore(self) -> VectorStore:
         def build() -> VectorStore:
-            backend = self.settings.vectorstore.backend
-            if backend == "simple":
+            settings = self.settings.vectorstore
+            backend = (settings.backend or "simple").strip().lower()
+            if backend in ("simple", ""):
                 from app.adapters.vectorstore.simple import SimpleVectorStore
 
                 return SimpleVectorStore(
-                    path=self.settings.vectorstore.path,
+                    path=settings.path,
                     embedder=self.embedder(),
+                )
+            if backend in ("postgres", "postgresql", "pg"):
+                from app.adapters.database.postgres import PostgresDatabase
+                from app.adapters.vectorstore.postgres import PostgresVectorStore
+
+                dsn = settings.dsn or self.settings.database.dsn
+                if not dsn:
+                    raise ValueError("postgres 向量库需要 COURSE_STUDIO_VECTORSTORE_DSN")
+                return PostgresVectorStore(
+                    database=PostgresDatabase(dsn=dsn, pool_size=settings.pool_size),
                 )
             raise ValueError(f"不支持的 vectorstore backend: {backend!r}")
 

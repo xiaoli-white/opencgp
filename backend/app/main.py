@@ -360,6 +360,15 @@ def health() -> dict[str, Any]:
             adapters["storage"]["error"] = error
     except Exception:
         pass
+    try:
+        adapters["vectorstore"]["backend"] = (
+            settings.vectorstore.backend or "simple"
+        ).strip().lower()
+        warning = getattr(container.vectorstore(), "last_warning", "")
+        if warning:
+            adapters["vectorstore"]["warning"] = warning
+    except Exception:
+        pass
 
     all_ok = all(v["ok"] for v in adapters.values())
     try:

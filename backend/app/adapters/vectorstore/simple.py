@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import sqlite3
 import threading
 import time
@@ -14,10 +13,16 @@ from app.models.chunk import Chunk
 from app.models.citation import Citation
 from app.ports.embedding import EmbeddingProvider
 from app.ports.vectorstore import VectorStore
-from app.services.textproc import coverage, index_tokens, make_snippet, query_terms
-
-COVERAGE_FLOOR = 0.15
-LIKE_MATCH_SCORE = 0.75
+from app.services.scoring import (
+    LIKE_MATCH_SCORE,
+    blend,
+    clip01,
+    cosine,
+    rank_with_coverage,
+    select_top,
+    term_score,
+)
+from app.services.textproc import index_tokens, make_snippet, query_terms
 
 _SCHEMA = (
     """
@@ -321,12 +326,14 @@ class SimpleVectorStore(VectorStore):
             scores = keyword_scores
         else:
             vector_scores = self._vector_scores(conn, query_vector, limit, source_ids)
-            scores = self._blend(keyword_scores, _clip01(vector_scores))
+            scores = blend(keyword_scores, clip01(vector_scores), self.keyword_weight)
         scores = self._scope_scores(conn, scores, tenant_id)
-        ranked, covs = self._rank(conn, scores, terms)
-        citations = self._build_citations(
-            conn, self._select(ranked, covs, top_k), terms
+        texts = self._texts(conn, list(scores))
+        ranked, covs = rank_with_coverage(scores, texts, terms)
+        selected = select_top(
+            ranked, covs, top_k, self.min_relative_score, self.min_relative_coverage
         )
+        citations = self._build_citations(conn, selected, terms)
         if min_score is not None:
             threshold = float(min_score)
             citations = [item for item in citations if item.score >= threshold]
@@ -349,41 +356,6 @@ class SimpleVectorStore(VectorStore):
         ).fetchall()
         allowed = {row["id"] for row in rows}
         return {key: value for key, value in scores.items() if key in allowed}
-
-    def _rank(
-        self,
-        conn: sqlite3.Connection,
-        scores: dict[str, float],
-        terms: Sequence[str],
-    ) -> tuple[list[tuple[str, float]], dict[str, float]]:
-        ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
-        texts = self._texts(conn, [chunk_id for chunk_id, _ in ranked])
-        covs = {
-            chunk_id: coverage(terms, texts.get(chunk_id, ""))
-            for chunk_id, _ in ranked
-        }
-        return ranked, covs
-
-    def _select(
-        self,
-        ranked: Sequence[tuple[str, float]],
-        covs: dict[str, float],
-        top_k: int,
-    ) -> list[tuple[str, float]]:
-        if not ranked:
-            return []
-        best_score = ranked[0][1]
-        best_cov = max(covs.values()) if covs else 0.0
-        kept: list[tuple[str, float]] = [ranked[0]]
-        for chunk_id, score in ranked[1:]:
-            if len(kept) >= top_k:
-                break
-            if best_score > 0 and score < best_score * self.min_relative_score:
-                continue
-            if best_cov > 0 and covs.get(chunk_id, 0.0) < best_cov * self.min_relative_coverage:
-                continue
-            kept.append((chunk_id, score))
-        return kept
 
     def _keyword_scores(
         self,
@@ -413,14 +385,9 @@ class SimpleVectorStore(VectorStore):
             chunk_id = row["chunk_id"]
             body = texts.get(chunk_id, "")
             raw = max(-float(row["rank"]), 0.0)
-            base = _absolute_score(raw, coverage(terms, body))
-            boosted = (
-                base
-                * _name_boost(terms, names.get(chunk_id, ""))
-                * _length_penalty(body)
-                * _distinctive_factor(terms, body)
+            scores[chunk_id] = term_score(
+                terms, body, names.get(chunk_id, ""), raw
             )
-            scores[chunk_id] = min(1.0, boosted)
         return scores
 
     def _source_names(
@@ -488,20 +455,9 @@ class SimpleVectorStore(VectorStore):
                 vector = json.loads(row["embedding"])
             except (TypeError, ValueError):
                 continue
-            scored[row["id"]] = _cosine(query_vector, vector)
+            scored[row["id"]] = cosine(query_vector, vector)
         top = sorted(scored.items(), key=lambda kv: kv[1], reverse=True)[:limit]
         return dict(top)
-
-    def _blend(
-        self, keyword_scores: dict[str, float], vector_scores: dict[str, float]
-    ) -> dict[str, float]:
-        weight = self.keyword_weight
-        merged: dict[str, float] = {}
-        for chunk_id in set(keyword_scores) | set(vector_scores):
-            merged[chunk_id] = weight * keyword_scores.get(chunk_id, 0.0) + (
-                1.0 - weight
-            ) * vector_scores.get(chunk_id, 0.0)
-        return merged
 
     def _texts(
         self, conn: sqlite3.Connection, chunk_ids: Sequence[str]
@@ -579,61 +535,3 @@ def _load_meta(value: str | None) -> dict:
     except (TypeError, ValueError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
-
-
-def _absolute_score(raw_rank: float, term_coverage: float) -> float:
-    if raw_rank <= 0 or term_coverage <= 0:
-        return 0.0
-    gate = (term_coverage - COVERAGE_FLOOR) / (1.0 - COVERAGE_FLOOR)
-    if gate <= 0:
-        return 0.0
-    return min(1.0, gate) * (0.6 + 0.4 * (raw_rank / (1.0 + raw_rank)))
-
-
-def _name_boost(terms: Sequence[str], source_name: str) -> float:
-    if not terms or not source_name:
-        return 1.0
-    hit = sum(1 for term in terms if term and term in source_name)
-    if not hit:
-        return 1.0
-    ratio = hit / max(1, len(terms))
-    return 1.0 + 0.45 * min(1.0, ratio * 2)
-
-
-def _distinctive_factor(terms: Sequence[str], text: str) -> float:
-    distinctive = [term for term in terms if len(term) >= 4 or term.isascii()]
-    if not distinctive:
-        return 1.0
-    lowered = (text or "").lower()
-    matched = sum(1 for term in distinctive if term in lowered)
-    if matched == 0:
-        return 0.3
-    if matched < len(distinctive):
-        return 0.7
-    return 1.0
-
-
-def _length_penalty(text: str) -> float:
-    size = len(text or "")
-    if size < 80:
-        return 0.8
-    if size > 4000:
-        return 0.95
-    return 1.0
-
-
-def _clip01(scores: dict[str, float]) -> dict[str, float]:
-    if not scores:
-        return {}
-    return {key: min(1.0, max(0.0, value)) for key, value in scores.items()}
-
-
-def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
-    if not left or not right or len(left) != len(right):
-        return 0.0
-    dot = sum(a * b for a, b in zip(left, right))
-    left_norm = math.sqrt(sum(a * a for a in left))
-    right_norm = math.sqrt(sum(b * b for b in right))
-    if left_norm == 0 or right_norm == 0:
-        return 0.0
-    return dot / (left_norm * right_norm)

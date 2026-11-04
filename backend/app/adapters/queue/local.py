@@ -9,7 +9,7 @@ class LocalJobQueue:
     name = "local"
 
     def __init__(self, concurrency: int = 2, maxsize: int = 0) -> None:
-        self.concurrency = max(1, int(concurrency or 1))
+        self.concurrency = max(0, int(concurrency or 0))
         self._queue: asyncio.Queue[str] = asyncio.Queue(maxsize=maxsize)
         self._handler: JobHandler | None = None
         self._workers: list[asyncio.Task] = []
@@ -22,6 +22,8 @@ class LocalJobQueue:
     def start(self, handler: JobHandler) -> None:
         self._handler = handler
         self._closed = False
+        if self.concurrency <= 0:
+            return
         loop = asyncio.get_event_loop()
         for index in range(self.concurrency):
             task = loop.create_task(self._worker(index), name=f"job-worker-{index}")

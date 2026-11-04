@@ -35,7 +35,7 @@ class RedisJobQueue:
         stale_seconds: int = STALE_CLAIM_SECONDS,
     ) -> None:
         self.url = url
-        self.concurrency = max(1, int(concurrency or 1))
+        self.concurrency = max(0, int(concurrency or 0))
         self.max_attempts = max(1, int(max_attempts or 1))
         self.brpop_timeout = max(1, int(brpop_timeout or 1))
         self.queue_key = queue_key
@@ -69,6 +69,8 @@ class RedisJobQueue:
         self._handler = handler
         self._closed = False
         self.client()
+        if self.concurrency <= 0:
+            return
         loop = asyncio.get_event_loop()
         for index in range(self.concurrency):
             task = loop.create_task(self._worker(index), name=f"redis-job-worker-{index}")
