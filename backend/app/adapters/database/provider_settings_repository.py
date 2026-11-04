@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import time
 from typing import Any, Mapping
 
@@ -22,6 +24,8 @@ SCHEMA: tuple[str, ...] = (
         api_key_cipher TEXT NOT NULL DEFAULT '',
         temperature REAL NOT NULL DEFAULT 0.7,
         max_tokens INTEGER NOT NULL DEFAULT 0,
+        extra_body_json TEXT NOT NULL DEFAULT '{}',
+        extra_headers_json TEXT NOT NULL DEFAULT '{}',
         updated_at REAL NOT NULL DEFAULT 0
     )
     """,
@@ -32,17 +36,39 @@ COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+def _load_json(raw: Any) -> dict[str, Any]:
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        value = json.loads(str(raw))
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _dump_json(value: Any) -> str:
+    return json.dumps(value or {}, ensure_ascii=False)
+
+
 def _to_setting(row: Mapping[str, Any]) -> ProviderSetting:
+    data = dict(row)
     return ProviderSetting(
-        user_id=row["user_id"],
-        provider_id=row["provider_id"] or "",
-        backend=row["backend"] or "",
-        base_url=row["base_url"] or "",
-        model=row["model"] or "",
-        api_key_cipher=row["api_key_cipher"] or "",
-        temperature=float(row["temperature"] or DEFAULT_TEMPERATURE),
-        max_tokens=int(row["max_tokens"] or DEFAULT_MAX_TOKENS),
-        updated_at=float(row["updated_at"] or 0.0),
+        user_id=data["user_id"],
+        provider_id=data["provider_id"] or "",
+        backend=data["backend"] or "",
+        base_url=data["base_url"] or "",
+        model=data["model"] or "",
+        api_key_cipher=data["api_key_cipher"] or "",
+        temperature=float(data["temperature"] or DEFAULT_TEMPERATURE),
+        max_tokens=int(data["max_tokens"] or DEFAULT_MAX_TOKENS),
+        extra_body=_load_json(data.get("extra_body_json")),
+        extra_headers={
+            str(key): str(value)
+            for key, value in _load_json(data.get("extra_headers_json")).items()
+        },
+        updated_at=float(data["updated_at"] or 0.0),
     )
 
 
@@ -50,6 +76,11 @@ class DatabaseProviderSettingsRepository(ProviderSettingsRepository):
     def __init__(self, database: Database) -> None:
         self.database = database
         self._schema_ready = False
+
+    MIGRATIONS = (
+        ("user_provider_settings", "extra_body_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("user_provider_settings", "extra_headers_json", "TEXT NOT NULL DEFAULT '{}'"),
+    )
 
     def ensure_schema(self) -> None:
         if self._schema_ready:
@@ -63,6 +94,13 @@ class DatabaseProviderSettingsRepository(ProviderSettingsRepository):
             }
             if not columns:
                 continue
+            if column not in columns:
+                self.database.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        for table, column, ddl in self.MIGRATIONS:
+            columns = {
+                str(row["name"])
+                for row in self.database.fetchall(f"PRAGMA table_info({table})")
+            }
             if column not in columns:
                 self.database.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         self._schema_ready = True
@@ -83,8 +121,8 @@ class DatabaseProviderSettingsRepository(ProviderSettingsRepository):
             """
             INSERT INTO user_provider_settings
                 (user_id, provider_id, backend, base_url, model, api_key_cipher,
-                 temperature, max_tokens, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 temperature, max_tokens, extra_body_json, extra_headers_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 provider_id = excluded.provider_id,
                 backend = excluded.backend,
@@ -93,6 +131,8 @@ class DatabaseProviderSettingsRepository(ProviderSettingsRepository):
                 api_key_cipher = excluded.api_key_cipher,
                 temperature = excluded.temperature,
                 max_tokens = excluded.max_tokens,
+                extra_body_json = excluded.extra_body_json,
+                extra_headers_json = excluded.extra_headers_json,
                 updated_at = excluded.updated_at
             """,
             (
@@ -104,6 +144,8 @@ class DatabaseProviderSettingsRepository(ProviderSettingsRepository):
                 payload.api_key_cipher,
                 payload.temperature,
                 payload.max_tokens,
+                _dump_json(payload.extra_body),
+                _dump_json(payload.extra_headers),
                 payload.updated_at,
             ),
         )

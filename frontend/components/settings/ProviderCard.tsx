@@ -32,6 +32,9 @@ type FormState = {
   api_key: string;
   temperature: string;
   max_tokens: string;
+  extra_headers: string;
+  extra_body: string;
+  disable_reasoning: boolean;
 };
 
 function toForm(data: ProviderSettings): FormState {
@@ -46,6 +49,11 @@ function toForm(data: ProviderSettings): FormState {
     api_key: "",
     temperature: String(data.temperature ?? 0.7),
     max_tokens: String(data.max_tokens && data.max_tokens > 0 ? data.max_tokens : 2048),
+    extra_headers: JSON.stringify(data.extra_headers ?? {}, null, 0),
+    extra_body: JSON.stringify(data.extra_body ?? {}, null, 0),
+    disable_reasoning:
+      (data.extra_body as { thinking?: { type?: string } } | undefined)?.thinking?.type ===
+      "disabled",
   };
 }
 
@@ -227,12 +235,25 @@ export default function ProviderCard({
     setBusy(true);
     setTest(null);
     try {
+      let parsedHeaders: Record<string, string> = {};
+      let parsedBody: Record<string, unknown> = {};
+      try {
+        parsedHeaders = form.extra_headers.trim() ? JSON.parse(form.extra_headers) : {};
+        parsedBody = form.extra_body.trim() ? JSON.parse(form.extra_body) : {};
+      } catch {
+        onError("请求头或请求参数不是合法 JSON");
+        setBusy(false);
+        return null;
+      }
       const payload = {
         provider_id: form.provider_id || undefined,
         model: form.model.trim(),
         api_key: form.api_key.trim(),
         temperature: Number(form.temperature) || 0,
         max_tokens: Math.max(1, Number(form.max_tokens) || 1),
+        extra_headers: parsedHeaders,
+        extra_body: parsedBody,
+        disable_reasoning: form.disable_reasoning,
       };
       const next = await api.saveProviderSettings(payload);
       setData(next);
@@ -449,6 +470,54 @@ export default function ProviderCard({
                 className="input"
               />
             </label>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-200/70 bg-white/50 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                高级请求参数（可选）
+              </span>
+              <label className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={form.disable_reasoning}
+                  onChange={(event) => update({ disable_reasoning: event.target.checked })}
+                  disabled={disabled}
+                />
+                关闭推理（thinking.type=disabled）
+              </label>
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-[10px] uppercase tracking-[0.14em] text-slate-400">
+                  请求头 JSON
+                </span>
+                <textarea
+                  rows={3}
+                  value={form.extra_headers}
+                  onChange={(event) => update({ extra_headers: event.target.value })}
+                  disabled={disabled}
+                  placeholder='{"X-Custom": "1"}'
+                  className="input font-mono text-[11px]"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[10px] uppercase tracking-[0.14em] text-slate-400">
+                  请求体 JSON
+                </span>
+                <textarea
+                  rows={3}
+                  value={form.extra_body}
+                  onChange={(event) => update({ extra_body: event.target.value })}
+                  disabled={disabled}
+                  placeholder='{"reasoning_effort": "none"}'
+                  className="input font-mono text-[11px]"
+                />
+              </label>
+            </div>
+            <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
+              参数会原样合并进每次模型请求；关闭推理会自动写入 {"{"}"thinking":{"{"}"type":"disabled"{"}"}{"}"}。
+            </p>
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">

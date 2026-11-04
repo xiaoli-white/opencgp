@@ -1765,6 +1765,9 @@ class ProviderSettingsRequest(BaseModel):
     api_key: str | None = None
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=0, le=200000)
+    extra_body: dict[str, Any] | None = None
+    extra_headers: dict[str, str] | None = None
+    disable_reasoning: bool | None = None
 
 
 class ProviderCreateRequest(BaseModel):
@@ -2090,6 +2093,13 @@ def update_provider_settings(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
+    extra_body = dict(req.extra_body or {}) if req.extra_body is not None else None
+    if req.disable_reasoning is not None:
+        extra_body = dict(extra_body or {})
+        if req.disable_reasoning:
+            extra_body["thinking"] = {"type": "disabled"}
+        else:
+            extra_body.pop("thinking", None)
     try:
         return container.provider_settings().save(
             ctx.user.id,
@@ -2100,6 +2110,8 @@ def update_provider_settings(
             req.temperature,
             req.max_tokens,
             req.provider_id,
+            extra_body,
+            req.extra_headers,
         )
     except ProviderNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

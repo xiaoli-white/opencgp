@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import hashlib
 import time
 from dataclasses import dataclass, field
@@ -48,6 +50,8 @@ class ResolvedProvider:
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: int = DEFAULT_MAX_TOKENS
     models: list[str] = field(default_factory=list)
+    extra_body: dict[str, Any] = field(default_factory=dict)
+    extra_headers: dict[str, str] = field(default_factory=dict)
     updated_at: float = 0.0
 
     @property
@@ -233,6 +237,14 @@ class ProviderSettingsService:
 
     def resolve(self, user_id: str) -> ResolvedProvider:
         setting = self._setting(user_id)
+        resolved = self._resolve_core(user_id)
+        if setting is not None:
+            resolved.extra_body = dict(setting.extra_body or {})
+            resolved.extra_headers = dict(setting.extra_headers or {})
+        return resolved
+
+    def _resolve_core(self, user_id: str) -> ResolvedProvider:
+        setting = self._setting(user_id)
         user_key = self._user_key(setting)
         temperature = setting.temperature if setting else DEFAULT_TEMPERATURE
         max_tokens = setting.max_tokens if setting else DEFAULT_MAX_TOKENS
@@ -345,6 +357,8 @@ class ProviderSettingsService:
             "max_tokens": resolved.max_tokens,
             "has_key": resolved.has_key,
             "api_key_masked": mask_secret(resolved.api_key),
+            "extra_body": dict(resolved.extra_body),
+            "extra_headers": dict(resolved.extra_headers),
             "updated_at": resolved.updated_at,
             "providers": self.options(user_id),
             "server": self._server_payload(),
@@ -360,6 +374,8 @@ class ProviderSettingsService:
         temperature: float | None = None,
         max_tokens: int | None = None,
         provider_id: str | None = None,
+        extra_body: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         existing = self._setting(user_id)
         cipher = existing.api_key_cipher if existing is not None else ""
@@ -416,6 +432,16 @@ class ProviderSettingsService:
                 if max_tokens is not None
                 else (existing.max_tokens if existing else DEFAULT_MAX_TOKENS)
             ),
+            extra_body=(
+                dict(extra_body)
+                if extra_body is not None
+                else (dict(existing.extra_body) if existing else {})
+            ),
+            extra_headers=(
+                {str(k): str(v) for k, v in (extra_headers or {}).items()}
+                if extra_headers is not None
+                else (dict(existing.extra_headers) if existing else {})
+            ),
             updated_at=time.time(),
         )
         self.repository.save(setting)
@@ -441,6 +467,8 @@ class ProviderSettingsService:
             digest,
             resolved.temperature,
             resolved.max_tokens,
+            json.dumps(resolved.extra_body, sort_keys=True, ensure_ascii=False),
+            json.dumps(resolved.extra_headers, sort_keys=True, ensure_ascii=False),
             resolved.updated_at,
         )
 
@@ -460,4 +488,6 @@ class ProviderSettingsService:
                 else SERVER_TEMPERATURE
             ),
             max_tokens=resolved.max_tokens or SERVER_MAX_TOKENS,
+            extra_body=resolved.extra_body,
+            extra_headers=resolved.extra_headers,
         )

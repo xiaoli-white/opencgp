@@ -328,6 +328,8 @@ export type ProviderSettings = {
   providers?: ProviderOption[];
   temperature: number;
   max_tokens: number;
+  extra_body?: Record<string, unknown>;
+  extra_headers?: Record<string, string>;
   has_key: boolean;
   api_key_masked: string;
   updated_at?: number | string | null;
@@ -342,6 +344,9 @@ export type ProviderPayload = {
   max_tokens?: number;
   backend?: string;
   base_url?: string;
+  extra_body?: Record<string, unknown>;
+  extra_headers?: Record<string, string>;
+  disable_reasoning?: boolean;
 };
 
 export type ServerProviderPayload = {

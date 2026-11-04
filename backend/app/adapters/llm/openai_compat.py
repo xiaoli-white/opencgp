@@ -18,6 +18,8 @@ class OpenAICompatLLM(LLMProvider):
         timeout: float = 60.0,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        extra_body: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         self.base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
         self.api_key = api_key
@@ -25,8 +27,12 @@ class OpenAICompatLLM(LLMProvider):
         self.timeout = timeout
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.extra_body = dict(extra_body or {})
+        self.extra_headers = dict(extra_headers or {})
 
     def _apply_defaults(self, payload: dict[str, Any]) -> dict[str, Any]:
+        for key, value in self.extra_body.items():
+            payload.setdefault(key, value)
         if self.temperature is not None and "temperature" not in payload:
             payload["temperature"] = float(self.temperature)
         if self.max_tokens and self.max_tokens > 0 and "max_tokens" not in payload:
@@ -37,10 +43,14 @@ class OpenAICompatLLM(LLMProvider):
         return f"{self.base_url}/chat/completions"
 
     def _headers(self) -> dict[str, str]:
-        return {
+        headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        for key, value in self.extra_headers.items():
+            if str(key).strip():
+                headers[str(key)] = str(value)
+        return headers
 
     def _messages(
         self, prompt: str, kwargs: dict[str, Any]
