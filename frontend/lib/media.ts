@@ -1,5 +1,6 @@
 import type { MediaAsset } from "@/lib/api";
 import { API_BASE } from "@/lib/api";
+import { getActiveTranslate } from "@/i18n/labels";
 
 export function assetSrc(asset: MediaAsset): string {
   const url = asset.url || `/api/v1/media/${asset.id}`;
@@ -7,12 +8,13 @@ export function assetSrc(asset: MediaAsset): string {
 }
 
 export function assetMarkdown(asset: MediaAsset): string {
-  const alt = (asset.prompt || asset.kind || "图片")
+  const fallback = getActiveTranslate()("media.imageAlt");
+  const alt = (asset.prompt || asset.kind || fallback)
     .replace(/[\r\n]+/g, " ")
     .replace(/[[\]]/g, "")
     .slice(0, 60)
     .trim();
-  return `![${alt || "图片"}](/api/v1/media/${asset.id})`;
+  return `![${alt || fallback}](/api/v1/media/${asset.id})`;
 }
 
 export function formatBytes(bytes: number): string {
@@ -31,15 +33,4 @@ export function formatStamp(value: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
     date.getHours(),
   )}:${pad(date.getMinutes())}`;
-}
-
-export const MEDIA_KIND_LABEL: Record<string, string> = {
-  generated: "生成",
-  generate: "生成",
-  upload: "上传",
-  uploaded: "上传",
-};
-
-export function mediaKindLabel(kind: string): string {
-  return MEDIA_KIND_LABEL[kind] ?? kind ?? "图片";
 }

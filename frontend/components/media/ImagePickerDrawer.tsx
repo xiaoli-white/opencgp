@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Loader2, X } from "lucide-react";
 import { api, type Longform, type MediaAsset } from "@/lib/api";
 import { assetMarkdown, assetSrc, formatBytes } from "@/lib/media";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type ImagePickerDrawerProps = {
   open: boolean;
@@ -17,6 +18,7 @@ export default function ImagePickerDrawer({
   onClose,
   onInserted,
 }: ImagePickerDrawerProps) {
+  const { t } = useI18n();
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -35,7 +37,8 @@ export default function ImagePickerDrawer({
         if (alive) setAssets(data.assets);
       })
       .catch((err) => {
-        if (alive) setError(err instanceof Error ? err.message : "图片加载失败");
+        if (alive)
+          setError(err instanceof Error ? err.message : t("media.loadFailed"));
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -53,18 +56,18 @@ export default function ImagePickerDrawer({
       try {
         const fresh = await api.getLongform(longform.id);
         const section = fresh.outline.find((item) => item.id === sectionId);
-        if (!section) throw new Error("章节不存在");
+        if (!section) throw new Error(t("media.sectionMissing"));
         const merged = `${section.content ?? ""}\n\n${assetMarkdown(asset)}\n`.trim();
         await api.updateLongformSection(fresh.id, sectionId, { content: merged });
-        onInserted(`图片已插入 · ${section.title}`);
+        onInserted(t("media.insertedSection", { section: section.title }));
         onClose();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "插入失败");
+        setError(err instanceof Error ? err.message : t("media.insertFailed"));
       } finally {
         setBusyId("");
       }
     },
-    [longform, sectionId, onInserted, onClose],
+    [longform, sectionId, onInserted, onClose, t],
   );
 
   return (
@@ -88,17 +91,17 @@ export default function ImagePickerDrawer({
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                  插入图片
+                  {t("media.pickerTitle")}
                 </h2>
                 <p className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-                  图片以 Markdown 追加到所选章节末尾
+                  {t("media.pickerSubtitle")}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={onClose}
                 className="btn-quiet grid h-8 w-8 shrink-0 place-items-center rounded-full"
-                aria-label="关闭"
+                aria-label={t("common.close")}
               >
                 <X size={14} />
               </button>
@@ -106,14 +109,16 @@ export default function ImagePickerDrawer({
 
             <label className="mt-3 block">
               <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                章节
+                {t("media.fieldSection")}
               </span>
               <select
                 value={sectionId}
                 onChange={(event) => setSectionId(event.target.value)}
                 className="select w-full"
               >
-                {longform?.outline.length ? null : <option value="">暂无章节</option>}
+                {longform?.outline.length ? null : (
+                  <option value="">{t("media.noSections")}</option>
+                )}
                 {longform?.outline.map((section, index) => (
                   <option key={section.id} value={section.id}>
                     {index + 1}. {section.title}
@@ -134,7 +139,7 @@ export default function ImagePickerDrawer({
               </div>
             ) : assets.length === 0 ? (
               <p className="mt-6 rounded-2xl border border-dashed border-white/60 p-6 text-center text-[11px] text-slate-400 dark:border-white/10 dark:text-slate-500">
-                图片库为空，先去「图片库」页上传或生成图片
+                {t("media.emptyLibrary")}
               </p>
             ) : (
               <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -149,7 +154,7 @@ export default function ImagePickerDrawer({
                     <span className="block aspect-[4/3] overflow-hidden bg-slate-500/5">
                       <img
                         src={assetSrc(asset)}
-                        alt={asset.prompt || asset.id}
+                        alt={asset.prompt || t("media.imageAlt")}
                         loading="lazy"
                         className="h-full w-full object-cover"
                       />
@@ -157,7 +162,8 @@ export default function ImagePickerDrawer({
                     <span className="block px-1.5 py-1 text-[10px] text-slate-500 dark:text-slate-400">
                       {busyId === asset.id ? (
                         <span className="flex items-center gap-1">
-                          <Loader2 size={10} className="animate-spin" /> 插入中…
+                          <Loader2 size={10} className="animate-spin" />{" "}
+                          {t("media.inserting")}
                         </span>
                       ) : (
                         <span className="block truncate">

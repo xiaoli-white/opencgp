@@ -1,6 +1,16 @@
 export function formatDateTime(timestamp: number): string {
   if (!timestamp) return "—";
   const date = new Date(timestamp * 1000);
+  if (formatLocale === "en") {
+    return new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(date);
+  }
   return date.toLocaleString("zh-CN", {
     year: "numeric",
     month: "2-digit",
@@ -32,6 +42,13 @@ export function formatRelative(timestamp: number): string {
   if (diff < 86400 * 30) {
     const n = Math.floor(diff / 86400);
     return en ? `${n} d ago` : `${n} 天前`;
+  }
+  if (formatLocale === "en") {
+    return new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    }).format(new Date(timestamp * 1000));
   }
   return formatDateTime(timestamp).slice(0, 10);
 }

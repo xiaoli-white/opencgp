@@ -928,21 +928,6 @@ export async function uploadMediaFile(file: File): Promise<MediaAsset> {
   return (await response.json()) as MediaAsset;
 }
 
-export type CreationProfile = {
-  id: string;
-  name: string;
-  genre: string;
-  tone: string;
-  audience: string;
-  pov: string;
-  citation_policy: string;
-  target_words: number;
-  is_shared: boolean;
-  is_owner: boolean;
-  created_at?: number;
-  updated_at?: number;
-};
-
 export type ProfileMetaSpec = {
   name?: string;
   description?: string;
@@ -1864,49 +1849,6 @@ export const api = {
     request<Longform>(`/api/v1/longforms/${longformId}/sections/reorder`, {
       method: "POST",
       body: JSON.stringify({ section_ids: sectionIds }),
-    }),
-
-  listCreationProfiles: () =>
-    request<{ count: number; profiles: CreationProfile[] }>(
-      "/api/v1/creation-profiles",
-    ),
-
-  createCreationProfile: (payload: {
-    name: string;
-    genre?: string;
-    tone?: string;
-    audience?: string;
-    pov?: string;
-    citation_policy?: string;
-    target_words?: number;
-    is_shared?: boolean;
-  }) =>
-    request<CreationProfile>("/api/v1/creation-profiles", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  updateCreationProfile: (
-    profileId: string,
-    payload: {
-      name?: string;
-      genre?: string;
-      tone?: string;
-      audience?: string;
-      pov?: string;
-      citation_policy?: string;
-      target_words?: number;
-      is_shared?: boolean;
-    },
-  ) =>
-    request<CreationProfile>(`/api/v1/creation-profiles/${profileId}`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    }),
-
-  deleteCreationProfile: (profileId: string) =>
-    request<{ ok?: boolean }>(`/api/v1/creation-profiles/${profileId}`, {
-      method: "DELETE",
     }),
 
   listWorkProfiles: () =>

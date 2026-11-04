@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { api, type Longform, type MediaAsset } from "@/lib/api";
 import { assetMarkdown, assetSrc } from "@/lib/media";
+import { useI18n } from "@/i18n/I18nProvider";
 import { Modal } from "@/components/common/Dialogs";
 
 type ImageInsertDialogProps = {
@@ -19,6 +20,7 @@ export default function ImageInsertDialog({
   onClose,
   onInserted,
 }: ImageInsertDialogProps) {
+  const { t } = useI18n();
   const [longforms, setLongforms] = useState<Longform[]>([]);
   const [longformId, setLongformId] = useState(lockedLongformId ?? "");
   const [detail, setDetail] = useState<Longform | null>(null);
@@ -44,7 +46,10 @@ export default function ImageInsertDialog({
         setLongformId((current) => current || data.longforms[0]?.id || "");
       })
       .catch((err) => {
-        if (alive) setError(err instanceof Error ? err.message : "长篇列表加载失败");
+        if (alive)
+          setError(
+            err instanceof Error ? err.message : t("media.longformsLoadFailed"),
+          );
       });
     return () => {
       alive = false;
@@ -68,7 +73,10 @@ export default function ImageInsertDialog({
         });
       })
       .catch((err) => {
-        if (alive) setError(err instanceof Error ? err.message : "长篇详情加载失败");
+        if (alive)
+          setError(
+            err instanceof Error ? err.message : t("media.longformLoadFailed"),
+          );
       });
     return () => {
       alive = false;
@@ -82,13 +90,15 @@ export default function ImageInsertDialog({
     try {
       const fresh = await api.getLongform(longformId);
       const section = fresh.outline.find((item) => item.id === sectionId);
-      if (!section) throw new Error("章节不存在");
+      if (!section) throw new Error(t("media.sectionMissing"));
       const merged = `${section.content ?? ""}\n\n${assetMarkdown(asset)}\n`.trim();
       await api.updateLongformSection(longformId, sectionId, { content: merged });
-      onInserted(`图片已插入《${fresh.title}》· ${section.title}`);
+      onInserted(
+        t("media.inserted", { title: fresh.title, section: section.title }),
+      );
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "插入失败");
+      setError(err instanceof Error ? err.message : t("media.insertFailed"));
     } finally {
       setBusy(false);
     }
@@ -97,8 +107,8 @@ export default function ImageInsertDialog({
   return (
     <Modal
       open={open}
-      title="插入图片到长篇"
-      subtitle="选择目标长篇与章节，图片以 Markdown 语法追加到该节末尾"
+      title={t("media.insertTitle")}
+      subtitle={t("media.insertSubtitle")}
       onClose={onClose}
     >
       <div className="space-y-3">
@@ -106,7 +116,7 @@ export default function ImageInsertDialog({
           <div className="flex items-center gap-2.5 rounded-2xl border border-white/50 bg-white/50 p-2 dark:border-white/10 dark:bg-white/[0.04]">
             <img
               src={assetSrc(asset)}
-              alt={asset.prompt || "图片"}
+              alt={asset.prompt || t("media.imageAlt")}
               className="h-12 w-16 shrink-0 rounded-xl object-cover"
             />
             <p className="min-w-0 flex-1 truncate text-[11px] text-slate-500 dark:text-slate-400">
@@ -118,14 +128,16 @@ export default function ImageInsertDialog({
         {lockedLongformId ? null : (
           <label className="block">
             <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              长篇
+              {t("media.fieldLongform")}
             </span>
             <select
               value={longformId}
               onChange={(event) => setLongformId(event.target.value)}
               className="select w-full"
             >
-              {longforms.length === 0 ? <option value="">暂无长篇</option> : null}
+              {longforms.length === 0 ? (
+                <option value="">{t("media.noLongforms")}</option>
+              ) : null}
               {longforms.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.title}
@@ -137,14 +149,16 @@ export default function ImageInsertDialog({
 
         <label className="block">
           <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-            章节
+            {t("media.fieldSection")}
           </span>
           <select
             value={sectionId}
             onChange={(event) => setSectionId(event.target.value)}
             className="select w-full"
           >
-            {detail?.outline.length ? null : <option value="">请选择章节</option>}
+            {detail?.outline.length ? null : (
+              <option value="">{t("media.selectSection")}</option>
+            )}
             {detail?.outline.map((section, index) => (
               <option key={section.id} value={section.id}>
                 {index + 1}. {section.title}
@@ -161,7 +175,7 @@ export default function ImageInsertDialog({
 
         <div className="flex items-center justify-end gap-2 pt-1">
           <button type="button" onClick={onClose} className="btn btn-quiet">
-            取消
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -170,7 +184,7 @@ export default function ImageInsertDialog({
             className="btn btn-primary"
           >
             {busy ? <Loader2 size={13} className="animate-spin" /> : null}
-            插入
+            {t("media.insert")}
           </button>
         </div>
       </div>

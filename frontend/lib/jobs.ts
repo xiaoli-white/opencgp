@@ -40,23 +40,6 @@ export type JobList = {
   jobs: Job[];
 };
 
-export const JOB_KIND_LABEL: Record<string, string> = {
-  research: "深度研究",
-  longform_create: "长篇创建",
-  longform_generate: "长篇生成",
-  longform_rewrite: "长篇重写",
-  lesson_generate: "讲次生成",
-  blueprint_generate: "蓝图生成",
-};
-
-export const JOB_STATUS_LABEL: Record<string, string> = {
-  queued: "排队中",
-  running: "运行中",
-  succeeded: "成功",
-  failed: "失败",
-  canceled: "已取消",
-};
-
 export function isTerminal(status: string | undefined | null): boolean {
   return status === "succeeded" || status === "failed" || status === "canceled";
 }
