@@ -1,18 +1,24 @@
 {{- if .Values.networkPolicy.enabled }}
 {{- $fullName := include "opencgp.fullname" . }}
 {{- $selector := include "opencgp.selectorLabels" . }}
+{{- $components := list "backend" }}
+{{- if eq .Values.mode "ha" }}
+{{- $components = list "api" "worker" }}
+{{- end }}
+{{- range $component := $components }}
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ $fullName }}-backend
+  name: {{ $fullName }}-{{ $component }}
   labels:
-    {{- include "opencgp.labels" . | nindent 4 }}
-    app.kubernetes.io/component: backend
+    {{- include "opencgp.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
 spec:
   podSelector:
     matchLabels:
       {{- $selector | nindent 6 }}
-      app.kubernetes.io/component: backend
+      app.kubernetes.io/component: {{ $component }}
   policyTypes:
     - Ingress
   ingress:
@@ -23,11 +29,38 @@ spec:
               app.kubernetes.io/component: frontend
         - namespaceSelector:
             matchLabels:
-              {{ .Values.networkPolicy.monitoringNamespaceLabel.key }}: {{ .Values.networkPolicy.monitoringNamespaceLabel.value | quote }}
+              {{ $.Values.networkPolicy.monitoringNamespaceLabel.key }}: {{ $.Values.networkPolicy.monitoringNamespaceLabel.value | quote }}
       ports:
         - protocol: TCP
-          port: {{ .Values.backend.containerPort }}
-{{- if .Values.redis.enabled }}
+          port: {{ $.Values.api.containerPort }}
+{{- end }}
+{{- if include "opencgp.builtinPostgresEnabled" . }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-postgres
+  labels:
+    {{- include "opencgp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  podSelector:
+    matchLabels:
+      {{- $selector | nindent 6 }}
+      app.kubernetes.io/component: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $selector | nindent 14 }}
+              app.kubernetes.io/component: backend
+      ports:
+        - protocol: TCP
+          port: {{ include "opencgp.postgresPort" . }}
+{{- end }}
+{{- if and .Values.redis.enabled (eq $.Values.mode "single") }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -49,11 +82,19 @@ spec:
             matchLabels:
               {{- $selector | nindent 14 }}
               app.kubernetes.io/component: backend
+        - podSelector:
+            matchLabels:
+              {{- $selector | nindent 14 }}
+              app.kubernetes.io/component: api
+        - podSelector:
+            matchLabels:
+              {{- $selector | nindent 14 }}
+              app.kubernetes.io/component: worker
       ports:
         - protocol: TCP
           port: {{ .Values.redis.service.port }}
 {{- end }}
-{{- if .Values.rustfs.enabled }}
+{{- if and .Values.rustfs.enabled (eq $.Values.mode "single") }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -75,6 +116,14 @@ spec:
             matchLabels:
               {{- $selector | nindent 14 }}
               app.kubernetes.io/component: backend
+        - podSelector:
+            matchLabels:
+              {{- $selector | nindent 14 }}
+              app.kubernetes.io/component: api
+        - podSelector:
+            matchLabels:
+              {{- $selector | nindent 14 }}
+              app.kubernetes.io/component: worker
       ports:
         - protocol: TCP
           port: {{ .Values.rustfs.service.port }}

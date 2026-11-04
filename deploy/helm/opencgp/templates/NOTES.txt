@@ -1,24 +1,32 @@
 {{- $fullName := include "opencgp.fullname" . }}
-OpenCGP release {{ .Release.Name }} 已部署到命名空间 {{ .Release.Namespace }}。
+OpenCGP release {{ .Release.Name }} 已部署到命名空间 {{ .Release.Namespace }}（mode={{ .Values.mode }}）。
 
 服务：
   前端  {{ $fullName }}-frontend:{{ .Values.frontend.service.port }}   (nginx 静态站点 + /api 反向代理)
-  后端  {{ $fullName }}-backend:{{ .Values.backend.service.port }}   (FastAPI)
-  {{- if .Values.redis.enabled }}
+{{- if eq .Values.mode "ha" }}
+  API   {{ include "opencgp.apiName" . }}:{{ .Values.api.service.port }}   (FastAPI，JOB_CONCURRENCY=0，replicas={{ .Values.api.replicas }})
+  Worker {{ include "opencgp.workerName" . }}   (无 Service，JOB_CONCURRENCY={{ .Values.worker.jobConcurrency }}，replicas={{ .Values.worker.replicas }})
+{{- else }}
+  后端  {{ $fullName }}-backend:{{ .Values.backend.service.port }}   (FastAPI，API+Worker 合一，JOB_CONCURRENCY={{ .Values.config.jobConcurrency }})
+{{- end }}
+{{- if include "opencgp.builtinPostgresEnabled" . }}
+  PG    {{ include "opencgp.postgresName" . }}:{{ include "opencgp.postgresPort" . }} (内置，仅供单机模式)
+{{- end }}
+{{- if .Values.redis.enabled }}
   Redis {{ $fullName }}-redis:{{ .Values.redis.service.port }} (headless)
-  {{- end }}
-  {{- if .Values.rustfs.enabled }}
+{{- end }}
+{{- if .Values.rustfs.enabled }}
   rustfs {{ $fullName }}-rustfs:{{ .Values.rustfs.service.port }} (console {{ .Values.rustfs.service.consolePort }})
-  {{- end }}
+{{- end }}
 
 本机访问：
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ $fullName }}-frontend 8080:{{ .Values.frontend.service.port }}
   然后打开 http://127.0.0.1:8080
 
 后端直连与健康检查：
-  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ $fullName }}-backend {{ .Values.backend.service.port }}:{{ .Values.backend.service.port }}
-  curl -s http://127.0.0.1:{{ .Values.backend.service.port }}/health
-  curl -s http://127.0.0.1:{{ .Values.backend.service.port }}/metrics | head
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "opencgp.backendHost" . }} {{ .Values.api.service.port }}:{{ .Values.api.service.port }}
+  curl -s http://127.0.0.1:{{ .Values.api.service.port }}/health
+  curl -s http://127.0.0.1:{{ .Values.api.service.port }}/metrics | head
 
 {{- if .Values.ingress.enabled }}
 
@@ -32,8 +40,14 @@ OpenCGP release {{ .Release.Name }} 已部署到命名空间 {{ .Release.Namespa
 
 读取自动生成的敏感配置：
   kubectl -n {{ .Release.Namespace }} get secret {{ include "opencgp.secretName" . }} -o jsonpath='{.data.COURSE_STUDIO_AUTH_SECRET}' | base64 -d
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "opencgp.secretName" . }} -o jsonpath='{.data.COURSE_STUDIO_DATABASE_DSN}' | base64 -d
 
 重要提示：
-  backend.replicas 当前为 {{ .Values.backend.replicas }}；大于 1 时必须使用外部 PostgreSQL + 外部 Redis + 外部对象存储，
-  SQLite 与 ReadWriteOnce PVC 只能单副本。
-  queue backend = {{ .Values.config.queueBackend }}，storage backend = {{ .Values.config.storageBackend }}，executor = {{ .Values.config.executorBackend }}。
+  database backend = {{ .Values.config.databaseBackend }}，queue backend = {{ .Values.config.queueBackend }}，storage backend = {{ .Values.config.storageBackend }}，executor = {{ .Values.config.executorBackend }}。
+{{- if eq .Values.mode "ha" }}
+  HA 模式下所有 API/Worker 实例共用同一个 Redis DB；不要把不同实例指向不同库编号，否则任务会被错误的实例抢走。
+  API 节点 JOB_CONCURRENCY=0 只处理 HTTP，任务全部由 worker-deployment 消费（replicas={{ .Values.worker.replicas }}）。
+{{- else }}
+  单机模式下 backend.replicas 必须为 1（内置 PG/Redis/rustfs 与 PVC 均为单副本）；需要多副本请使用 mode=ha + 外部依赖。
+{{- end }}
+  /metrics 只经 Pod 注解被 Prometheus 抓取，不通过 Ingress 暴露。

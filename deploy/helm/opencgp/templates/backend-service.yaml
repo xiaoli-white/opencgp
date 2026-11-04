@@ -1,3 +1,4 @@
+{{- if eq .Values.mode "single" }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -19,3 +20,4 @@ spec:
   selector:
     {{- include "opencgp.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: backend
+{{- end }}

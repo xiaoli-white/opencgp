@@ -1,31 +1,67 @@
-{{- if .Values.autoscaling.enabled }}
+{{- $api := .Values.api.autoscaling }}
+{{- if $api.enabled }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "opencgp.fullname" . }}-backend
+  name: {{ include "opencgp.apiWorkloadName" . }}
   labels:
     {{- include "opencgp.labels" . | nindent 4 }}
-    app.kubernetes.io/component: backend
+    app.kubernetes.io/component: api
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "opencgp.fullname" . }}-backend
-  minReplicas: {{ .Values.autoscaling.minReplicas }}
-  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+    name: {{ include "opencgp.apiWorkloadName" . }}
+  minReplicas: {{ $api.minReplicas }}
+  maxReplicas: {{ $api.maxReplicas }}
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
-    {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
+          averageUtilization: {{ $api.targetCPUUtilizationPercentage }}
+    {{- if $api.targetMemoryUtilizationPercentage }}
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
-          averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
+          averageUtilization: {{ $api.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}
+{{- if and .Values.worker.autoscaling.enabled (include "opencgp.workerWorkloadEnabled" .) }}
+---
+{{- $worker := .Values.worker.autoscaling }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "opencgp.workerName" . }}
+  labels:
+    {{- include "opencgp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "opencgp.workerName" . }}
+  minReplicas: {{ $worker.minReplicas }}
+  maxReplicas: {{ $worker.maxReplicas }}
+  metrics:
+    {{- if eq $worker.metric "queue" }}
+    - type: Pods
+      pods:
+        metric:
+          name: opencgp_queue_backlog
+        target:
+          type: AverageValue
+          averageValue: {{ $worker.queueBacklogThreshold | quote }}
+    {{- else }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $worker.targetCPUUtilizationPercentage }}
     {{- end }}
 {{- end }}

@@ -1,3 +1,4 @@
+{{- include "opencgp.validate" . -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -14,20 +15,28 @@ data:
   COURSE_STUDIO_LOCK_TTL_SECONDS: {{ .Values.config.lockTtlSeconds | quote }}
   COURSE_STUDIO_DATABASE_BACKEND: {{ .Values.config.databaseBackend | quote }}
   COURSE_STUDIO_DATABASE_PATH: {{ .Values.config.databasePath | quote }}
+  COURSE_STUDIO_DATABASE_POOL_SIZE: {{ .Values.config.databasePoolSize | quote }}
   COURSE_STUDIO_VECTORSTORE_BACKEND: {{ .Values.config.vectorstoreBackend | quote }}
   COURSE_STUDIO_VECTORSTORE_PATH: {{ .Values.config.vectorstorePath | quote }}
   COURSE_STUDIO_STORAGE_BACKEND: {{ .Values.config.storageBackend | quote }}
   COURSE_STUDIO_STORAGE_ROOT: {{ .Values.config.storageRoot | quote }}
   COURSE_STUDIO_S3_ENDPOINT: {{ include "opencgp.s3Endpoint" . | quote }}
-  COURSE_STUDIO_S3_BUCKET: {{ .Values.config.s3Bucket | quote }}
-  COURSE_STUDIO_S3_REGION: {{ .Values.config.s3Region | quote }}
-  COURSE_STUDIO_S3_PREFIX: {{ .Values.config.s3Prefix | quote }}
+  COURSE_STUDIO_S3_BUCKET: {{ include "opencgp.s3Bucket" . | quote }}
+  COURSE_STUDIO_S3_REGION: {{ include "opencgp.s3Region" . | quote }}
+  COURSE_STUDIO_S3_PREFIX: {{ include "opencgp.s3Prefix" . | quote }}
   COURSE_STUDIO_QUEUE_BACKEND: {{ .Values.config.queueBackend | quote }}
   COURSE_STUDIO_REDIS_URL: {{ include "opencgp.redisUrl" . | quote }}
   COURSE_STUDIO_JOB_CONCURRENCY: {{ .Values.config.jobConcurrency | quote }}
   COURSE_STUDIO_JOB_SSE_PING_SECONDS: {{ .Values.config.jobSsePingSeconds | quote }}
   COURSE_STUDIO_EXECUTOR_BACKEND: {{ .Values.config.executorBackend | quote }}
   COURSE_STUDIO_EXEC_TIMEOUT: {{ .Values.config.execTimeout | quote }}
+  COURSE_STUDIO_NOTIFY_BACKEND: {{ .Values.config.notifyBackend | quote }}
+  COURSE_STUDIO_SMTP_HOST: {{ .Values.config.smtpHost | quote }}
+  COURSE_STUDIO_SMTP_PORT: {{ .Values.config.smtpPort | quote }}
+  COURSE_STUDIO_SMTP_USER: {{ .Values.config.smtpUser | quote }}
+  COURSE_STUDIO_SMTP_FROM: {{ .Values.config.smtpFrom | quote }}
+  COURSE_STUDIO_SMTP_TLS: {{ .Values.config.smtpTls | quote }}
+  COURSE_STUDIO_SMTP_TIMEOUT: {{ .Values.config.smtpTimeout | quote }}
   COURSE_STUDIO_WEBSEARCH_BACKEND: {{ .Values.config.websearchBackend | quote }}
   COURSE_STUDIO_WEBSEARCH_URL: {{ .Values.config.websearchUrl | quote }}
   COURSE_STUDIO_WEBSEARCH_METHOD: {{ .Values.config.websearchMethod | quote }}

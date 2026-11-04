@@ -1,13 +1,16 @@
 nameOverride: ""
 fullnameOverride: ""
 
+mode: single
+
 notes:
-  database: "database.backend 目前只有 sqlite adapter 落地，生产建议等待 postgres adapter 或改用托管数据库；sqlite 依赖 PVC，只允许单副本"
-  replicas: "backend.replicas > 1 必须使用外部 PostgreSQL + 外部 Redis + 外部对象存储；SQLite 与 ReadWriteOnce PVC 只能单副本，replicas>1 会导致数据损坏"
+  mode: "mode=single 渲染 backend-deployment（API+Worker 合一，JOB_CONCURRENCY>0）；mode=ha 渲染 api-deployment（JOB_CONCURRENCY=0）+ worker-deployment"
+  database: "统一使用 PostgreSQL；mode=single 可用内置 postgres StatefulSet，mode=ha 必须提供 externalDatabase.dsn 且内置 postgres 自动关闭"
+  api: "API 节点只处理 HTTP 请求，JOB_CONCURRENCY=0 保证不消费队列；所有实例必须共用同一个 Redis DB，否则任务会被错误的实例抢走"
+  worker: "worker-deployment 不接流量、不带 Service，扩缩容依据 CPU 或 opencgp_queue_backlog 队列积压"
   executor: "集群内没有 docker socket，executor.backend 保持 none；需要代码实跑请部署独立 runner 或使用可信节点上的 local 后端"
-  frontend: "VITE_API_BASE 是构建期变量，构建前端镜像时必须注入 /api；运行时由 nginx 同源反代 /api 到 backend service，避免 CORS 与硬编码后端地址"
-  images: "本 chart 假定镜像已构建并推送；opencgp/backend 与 opencgp/frontend 可参考 deploy/docker 下的 Dockerfile 自行构建"
-  storage: "storage.backend=s3 时所有对象写入 s3Endpoint 指定的桶；单机可用 chart 内置 rustfs，生产建议用云对象存储并关闭 rustfs.enabled"
+  frontend: "VITE_API_BASE 是构建期变量，构建前端镜像时必须注入 /api；运行时由 nginx 同源反代 /api 到 api/backend service"
+  images: "本 chart 假定镜像已构建并推送；backend.image 同时用于单机 backend、API 与 Worker"
 
 imagePullSecrets: []
 
@@ -80,6 +83,131 @@ backend:
   tolerations: []
   affinity: {}
   terminationGracePeriodSeconds: 30
+
+api:
+  replicas: 2
+  jobConcurrency: 0
+  containerPort: 8000
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8000"
+    prometheus.io/path: "/metrics"
+  service:
+    type: ClusterIP
+    port: 8000
+    annotations: {}
+  probe:
+    startupSeconds: 30
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    liveness:
+      initialDelaySeconds: 15
+      periodSeconds: 20
+      timeoutSeconds: 5
+      failureThreshold: 3
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: ""
+  pdb:
+    enabled: false
+    minAvailable: 1
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  terminationGracePeriodSeconds: 30
+
+worker:
+  enabled: true
+  replicas: 2
+  jobConcurrency: 2
+  containerPort: 8000
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 3Gi
+  autoscaling:
+    enabled: false
+    metric: cpu
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    queueBacklogThreshold: 50
+  pdb:
+    enabled: false
+    minAvailable: 1
+  extraPodAnnotations: {}
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  terminationGracePeriodSeconds: 120
+
+externalDatabase:
+  enabled: false
+  dsn: ""
+  poolSize: 8
+
+externalRedis:
+  enabled: false
+  url: ""
+
+externalS3:
+  enabled: false
+  endpoint: ""
+  bucket: course-studio
+  region: us-east-1
+  accessKey: ""
+  secretKey: ""
+  prefix: tenants
+
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  storage: 20Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  credentials:
+    user: opencgp
+    password: opencgp
+    database: opencgp
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  podSecurityContext:
+    fsGroup: 999
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 999
+    capabilities:
+      drop:
+        - ALL
 
 frontend:
   image:
@@ -210,9 +338,10 @@ config:
   authTokenTtlHours: 168
   requireApproval: "true"
   lockTtlSeconds: 120
-  databaseBackend: sqlite
+  databaseBackend: postgres
   databasePath: /data/course_studio.db
-  vectorstoreBackend: simple
+  databasePoolSize: 8
+  vectorstoreBackend: postgres
   vectorstorePath: /data/vectorstore
   storageBackend: s3
   storageRoot: /data/storage
@@ -226,6 +355,13 @@ config:
   jobSsePingSeconds: 15
   executorBackend: none
   execTimeout: 10
+  notifyBackend: none
+  smtpHost: ""
+  smtpPort: 587
+  smtpUser: ""
+  smtpFrom: ""
+  smtpTls: "true"
+  smtpTimeout: "10"
   websearchBackend: none
   websearchUrl: ""
   websearchMethod: POST
@@ -247,6 +383,7 @@ secrets:
   llmApiKey: ""
   imageApiKey: ""
   websearchApiKey: ""
+  smtpPassword: ""
 
 ingress:
   enabled: false
@@ -258,13 +395,6 @@ ingress:
         - path: /
           pathType: Prefix
   tls: []
-
-autoscaling:
-  enabled: false
-  minReplicas: 1
-  maxReplicas: 5
-  targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: ""
 
 networkPolicy:
   enabled: false

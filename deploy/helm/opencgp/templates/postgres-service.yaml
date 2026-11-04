@@ -1,0 +1,19 @@
+{{- if include "opencgp.builtinPostgresEnabled" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opencgp.postgresName" . }}
+  labels:
+    {{- include "opencgp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgres
+      port: {{ include "opencgp.postgresPort" . }}
+      targetPort: postgres
+      protocol: TCP
+  selector:
+    {{- include "opencgp.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+{{- end }}
