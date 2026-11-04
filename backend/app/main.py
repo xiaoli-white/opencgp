@@ -817,8 +817,8 @@ def list_lesson_versions(
             _version_summary(
                 version,
                 {
-                    "citations": len(version.citations),
-                    "content_length": len(version.content),
+                    "citations": [citation.model_dump() for citation in version.citations],
+                    "citation_count": len(version.citations),
                 },
                 include_content,
             )
