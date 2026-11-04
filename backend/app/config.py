@@ -195,7 +195,7 @@ class IngestConfig:
 
 @dataclass
 class GenerationConfig:
-    top_k: int = 5
+    top_k: int = 8
     evidence_char_limit: int = 600
     max_evidence: int = 8
     default_mode: str = "strict"
@@ -203,7 +203,7 @@ class GenerationConfig:
     @classmethod
     def from_env(cls) -> "GenerationConfig":
         return cls(
-            top_k=int(_env("GENERATION_TOP_K", "5") or 5),
+            top_k=int(_env("GENERATION_TOP_K", "8") or 8),
             evidence_char_limit=int(_env("GENERATION_EVIDENCE_CHAR_LIMIT", "600") or 600),
             max_evidence=int(_env("GENERATION_MAX_EVIDENCE", "8") or 8),
             default_mode=_env("GENERATION_DEFAULT_MODE", "strict"),

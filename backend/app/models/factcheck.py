@@ -9,8 +9,8 @@ VERDICT_UNSURE = "unsure"
 VERDICT_UNSUPPORTED = "unsupported"
 VERDICTS = (VERDICT_SUPPORTED, VERDICT_UNSURE, VERDICT_UNSUPPORTED)
 
-SUPPORTED_THRESHOLD = 0.5
-UNSURE_THRESHOLD = 0.2
+SUPPORTED_THRESHOLD = 0.45
+UNSURE_THRESHOLD = 0.15
 
 VERDICT_LABELS = {
     VERDICT_SUPPORTED: "有证据支撑",
@@ -25,6 +25,8 @@ class CheckResult(BaseModel):
     evidence: list[Citation] = Field(default_factory=list)
     score: float = 0.0
     source: str = "retrieval"
+    llm_verdict: str = ""
+    llm_reason: str = ""
 
 
 class FactCheckReport(BaseModel):

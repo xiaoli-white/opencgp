@@ -38,6 +38,20 @@ NO_EVIDENCE_NOTICE = (
 )
 
 
+def _diversify(citations: Sequence[Citation], limit: int, per_source: int = 3) -> list[Citation]:
+    kept: list[Citation] = []
+    counts: dict[str, int] = {}
+    for citation in citations:
+        key = citation.source_id or citation.source_name
+        if counts.get(key, 0) >= per_source:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        kept.append(citation)
+        if len(kept) >= limit:
+            break
+    return kept
+
+
 class GenerationService:
     def __init__(
         self,
@@ -91,7 +105,7 @@ class GenerationService:
             tenant_id=tenant_id,
             min_score=self.min_score if is_strict else None,
         )
-        citations = citations[: self.max_evidence]
+        citations = _diversify(citations, self.max_evidence, per_source=3)
         evidence = [
             Evidence(marker=f"E{index}", citation=citation)
             for index, citation in enumerate(citations, start=1)
@@ -228,6 +242,7 @@ class GenerationService:
                 "2. 每个自然段至少标注一个来源标记，格式为 [E1]；一段引用多条证据时写作 [E1][E3]。",
                 "3. 证据不足以支撑的小节，必须显式写明「资料不足：<缺口说明>」，禁止用常识或推测补全。",
                 "4. 输出 Markdown：用二级标题组织小节，正文 600-1200 字，术语首次出现时给出简要解释。",
+                "4.1 语气要求：面向读者直接讲解，像老师在讲，不要反复使用「证据指出」「这说明」「由此可见」这类转述句式；事实直接陈述，句末保留来源标记即可。",
                 "5. 结尾追加「## 延伸问题」小节，列出 2-3 个需要补充资料才能回答的问题。",
                 "",
                 "## 证据",

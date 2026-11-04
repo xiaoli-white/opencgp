@@ -407,13 +407,36 @@ class SimpleVectorStore(VectorStore):
         except sqlite3.Error:
             return {}
         texts = self._texts(conn, [row["chunk_id"] for row in rows])
+        names = self._source_names(conn, [row["chunk_id"] for row in rows])
         scores: dict[str, float] = {}
         for row in rows:
             chunk_id = row["chunk_id"]
             body = texts.get(chunk_id, "")
             raw = max(-float(row["rank"]), 0.0)
-            scores[chunk_id] = _absolute_score(raw, coverage(terms, body))
+            base = _absolute_score(raw, coverage(terms, body))
+            boosted = base * _name_boost(terms, names.get(chunk_id, "")) * _length_penalty(body)
+            scores[chunk_id] = min(1.0, boosted)
         return scores
+
+    def _source_names(
+        self, conn: sqlite3.Connection, chunk_ids: Sequence[str]
+    ) -> dict[str, str]:
+        if not chunk_ids:
+            return {}
+        placeholders = ",".join("?" for _ in chunk_ids)
+        sql = (
+            "SELECT c.id AS chunk_id, s.source_name AS source_name FROM chunks c"
+            " LEFT JOIN sources s ON s.id = c.source_id"
+            f" WHERE c.id IN ({placeholders})"
+        )
+        try:
+            rows = conn.execute(sql, list(chunk_ids)).fetchall()
+        except sqlite3.Error:
+            return {}
+        return {
+            str(row["chunk_id"]): str(row["source_name"] or "")
+            for row in rows
+        }
 
     def _like_scores(
         self,
@@ -560,6 +583,25 @@ def _absolute_score(raw_rank: float, term_coverage: float) -> float:
     if gate <= 0:
         return 0.0
     return min(1.0, gate) * (0.6 + 0.4 * (raw_rank / (1.0 + raw_rank)))
+
+
+def _name_boost(terms: Sequence[str], source_name: str) -> float:
+    if not terms or not source_name:
+        return 1.0
+    hit = sum(1 for term in terms if term and term in source_name)
+    if not hit:
+        return 1.0
+    ratio = hit / max(1, len(terms))
+    return 1.0 + 0.45 * min(1.0, ratio * 2)
+
+
+def _length_penalty(text: str) -> float:
+    size = len(text or "")
+    if size < 80:
+        return 0.8
+    if size > 4000:
+        return 0.95
+    return 1.0
 
 
 def _clip01(scores: dict[str, float]) -> dict[str, float]:

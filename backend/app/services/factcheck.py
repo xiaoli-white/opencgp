@@ -20,11 +20,28 @@ from app.ports.vectorstore import VectorStore
 CLAIM_PATTERN = re.compile(r"\d+\s*%?|最好|最强|一定|必然|绝对|所有|从不|唯一|最新|最高|最低")
 HEADING_PATTERN = re.compile(r"^(#{1,6}\s|>|\||```|~~~)")
 LIST_PATTERN = re.compile(r"^([-*+]\s+|\d+[.)]\s+)")
-MAX_CLAIMS = 8
-MIN_CLAIM_CHARS = 8
+MAX_CLAIMS = 12
+MIN_CLAIM_CHARS = 6
 MAX_CLAIM_CHARS = 240
 EVIDENCE_LIMIT = 3
 LLM_REVIEW_LIMIT = 6
+
+
+SENTENCE_ENDINGS = "。！？!?；;"
+
+
+def _split_sentences(block: str) -> list[str]:
+    parts: list[str] = []
+    buffer: list[str] = []
+    for char in block:
+        buffer.append(char)
+        if char in SENTENCE_ENDINGS:
+            parts.append("".join(buffer).strip())
+            buffer = []
+    tail = "".join(buffer).strip()
+    if tail:
+        parts.append(tail)
+    return [part for part in parts if part]
 
 
 class FactCheckService:
@@ -46,17 +63,20 @@ class FactCheckService:
         claims: list[str] = []
         seen: set[str] = set()
         for block in _prose_blocks(content or ""):
-            plain = block.strip()
-            if len(plain) < MIN_CLAIM_CHARS:
-                continue
-            if not CLAIM_PATTERN.search(plain):
-                continue
-            claim = plain[:MAX_CLAIM_CHARS]
-            key = claim.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            claims.append(claim)
+            for sentence in _split_sentences(block):
+                plain = sentence.strip()
+                if len(plain) < MIN_CLAIM_CHARS:
+                    continue
+                if not CLAIM_PATTERN.search(plain):
+                    continue
+                claim = plain[:MAX_CLAIM_CHARS]
+                key = claim.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                claims.append(claim)
+                if len(claims) >= limit:
+                    break
             if len(claims) >= limit:
                 break
         return claims
@@ -124,7 +144,8 @@ class FactCheckService:
         for index, item in enumerate(targets, start=1):
             verdict = verdicts.get(index)
             if verdict and verdict != item.verdict:
-                item.verdict = verdict
+                item.llm_verdict = verdict
+                item.llm_reason = "模型复核与检索判定不一致"
                 item.source = "retrieval+llm"
         return results
 
