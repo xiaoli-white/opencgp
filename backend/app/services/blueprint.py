@@ -139,7 +139,9 @@ class BlueprintService:
             raise BlueprintNotFoundError(f"课程不存在: {course_id}")
 
         created: list[Lesson] = []
-        for position, node in enumerate(blueprint.outline, start=1):
+        existing = self.course_repository.list_lessons(course_id)
+        next_index = max((lesson.order_index for lesson in existing), default=0) + 1
+        for node in blueprint.outline:
             lesson: Lesson | None = None
             if node.lesson_id:
                 lesson = self.course_repository.get_lesson(node.lesson_id)
@@ -147,12 +149,13 @@ class BlueprintService:
                 lesson = self.course_repository.create_lesson(
                     course_id=course_id,
                     title=node.title,
-                    order_index=position,
+                    order_index=next_index,
                     learning_objectives=node.objectives,
                     prerequisites=node.prerequisites,
                     status=NODE_PLANNED,
                 )
                 created.append(lesson)
+                next_index += 1
                 node.lesson_id = lesson.id
             node.status = self._node_status_for_lesson(lesson)
         saved = self.repository.save_blueprint(blueprint)

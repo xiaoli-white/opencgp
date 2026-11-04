@@ -60,7 +60,7 @@ class ResearchService:
         self.max_evidence = max_evidence
         self.web_limit = web_limit
         self.evidence_char_limit = evidence_char_limit
-        self.min_score = float(min_score)
+        self.min_score = max(0.05, float(min_score) * 0.5)
 
     async def run(
         self,

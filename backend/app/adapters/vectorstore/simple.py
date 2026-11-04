@@ -414,7 +414,12 @@ class SimpleVectorStore(VectorStore):
             body = texts.get(chunk_id, "")
             raw = max(-float(row["rank"]), 0.0)
             base = _absolute_score(raw, coverage(terms, body))
-            boosted = base * _name_boost(terms, names.get(chunk_id, "")) * _length_penalty(body)
+            boosted = (
+                base
+                * _name_boost(terms, names.get(chunk_id, ""))
+                * _length_penalty(body)
+                * _distinctive_factor(terms, body)
+            )
             scores[chunk_id] = min(1.0, boosted)
         return scores
 
@@ -593,6 +598,19 @@ def _name_boost(terms: Sequence[str], source_name: str) -> float:
         return 1.0
     ratio = hit / max(1, len(terms))
     return 1.0 + 0.45 * min(1.0, ratio * 2)
+
+
+def _distinctive_factor(terms: Sequence[str], text: str) -> float:
+    distinctive = [term for term in terms if len(term) >= 4 or term.isascii()]
+    if not distinctive:
+        return 1.0
+    lowered = (text or "").lower()
+    matched = sum(1 for term in distinctive if term in lowered)
+    if matched == 0:
+        return 0.3
+    if matched < len(distinctive):
+        return 0.7
+    return 1.0
 
 
 def _length_penalty(text: str) -> float:

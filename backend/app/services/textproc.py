@@ -51,12 +51,18 @@ def normalize_text(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+COVERAGE_TERM_CAP = 5
+
+
 def coverage(terms: Sequence[str], text: str) -> float:
     if not terms:
         return 0.0
     lowered = text.lower()
     hits = sum(1 for term in terms if term in lowered)
-    return hits / len(terms)
+    if hits == 0:
+        return 0.0
+    denominator = min(len(terms), COVERAGE_TERM_CAP)
+    return min(1.0, hits / max(1, denominator))
 
 
 def make_snippet(text: str, terms: Sequence[str], width: int = 80) -> str:
