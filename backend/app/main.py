@@ -60,6 +60,10 @@ from app.services.metrics import get_metrics
 from app.services.textproc import line_diff
 from app.services.validators import ValidatorRunner
 from app.services.errors import (
+    ShareExpiredError,
+    ShareNotFoundError,
+    ShareRateLimitedError,
+    ShareRevokedError,
     ExecLanguageError,
     ExecUnavailableError,
     ImageGenerationError,
@@ -340,7 +344,7 @@ def health() -> dict[str, Any]:
     便于编排系统（如 Docker Compose / K8s）做探针判断。
     """
     adapters: dict[str, Any] = {}
-    for name in ("database", "storage", "llm", "vectorstore", "exporter", "parser"):
+    for name in ("database", "storage", "llm", "vectorstore", "exporter", "parser", "notifier"):
         try:
             obj = getattr(container, name)()
             ok = bool(obj.healthcheck())
@@ -348,6 +352,11 @@ def health() -> dict[str, Any]:
             adapters[name] = {"ok": False, "error": str(exc)}
         else:
             adapters[name] = {"ok": ok}
+    try:
+        adapters["notifier"]["backend"] = (settings.notify.backend or "none").strip().lower()
+        adapters["notifier"]["optional"] = True
+    except Exception:
+        pass
     try:
         adapters["database"]["backend"] = (settings.database.backend or "sqlite").strip().lower()
     except Exception:
@@ -370,7 +379,9 @@ def health() -> dict[str, Any]:
     except Exception:
         pass
 
-    all_ok = all(v["ok"] for v in adapters.values())
+    all_ok = all(
+        v["ok"] for name, v in adapters.items() if not v.get("optional") or name == "database"
+    )
     try:
         searcher = container.web_search()
         adapters["websearch"] = {
@@ -1374,6 +1385,7 @@ def auth_register(req: RegisterRequest) -> dict[str, Any]:
     except (EmailAlreadyRegisteredError, ValueError) as exc:
         raise _auth_error(exc) from exc
     if not token:
+        container.notifications().registration_pending(user)
         return {
             "pending": True,
             "message": "注册已提交，等待管理员审核",
@@ -1555,6 +1567,7 @@ def admin_approve_user(
     except AuthRequiredError as exc:
         raise _auth_error(exc) from exc
     membership = service.ensure_system_membership(user.id)
+    container.notifications().registration_approved(user)
     return {
         "user": _admin_user_payload(user),
         "status": user.status,
@@ -1574,10 +1587,12 @@ def admin_reject_user(
         user = service.reject_user(user_id)
     except AuthRequiredError as exc:
         raise _auth_error(exc) from exc
+    reason = req.reason if req is not None else ""
+    container.notifications().registration_rejected(user, reason)
     return {
         "user": _admin_user_payload(user),
         "status": user.status,
-        "reason": (req.reason if req is not None else ""),
+        "reason": reason,
     }
 
 
@@ -1666,6 +1681,9 @@ def admin_reset_password(
     _enforce(ctx, "manage_server")
     try:
         container.account_admin().reset_password(user_id, req.new_password)
+        reset_user = container.auth_repository().get_user(user_id)
+        if reset_user is not None:
+            container.notifications().password_reset(reset_user)
     except AuthRequiredError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -4237,3 +4255,80 @@ def metrics_endpoint() -> PlainTextResponse:
     return PlainTextResponse(
         get_metrics().render(_metrics_snapshot()), media_type=METRICS_CONTENT_TYPE
     )
+
+
+class ShareCreateRequest(BaseModel):
+    resource_type: Literal["course", "longform"]
+    resource_id: str = Field(min_length=1)
+    expires_in_days: int = Field(default=7, ge=0, le=365)
+
+
+class NotifyTestRequest(BaseModel):
+    to: str = Field(min_length=3)
+
+
+@app.post("/api/v1/share-links", status_code=201)
+def create_share_link(
+    req: ShareCreateRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    if req.resource_type == "course":
+        _require_course(req.resource_id, ctx, "write")
+    else:
+        _require_longform(req.resource_id, ctx, "write")
+    try:
+        return container.shares().create(
+            _tenant_of(ctx),
+            ctx.user.id,
+            req.resource_type,
+            req.resource_id,
+            req.expires_in_days,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/share-links")
+def list_share_links(
+    resource_type: str = Query(default=""),
+    resource_id: str = Query(default=""),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    links = container.shares().list(_tenant_of(ctx), resource_type, resource_id)
+    return {"count": len(links), "links": links}
+
+
+@app.delete("/api/v1/share-links/{link_id}")
+def delete_share_link(
+    link_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    try:
+        container.shares().revoke(_tenant_of(ctx), link_id)
+    except ShareNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.get("/api/v1/public/shares/{token}")
+def public_share(token: str, request: Request) -> dict[str, Any]:
+    client_ip = request.client.host if request.client else ""
+    try:
+        return container.shares().resolve_public(token, client_ip)
+    except ShareNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ShareRevokedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ShareExpiredError as exc:
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
+    except ShareRateLimitedError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/admin/notify/test")
+def notify_test(
+    req: NotifyTestRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "manage_server")
+    return container.notifications().send_test(req.to)

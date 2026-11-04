@@ -290,6 +290,31 @@ class WebSearchConfig:
 
 
 @dataclass
+class NotifyConfig:
+    backend: str = "none"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_tls: bool = True
+    smtp_timeout: float = 10.0
+
+    @classmethod
+    def from_env(cls) -> "NotifyConfig":
+        return cls(
+            backend=(_env("NOTIFY_BACKEND", "none") or "none").strip().lower(),
+            smtp_host=_env("SMTP_HOST", ""),
+            smtp_port=int(_env("SMTP_PORT", "587") or 587),
+            smtp_user=_env("SMTP_USER", ""),
+            smtp_password=_env("SMTP_PASSWORD", ""),
+            smtp_from=_env("SMTP_FROM", ""),
+            smtp_tls=(_env("SMTP_TLS", "true") or "true").strip().lower() not in ("0", "false", "no"),
+            smtp_timeout=float(_env("SMTP_TIMEOUT", "10") or 10),
+        )
+
+
+@dataclass
 class ImageConfig:
     backend: str = "none"
     base_url: str = "https://api.openai.com/v1"
@@ -399,6 +424,7 @@ class Settings:
     locks: LockConfig = field(default_factory=LockConfig)
     websearch: WebSearchConfig = field(default_factory=WebSearchConfig)
     image: ImageConfig = field(default_factory=ImageConfig)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)
     jobs: JobsConfig = field(default_factory=JobsConfig)
     exec: ExecConfig = field(default_factory=ExecConfig)
 
@@ -422,6 +448,7 @@ class Settings:
             locks=LockConfig.from_env(),
             websearch=WebSearchConfig.from_env(),
             image=ImageConfig.from_env(),
+            notify=NotifyConfig.from_env(),
             jobs=JobsConfig.from_env(),
             exec=ExecConfig.from_env(),
         )

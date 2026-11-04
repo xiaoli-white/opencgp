@@ -731,6 +731,58 @@ class Container:
 
         return self._get_or_build("code_check_service", build)
 
+    def share_repository(self):
+        def build():
+            from app.adapters.database.share_repository import DatabaseShareRepository
+
+            return DatabaseShareRepository(database=self.database())
+
+        return self._get_or_build("share_repository", build)
+
+    def shares(self):
+        def build():
+            from app.services.shares import ShareService
+
+            return ShareService(
+                repository=self.share_repository(),
+                course_repository=self.course_repository(),
+                longform_repository=self.longform_repository(),
+            )
+
+        return self._get_or_build("shares", build)
+
+    def notifier(self):
+        settings = self.settings.notify
+
+        def build():
+            if (settings.backend or "none") == "smtp":
+                from app.adapters.notify.smtp import SMTPNotifier
+
+                return SMTPNotifier(
+                    host=settings.smtp_host,
+                    port=settings.smtp_port,
+                    user=settings.smtp_user,
+                    password=settings.smtp_password,
+                    sender=settings.smtp_from,
+                    use_tls=settings.smtp_tls,
+                    timeout=settings.smtp_timeout,
+                )
+            from app.adapters.notify.none import NullNotifier
+
+            return NullNotifier()
+
+        return self._get_or_build("notifier", build)
+
+    def notifications(self):
+        def build():
+            from app.services.notifications import NotificationService
+
+            return NotificationService(
+                notifier=self.notifier(), auth_repository=self.auth_repository()
+            )
+
+        return self._get_or_build("notifications", build)
+
     def conversation_repository(self) -> ConversationRepository:
         def build() -> ConversationRepository:
             from app.adapters.database.conversation_repository import (

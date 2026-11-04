@@ -229,3 +229,19 @@ class ProfileInUseError(RuntimeError):
 
 class ProfileInvalidError(ValueError):
     pass
+
+
+class ShareNotFoundError(Exception):
+    pass
+
+
+class ShareRevokedError(Exception):
+    pass
+
+
+class ShareExpiredError(Exception):
+    pass
+
+
+class ShareRateLimitedError(Exception):
+    pass
