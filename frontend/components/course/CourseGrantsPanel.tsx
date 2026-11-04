@@ -2,11 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Member } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
 import SharePanel, { type ShareMember, type ShareOption } from "@/components/sharing/SharePanel";
-
-const OPTIONS: ShareOption[] = [
-  { value: "read", label: "可读", desc: "可查看讲义与蓝图" },
-  { value: "write", label: "可写", desc: "可生成、审核与修改" },
-];
+import { useI18n } from "@/i18n/I18nProvider";
 
 export default function CourseGrantsPanel({
   courseId,
@@ -20,6 +16,14 @@ export default function CourseGrantsPanel({
   onNotice?: (message: string) => void;
 }) {
   const { tenant } = useSession();
+  const { t } = useI18n();
+  const options = useMemo<ShareOption[]>(
+    () => [
+      { value: "read", label: t("sharing.read"), desc: t("sharing.readDesc") },
+      { value: "write", label: t("sharing.write"), desc: t("sharing.writeDesc") },
+    ],
+    [t],
+  );
   const [members, setMembers] = useState<Member[]>([]);
   const [levels, setLevels] = useState<Record<string, string | null>>({});
   const [loading, setLoading] = useState(false);
@@ -43,11 +47,11 @@ export default function CourseGrantsPanel({
       }
       setLevels(next);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "加载失败");
+      setError(err instanceof Error ? err.message : t("sharing.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [courseId, tenant]);
+  }, [courseId, tenant, t]);
 
   useEffect(() => {
     if (open) void load();
@@ -60,9 +64,12 @@ export default function CourseGrantsPanel({
         user_email: member.user_email,
         user_display_name: member.user_display_name,
         avatar_url: member.avatar_url,
-        note: member.user_display_name || member.user_email ? "空间成员" : undefined,
+        note:
+          member.user_display_name || member.user_email
+            ? t("sharing.memberNote")
+            : undefined,
       })),
-    [members],
+    [members, t],
   );
 
   const save = useCallback(
@@ -77,26 +84,26 @@ export default function CourseGrantsPanel({
             level: item.level === "write" ? ("write" as const) : ("read" as const),
           })),
         );
-        onNotice?.("可见范围已保存");
+        onNotice?.(t("sharing.saved"));
         onClose();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "保存失败");
+        setError(err instanceof Error ? err.message : t("sharing.saveFailed"));
       } finally {
         setSaving(false);
       }
     },
-    [courseId, onClose, onNotice],
+    [courseId, onClose, onNotice, t],
   );
 
   return (
     <SharePanel
       open={open}
-      title="课程可见范围"
-      subtitle="按成员设置本课程权限"
-      note="角色范围为「全部课程」的成员不受此限制；此处仅对范围为「指定课程」的角色生效。"
+      title={t("sharing.courseTitle")}
+      subtitle={t("sharing.courseSubtitle")}
+      note={t("sharing.courseNote")}
       members={shareMembers}
       value={levels}
-      options={OPTIONS}
+      options={options}
       loading={loading}
       saving={saving}
       error={error}

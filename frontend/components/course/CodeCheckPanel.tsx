@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AlertCircle, CheckCircle2, Loader2, PlayCircle, XCircle } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type Block = {
   index: number;
@@ -22,6 +23,7 @@ type Result = {
 };
 
 export default function CodeCheckPanel({ lessonId, disabled }: { lessonId: string; disabled?: boolean }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
@@ -34,7 +36,7 @@ export default function CodeCheckPanel({ lessonId, disabled }: { lessonId: strin
       const data = (await api.checkLessonCode(lessonId)) as Result;
       setResult(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "代码校验失败");
+      setError(err instanceof Error ? err.message : t("course.code.failed"));
     } finally {
       setLoading(false);
     }
@@ -50,10 +52,10 @@ export default function CodeCheckPanel({ lessonId, disabled }: { lessonId: strin
         }}
         disabled={disabled}
         className="btn btn-ghost"
-        title={disabled ? "当前角色只读" : "在沙箱里执行正文中的代码块"}
+        title={disabled ? t("course.guardReadOnly") : t("course.code.title")}
       >
         {loading ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
-        代码校验
+        {t("course.code.button")}
       </button>
 
       {open && (
@@ -65,16 +67,24 @@ export default function CodeCheckPanel({ lessonId, disabled }: { lessonId: strin
             </p>
           ) : null}
           {loading ? (
-            <p className="text-xs text-slate-500 dark:text-slate-400">正在沙箱中执行代码块（每个最多 8 秒）…</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {t("course.code.running")}
+            </p>
           ) : null}
           {result && !loading ? (
             <>
               <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
                 <span className="chip-muted">{result.summary.backend}</span>
-                <span>共 {result.summary.total} 块</span>
-                <span className="text-emerald-600 dark:text-emerald-400">通过 {result.summary.passed}</span>
-                <span className="text-rose-600 dark:text-rose-400">失败 {result.summary.failed}</span>
-                {result.summary.skipped > 0 ? <span>跳过 {result.summary.skipped}</span> : null}
+                <span>{t("course.code.blocks", { count: result.summary.total })}</span>
+                <span className="text-emerald-600 dark:text-emerald-400">
+                  {t("course.code.passed", { count: result.summary.passed })}
+                </span>
+                <span className="text-rose-600 dark:text-rose-400">
+                  {t("course.code.failedCount", { count: result.summary.failed })}
+                </span>
+                {result.summary.skipped > 0 ? (
+                  <span>{t("course.code.skipped", { count: result.summary.skipped })}</span>
+                ) : null}
               </div>
               <div className="mt-3 space-y-2">
                 {result.blocks.map((block) => (
@@ -89,7 +99,8 @@ export default function CodeCheckPanel({ lessonId, disabled }: { lessonId: strin
                         <XCircle size={13} className="text-rose-500" />
                       )}
                       <span className="font-medium text-slate-600 dark:text-slate-300">
-                        代码块 {block.index + 1} · {block.language}
+                        {t("course.code.block", { index: block.index + 1 })} ·{" "}
+                        {block.language}
                       </span>
                       <span className="text-slate-400">
                         exit {block.exit_code} · {block.duration_ms}ms

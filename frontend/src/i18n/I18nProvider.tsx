@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { dicts, zh, type Dict } from "./dict";
+import { setActiveTranslate } from "./labels";
 
 export type Locale = "zh" | "en";
 export type I18nVars = Record<string, string | number>;
@@ -45,11 +46,17 @@ function resolve(tree: Dict, path: string): string | undefined {
   return typeof cursor === "string" ? cursor : undefined;
 }
 
+import { setFormatLocale } from "@/lib/format";
+
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(detectLocale);
 
   useEffect(() => {
     document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
+  }, [locale]);
+
+  useEffect(() => {
+    setFormatLocale(locale);
   }, [locale]);
 
   const setLocale = useCallback((next: Locale) => {
@@ -82,6 +89,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     (map: InlineText) => (locale === "en" ? map.en : map.zh),
     [locale],
   );
+
+  useEffect(() => {
+    setActiveTranslate(t);
+  }, [t]);
 
   const value = useMemo<I18nValue>(
     () => ({ locale, setLocale, t, tm }),

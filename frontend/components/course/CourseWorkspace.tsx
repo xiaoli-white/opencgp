@@ -38,13 +38,13 @@ import {
   type LessonLockController,
   type LessonLockState,
 } from "@/lib/lock";
+import { contentLength, formatRelative } from "@/lib/format";
 import {
-  contentLength,
   difficultyLabel,
-  formatRelative,
+  lessonStatusLabel,
   modeLabel,
-  statusLabel,
-} from "@/lib/format";
+} from "@/i18n/labels";
+import { useI18n } from "@/i18n/I18nProvider";
 import MarkdownReader from "@/components/reader/MarkdownReader";
 import CourseReader from "@/components/reader/CourseReader";
 import VersionPanel from "@/components/reader/VersionPanel";
@@ -71,14 +71,15 @@ import { useSession } from "@/components/auth/SessionProvider";
 
 type WorkspaceView = "reader" | "blueprint" | "continuous";
 
-const VIEWS: { value: WorkspaceView; label: string; icon: typeof BookOpen }[] = [
-  { value: "reader", label: "阅读", icon: BookOpen },
-  { value: "blueprint", label: "蓝图", icon: Network },
-  { value: "continuous", label: "连续阅读", icon: ScrollText },
+const VIEWS: { value: WorkspaceView; key: string; icon: typeof BookOpen }[] = [
+  { value: "reader", key: "viewReader", icon: BookOpen },
+  { value: "blueprint", key: "viewBlueprint", icon: Network },
+  { value: "continuous", key: "viewContinuous", icon: ScrollText },
 ];
 
 export default function CourseWorkspace({ courseId }: { courseId: string }) {
   const { can, roleName } = useSession();
+  const { t } = useI18n();
   const canWrite = can("write");
   const canManage = can("manage_members");
   const readOnly = !canWrite;
@@ -132,10 +133,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     canWrite && (lockState.status === "blocked" || lockState.status === "lost");
   const lockReason =
     lockState.status === "blocked"
-      ? `${lockState.name} 正在编辑这一讲`
-      : "编辑锁已失效";
+      ? t("course.lockEditing", { name: lockState.name })
+      : t("course.lockLost");
   const guard = readOnly
-    ? { disabled: true, title: "当前角色只读" }
+    ? { disabled: true, title: t("course.guardReadOnly") }
     : lockBlocked
       ? { disabled: true, title: lockReason }
       : {};
@@ -189,7 +190,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setLoadError(err instanceof Error ? err.message : "课程加载失败");
+          setLoadError(err instanceof Error ? err.message : t("course.errors.load"));
         }
       })
       .finally(() => {
@@ -321,10 +322,13 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
       setTopic("");
       setNotice(
         result.mode === "loose"
-          ? `已按非严格模式生成 v${result.version} · 正文标注由大模型编写`
+          ? t("course.notices.generatedLoose", { version: result.version })
           : result.grounded
-            ? `已生成 v${result.version} · 引用 ${result.citations.length} 条证据`
-            : `v${result.version} 已写入：知识库暂缺证据，正文为资料不足提示`,
+            ? t("course.notices.generatedGrounded", {
+                version: result.version,
+                count: result.citations.length,
+              })
+            : t("course.notices.generatedUngrounded", { version: result.version }),
       );
       window.dispatchEvent(new Event("course-studio:refresh"));
     } catch (err) {
@@ -334,11 +338,11 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         setConflict({
           expectedVersion: baseline,
           currentVersion: current,
-          label: "本讲正文",
+          label: t("course.conflictContent"),
           retry: () => runGenerate(current),
         });
       } else {
-        setError(err instanceof Error ? err.message : "生成失败");
+        setError(err instanceof Error ? err.message : t("course.errors.generate"));
       }
     } finally {
       setGenerating(false);
@@ -363,7 +367,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
       );
       await loadCourse(activeLesson.id);
       setVersionTick((tick) => tick + 1);
-      setNotice(`已回滚：基于 v${version} 生成新版本，历史仍可追溯`);
+      setNotice(t("course.notices.reverted", { version }));
     } catch (err) {
       const info = err instanceof ApiError ? err.conflict() : null;
       if (info && info.current_version !== undefined) {
@@ -371,11 +375,11 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         setConflict({
           expectedVersion: baseline,
           currentVersion: current,
-          label: "版本回滚",
+          label: t("course.conflictRevert"),
           retry: () => handleRevert(version, current),
         });
       } else {
-        setError(err instanceof Error ? err.message : "回滚失败");
+        setError(err instanceof Error ? err.message : t("course.errors.revert"));
       }
     } finally {
       setReverting(null);
@@ -396,11 +400,11 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
       await loadCourse(result.lesson.id);
       setNewTitle("");
       setFormOpen(false);
-      setNotice(`已创建《${result.lesson.title}》`);
+      setNotice(t("course.notices.lessonCreated", { title: result.lesson.title }));
       await refreshProgress();
       window.dispatchEvent(new Event("course-studio:refresh"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "创建讲次失败");
+      setError(err instanceof Error ? err.message : t("course.errors.createLesson"));
     } finally {
       setCreating(false);
     }
@@ -444,7 +448,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
       window.dispatchEvent(new Event("course-studio:refresh"));
       navigate("/");
     } catch (err) {
-      setCourseDialogError(err instanceof Error ? err.message : "删除失败");
+      setCourseDialogError(err instanceof Error ? err.message : t("course.errors.delete"));
     } finally {
       setCourseBusy(false);
     }
@@ -457,10 +461,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     try {
       await api.updateLesson(lessonRename.id, { title });
       setLessonRename(null);
-      setNotice("讲次已重命名");
+      setNotice(t("course.notices.lessonRenamed"));
       await handleLessonsChanged();
     } catch (err) {
-      setLessonDialogError(err instanceof Error ? err.message : "重命名失败");
+      setLessonDialogError(err instanceof Error ? err.message : t("course.errors.rename"));
     } finally {
       setLessonBusy(false);
     }
@@ -473,11 +477,11 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     try {
       await api.deleteLesson(lessonDelete.id);
       setLessonDelete(null);
-      setNotice("讲次已删除");
+      setNotice(t("course.notices.lessonDeleted"));
       if (activeId === lessonDelete.id) setActiveId(null);
       await handleLessonsChanged();
     } catch (err) {
-      setLessonDialogError(err instanceof Error ? err.message : "删除失败");
+      setLessonDialogError(err instanceof Error ? err.message : t("course.errors.delete"));
     } finally {
       setLessonBusy(false);
     }
@@ -494,10 +498,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     next[target] = ids[index];
     try {
       await api.reorderLessons(courseId, next);
-      setNotice("讲次顺序已更新");
+      setNotice(t("course.notices.orderUpdated"));
       await handleLessonsChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "排序失败");
+      setError(err instanceof Error ? err.message : t("course.errors.order"));
     }
   };
 
@@ -520,14 +524,14 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           <AlertCircle size={20} />
         </div>
         <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-200">
-          课程无法加载
+          {t("course.loadErrorTitle")}
         </p>
         <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-          {loadError || "课程不存在，或后端服务未启动。"}
+          {loadError || t("course.loadErrorBody")}
         </p>
         <Link to="/" className="btn btn-ghost mt-5">
           <ArrowLeft size={14} />
-          返回课程列表
+          {t("course.backToCourses")}
         </Link>
       </div>
     );
@@ -550,7 +554,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               className="inline-flex items-center gap-1 text-[11px] text-slate-400 transition hover:text-indigo-600 dark:hover:text-indigo-300"
             >
               <ArrowLeft size={12} />
-              全部课程
+              {t("course.allCourses")}
             </Link>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-[26px]">
               {course.title}
@@ -563,14 +567,20 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className="chip">
                 <BookOpen size={11} />
-                {detail.lesson_count} 讲
+                {t("course.lessonCount", { count: detail.lesson_count })}
               </span>
-              <span className="chip-muted">{difficultyLabel(course.difficulty)}</span>
+              <span className="chip-muted">
+                {difficultyLabel(t, course.difficulty)}
+              </span>
               {course.audience ? (
-                <span className="chip-muted">受众 · {course.audience}</span>
+                <span className="chip-muted">
+                  {t("course.audienceChip", { name: course.audience })}
+                </span>
               ) : null}
               <span className="chip-muted">
-                {course.language === "zh" ? "中文" : course.language}
+                {course.language === "zh"
+                  ? t("course.languageChinese")
+                  : course.language}
               </span>
             </div>
           </div>
@@ -585,10 +595,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               target="_blank"
               rel="noreferrer"
               className="btn btn-ghost shrink-0"
-              title="在新标签页打开独立阅读模式"
+              title={t("course.readModeTitle")}
             >
               <BookOpen size={13} />
-              阅读模式
+              {t("course.readMode")}
             </a>
             {canWrite ? (
               <button
@@ -597,7 +607,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 className="btn btn-ghost shrink-0"
               >
                 <Pencil size={13} />
-                编辑
+                {t("course.editCourse")}
               </button>
             ) : null}
             {canWrite ? (
@@ -610,7 +620,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 className="btn btn-ghost shrink-0 text-rose-600 hover:text-rose-700 dark:text-rose-300"
               >
                 <Trash2 size={13} />
-                删除课程
+                {t("course.deleteCourse")}
               </button>
             ) : null}
             {can("manage_members") ? (
@@ -620,7 +630,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 className="btn btn-ghost shrink-0"
               >
                 <Lock size={13} />
-                可见范围
+                {t("course.grants")}
               </button>
             ) : null}
             <button
@@ -629,7 +639,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               className="btn btn-ghost shrink-0 lg:hidden"
             >
               <List size={14} />
-              大纲
+              {t("course.outline")}
             </button>
             <button
               type="button"
@@ -639,7 +649,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               className="btn btn-primary hidden shrink-0 sm:inline-flex"
             >
               <MessageSquare size={14} />
-              追问 / 修改
+              {t("course.askEdit")}
             </button>
           </div>
         </div>
@@ -647,7 +657,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
 
       {readOnly ? (
         <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-          你以 {roleName || "只读"} 身份访问，仅可读取，写入类操作已禁用。
+          {t("course.readOnlyBanner", { role: roleName || t("common.readOnly") })}
         </div>
       ) : null}
 
@@ -669,7 +679,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 )}
               >
                 <Icon size={12} />
-                {item.label}
+                {t(`course.${item.key}`)}
               </button>
             );
           })}
@@ -677,12 +687,19 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         <div className="flex flex-wrap items-center gap-2">
           {progress ? (
             <span className="chip-muted">
-              已通过 {progress.approved}/{progress.total} · 待审{" "}
-              {progress.pending_review}
+              {t("course.progress.approved", {
+                approved: progress.approved,
+                total: progress.total,
+                pending: progress.pending_review,
+              })}
             </span>
           ) : null}
           <span className="chip-muted">
-            蓝图 {progress?.blueprint_ready ? `v${progress.blueprint_version}` : "未生成"}
+            {progress?.blueprint_ready
+              ? t("course.progress.blueprintReady", {
+                  version: progress.blueprint_version,
+                })
+              : t("course.progress.blueprintMissing")}
           </span>
         </div>
       </div>
@@ -695,7 +712,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
             type="button"
             onClick={() => setError("")}
             className="text-rose-400 transition hover:text-rose-600"
-            aria-label="关闭错误提示"
+            aria-label={t("course.closeError")}
           >
             <X size={13} />
           </button>
@@ -726,10 +743,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           <div className="flex items-center justify-between px-1">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                课程大纲
+                {t("course.outlineTitle")}
               </p>
               <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                {detail.lesson_count} 讲
+                {t("course.lessonCount", { count: detail.lesson_count })}
               </p>
             </div>
             <div className="flex items-center gap-1">
@@ -737,7 +754,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 type="button"
                 onClick={() => setFormOpen((value) => !value)}
                 className="grid h-9 w-9 place-items-center rounded-full bg-indigo-500/10 text-indigo-600 transition hover:bg-indigo-500/20 dark:text-indigo-300"
-                aria-label="新增讲次"
+                aria-label={t("course.addLesson")}
               >
                 <Plus size={15} />
               </button>
@@ -745,7 +762,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 type="button"
                 onClick={() => setOutlineOpen(false)}
                 className="grid h-9 w-9 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 lg:hidden"
-                aria-label="关闭大纲"
+                aria-label={t("course.closeOutline")}
               >
                 <X size={16} />
               </button>
@@ -767,7 +784,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     autoFocus
                     value={newTitle}
                     onChange={(event) => setNewTitle(event.target.value)}
-                    placeholder="讲次标题，如：什么是向量检索"
+                    placeholder={t("course.lessonTitlePlaceholder")}
                     className="input text-[13px]"
                   />
                   <div className="flex justify-end gap-1">
@@ -779,15 +796,19 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                       }}
                       className="btn-quiet"
                     >
-                      取消
+                      {t("common.cancel")}
                     </button>
                     <button
                       type="submit"
                       disabled={creating || !newTitle.trim()}
                       className="btn btn-primary px-3 py-1.5 text-[11px]"
                     >
-                      {creating ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
-                      添加
+                      {creating ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Plus size={12} />
+                      )}
+                      {t("course.add")}
                     </button>
                   </div>
                 </div>
@@ -798,7 +819,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           <div className="no-scrollbar mt-3 flex-1 space-y-1 overflow-y-auto pr-0.5">
             {detail.lessons.length === 0 ? (
               <p className="px-2 py-4 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-                还没有讲次，先添加一讲再生成正文。
+                {t("course.emptyLessons")}
               </p>
             ) : (
               detail.lessons.map((lesson, lessonIndex) => {
@@ -849,15 +870,17 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                         {lesson.title}
                       </span>
                       <span className="mt-0.5 block truncate text-[10px] text-slate-400 dark:text-slate-500">
-                        {lesson.content ? `v${lesson.current_version}` : "待生成"} ·{" "}
-                        {statusLabel(lesson.status)}
+                        {lesson.content
+                          ? `v${lesson.current_version}`
+                          : t("course.toGenerate")}{" "}
+                        · {lessonStatusLabel(t, lesson.status)}
                       </span>
                     </span>
                     {canWrite ? (
                       <RowMenu
                         items={[
                           {
-                            label: "重命名",
+                            label: t("common.rename"),
                             icon: <Pencil size={11} />,
                             onClick: () => {
                               setLessonDialogError("");
@@ -865,19 +888,19 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                             },
                           },
                           {
-                            label: "上移",
+                            label: t("course.moveUp"),
                             icon: <ArrowUp size={11} />,
                             disabled: lessonIndex === 0,
                             onClick: () => void moveLesson(lesson.id, -1),
                           },
                           {
-                            label: "下移",
+                            label: t("course.moveDown"),
                             icon: <ArrowDown size={11} />,
                             disabled: lessonIndex === detail.lessons.length - 1,
                             onClick: () => void moveLesson(lesson.id, 1),
                           },
                           {
-                            label: "删除讲次",
+                            label: t("course.deleteLesson"),
                             icon: <Trash2 size={11} />,
                             danger: true,
                             onClick: () => {
@@ -911,7 +934,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200/70 pb-5 dark:border-white/10">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500">
-                    <span>第 {activeLesson.order_index} 讲</span>
+                    <span>
+                      {t("course.lessonNo", { index: activeLesson.order_index })}
+                    </span>
                     <span>·</span>
                     <StatusBadge status={activeLesson.status} />
                     <span>·</span>
@@ -925,7 +950,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                             : "bg-indigo-500/12 text-indigo-600 ring-1 ring-indigo-400/20 dark:bg-indigo-400/14 dark:text-indigo-300 dark:ring-indigo-300/20",
                         )}
                       >
-                        {modeLabel(currentMode)}模式
+                        {t("course.modeSuffix", {
+                          mode: modeLabel(t, currentMode),
+                        })}
                       </span>
                     ) : null}
                   </div>
@@ -946,7 +973,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     ) : (
                       <Sparkles size={14} />
                     )}
-                    {activeLesson.content ? "重新生成" : "生成正文"}
+                    {activeLesson.content
+                      ? t("course.regenerate")
+                      : t("course.generate")}
                   </button>
                   <button
                     type="button"
@@ -954,14 +983,14 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     className="btn btn-ghost xl:hidden"
                   >
                     <History size={14} />
-                    版本
+                    {t("course.versions")}
                   </button>
                   {canWrite ? (
                     <RowMenu
-                      label="讲次操作"
+                      label={t("course.lessonActions")}
                       items={[
                         {
-                          label: "重命名讲次",
+                          label: t("course.renameLessonTitle"),
                           icon: <Pencil size={11} />,
                           onClick: () => {
                             setLessonDialogError("");
@@ -972,7 +1001,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                           },
                         },
                         {
-                          label: "上移",
+                          label: t("course.moveUp"),
                           icon: <ArrowUp size={11} />,
                           disabled:
                             detail.lessons.findIndex(
@@ -981,7 +1010,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                           onClick: () => void moveLesson(activeLesson.id, -1),
                         },
                         {
-                          label: "下移",
+                          label: t("course.moveDown"),
                           icon: <ArrowDown size={11} />,
                           disabled:
                             detail.lessons.findIndex(
@@ -991,7 +1020,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                           onClick: () => void moveLesson(activeLesson.id, 1),
                         },
                         {
-                          label: "删除讲次",
+                          label: t("course.deleteLesson"),
                           icon: <Trash2 size={11} />,
                           danger: true,
                           onClick: () => {
@@ -1041,17 +1070,17 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     <div className="mt-4 rounded-2xl border border-indigo-200/60 bg-indigo-500/5 p-4 dark:border-indigo-400/20 dark:bg-indigo-400/5">
                       {readOnly ? (
         <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-          你以 只读 身份访问该空间，可浏览与阅读，写入类操作已禁用。
+          {t("course.readOnlyBannerSpace")}
         </div>
       ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-[11px] font-medium text-indigo-600 dark:text-indigo-300">
                           {generateMode === "loose"
-                            ? "非严格模式：先检索证据，允许模型自由写作，正文标注由大模型编写"
-                            : "严格模式：先检索知识库证据，再逐段带 [En] 引用写作"}
+                            ? t("course.generateLooseHint")
+                            : t("course.generateStrictHint")}
                         </p>
-                        <span className="chip-muted">写作模式</span>
+                        <span className="chip-muted">{t("course.writeMode")}</span>
                       </div>
                       <div className="mt-3">
                         <ModePicker
@@ -1064,7 +1093,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                         <input
                           value={topic}
                           onChange={(event) => setTopic(event.target.value)}
-                          placeholder="本节主题（留空则用讲次标题）"
+                          placeholder={t("course.topicPlaceholder")}
                           className="input"
                         />
                         <select
@@ -1074,7 +1103,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                         >
                           {[3, 5, 8, 12].map((value) => (
                             <option key={value} value={value}>
-                              证据 {value} 条
+                              {t("course.evidenceCount", { count: value })}
                             </option>
                           ))}
                         </select>
@@ -1090,7 +1119,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                           ) : (
                             <Sparkles size={14} />
                           )}
-                          开始生成
+                          {t("course.startGenerate")}
                         </button>
                       </div>
                     </div>
@@ -1101,7 +1130,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               {generating && (
                 <div className="mt-4 flex items-center gap-2 rounded-2xl border border-indigo-200/50 bg-white/50 px-4 py-3 text-xs text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-400">
                   <Loader2 size={14} className="animate-spin text-indigo-500" />
-                  正在检索证据、组织段落并写入新版本…
+                  {t("course.generatingHint")}
                 </div>
               )}
 
@@ -1109,7 +1138,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 <div className="mt-5 rounded-2xl border border-indigo-200/50 bg-indigo-500/5 p-4 dark:border-indigo-400/20 dark:bg-indigo-400/5">
                   <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-indigo-500 dark:text-indigo-300">
                     <Target size={12} />
-                    本节目标
+                    {t("course.objectives")}
                   </p>
                   <ul className="mt-2 space-y-1 text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">
                     {activeLesson.learning_objectives.map((objective) => (
@@ -1125,7 +1154,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               {activeLesson.prerequisites.length > 0 && (
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">
                   <span className="text-[10px] uppercase tracking-[0.14em] text-slate-400">
-                    前置
+                    {t("course.prerequisites")}
                   </span>
                   {activeLesson.prerequisites.map((item) => (
                     <span key={item} className="chip-muted">
@@ -1149,10 +1178,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                       <Sparkles size={20} />
                     </div>
                     <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-200">
-                      这一讲还没有正文
+                      {t("course.emptyContentTitle")}
                     </p>
                     <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                      严格模式没有证据就明确提示资料不足；非严格模式允许模型自由写作，但正文会标注「由大模型编写」。
+                      {t("course.emptyContentBody")}
                     </p>
                     <div className="mt-4 flex flex-wrap justify-center gap-2">
                       <button
@@ -1163,10 +1192,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                         className="btn btn-primary"
                       >
                         <Sparkles size={14} />
-                        生成正文
+                        {t("course.generate")}
                       </button>
                       <Link to="/kb" className="btn btn-ghost">
-                        先上传资料
+                        {t("course.uploadFirst")}
                       </Link>
                     </div>
                   </div>
@@ -1174,7 +1203,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 {lockBlocked ? (
                   <div className="pointer-events-none absolute inset-0 rounded-2xl bg-white/30 dark:bg-slate-950/35">
                     <div className="sticky top-3 mx-auto mt-3 w-fit rounded-full border border-amber-400/40 bg-amber-50/90 px-3 py-1 text-[11px] font-medium text-amber-800 shadow-sm backdrop-blur-sm dark:border-amber-300/25 dark:bg-amber-400/15 dark:text-amber-200">
-                      {lockReason} · 正文只读
+                      {t("course.lockOverlay", { reason: lockReason })}
                     </div>
                   </div>
                 ) : null}
@@ -1182,9 +1211,16 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
 
               <div className="mt-8 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70 pt-4 text-[11px] text-slate-400 dark:border-white/10 dark:text-slate-500">
                 <span>
-                  {currentCitations.length} 条引用 · {contentLength(activeLesson.content)} 字
+                  {t("course.citationsChars", {
+                    citations: currentCitations.length,
+                    chars: contentLength(activeLesson.content),
+                  })}
                 </span>
-                <span>更新于 {formatRelative(activeLesson.updated_at)}</span>
+                <span>
+                  {t("course.updatedAt", {
+                    time: formatRelative(activeLesson.updated_at),
+                  })}
+                </span>
               </div>
             </article>
           ) : (
@@ -1193,10 +1229,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 <BookOpen size={20} />
               </div>
               <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-200">
-                这门课还没有讲次
+                {t("course.noLessonsTitle")}
               </p>
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                在左侧大纲里添加第一讲，然后生成正文。
+                {t("course.noLessonsBody")}
               </p>
               <button
                 type="button"
@@ -1204,7 +1240,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 className="btn btn-primary mt-4"
               >
                 <Plus size={14} />
-                添加第一讲
+                {t("course.addFirstLesson")}
               </button>
             </div>
           )}
@@ -1287,7 +1323,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 type="button"
                 onClick={() => setVersionsOpen(false)}
                 className="absolute -top-1 right-0 grid h-8 w-8 place-items-center rounded-full bg-white/85 text-slate-500 shadow-sm dark:bg-slate-800/85 dark:text-slate-300"
-                aria-label="关闭版本面板"
+                aria-label={t("course.closeVersions")}
               >
                 <X size={15} />
               </button>
@@ -1315,8 +1351,14 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           type="button"
           onClick={() => setChatOpen(true)}
           disabled={readOnly || lockBlocked}
-          title={readOnly ? "当前角色只读" : lockBlocked ? lockReason : "追问 / 修改"}
-          aria-label="追问 / 修改"
+          title={
+            readOnly
+              ? t("course.guardReadOnly")
+              : lockBlocked
+                ? lockReason
+                : t("course.askEdit")
+          }
+          aria-label={t("course.askEdit")}
           className="fab brand-gradient grid h-14 w-14 place-items-center rounded-full text-white shadow-brand transition active:scale-95 disabled:opacity-45 sm:hidden"
         >
           <MessageSquare size={20} />
@@ -1358,14 +1400,14 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         onClose={() => setCourseEditOpen(false)}
         onSaved={(updated) => {
           setDetail((prev) => (prev ? { ...prev, course: updated } : prev));
-          setNotice("课程信息已更新");
+          setNotice(t("course.notices.courseUpdated"));
         }}
       />
 
       <ConfirmDialog
         open={courseDeleteOpen}
-        title="删除课程"
-        description={`将删除「${course.title}」及其全部讲次、版本、对话线与蓝图，且不可恢复。`}
+        title={t("course.deleteCourseTitle")}
+        description={t("course.deleteCourseDesc", { title: course.title })}
         requireText={course.title}
         busy={courseBusy}
         error={courseDialogError}
@@ -1375,8 +1417,8 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
 
       <PromptDialog
         open={Boolean(lessonRename)}
-        title="重命名讲次"
-        label="讲次标题"
+        title={t("course.renameLessonTitle")}
+        label={t("course.lessonTitleLabel")}
         initial={lessonRename?.title ?? ""}
         busy={lessonBusy}
         error={lessonDialogError}
@@ -1386,8 +1428,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
 
       <ConfirmDialog
         open={Boolean(lessonDelete)}
-        title="删除讲次"
-        description={`将删除「${lessonDelete?.title ?? ""}」及其全部版本与对话线，且不可恢复。`}
+        title={t("course.deleteLessonTitle")}
+        description={t("course.deleteLessonDesc", {
+          title: lessonDelete?.title ?? "",
+        })}
         busy={lessonBusy}
         error={lessonDialogError}
         onConfirm={() => void handleLessonDelete()}

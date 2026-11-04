@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, Loader2, MoreHorizontal, X } from "lucide-react";
 import clsx from "clsx";
+import { useI18n } from "@/i18n/I18nProvider";
 
 export function Modal({
   open,
@@ -18,6 +19,7 @@ export function Modal({
   children: ReactNode;
   wide?: boolean;
 }) {
+  const { t } = useI18n();
   useEffect(() => {
     if (!open) return;
     const handler = (event: KeyboardEvent) => {
@@ -63,7 +65,7 @@ export function Modal({
                 type="button"
                 onClick={onClose}
                 className="btn-quiet grid h-8 w-8 shrink-0 place-items-center rounded-full"
-                aria-label="关闭"
+                aria-label={t("common.close")}
               >
                 <X size={14} />
               </button>
@@ -80,7 +82,7 @@ export function ConfirmDialog({
   open,
   title,
   description,
-  confirmLabel = "确认删除",
+  confirmLabel,
   requireText,
   busy,
   error,
@@ -97,6 +99,7 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [typed, setTyped] = useState("");
 
   useEffect(() => {
@@ -116,7 +119,7 @@ export function ConfirmDialog({
         ) : null}
         {requireText ? (
           <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-            请输入「{requireText}」以确认
+            {t("common.confirmTyping", { name: requireText })}
             <input
               autoFocus
               value={typed}
@@ -133,7 +136,7 @@ export function ConfirmDialog({
         ) : null}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="btn btn-quiet">
-            取消
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -142,7 +145,7 @@ export function ConfirmDialog({
             className="btn bg-rose-500 text-white shadow-[0_10px_22px_-14px_rgba(244,63,94,0.9)] hover:bg-rose-600 disabled:opacity-50"
           >
             {busy ? <Loader2 size={13} className="animate-spin" /> : null}
-            {confirmLabel}
+            {confirmLabel || t("common.confirmDelete")}
           </button>
         </div>
       </div>
@@ -156,7 +159,7 @@ export function PromptDialog({
   label,
   initial = "",
   placeholder,
-  confirmLabel = "保存",
+  confirmLabel,
   busy,
   error,
   onConfirm,
@@ -173,6 +176,7 @@ export function PromptDialog({
   onConfirm: (value: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [value, setValue] = useState(initial);
 
   useEffect(() => {
@@ -199,7 +203,7 @@ export function PromptDialog({
         ) : null}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="btn btn-quiet">
-            取消
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -208,7 +212,7 @@ export function PromptDialog({
             className="btn btn-primary"
           >
             {busy ? <Loader2 size={13} className="animate-spin" /> : null}
-            {confirmLabel}
+            {confirmLabel || t("common.save")}
           </button>
         </div>
       </div>
@@ -227,12 +231,13 @@ export type MenuItem = {
 export function RowMenu({
   items,
   align = "right",
-  label = "更多操作",
+  label,
 }: {
   items: MenuItem[];
   align?: "left" | "right";
   label?: string;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -256,7 +261,7 @@ export function RowMenu({
           setOpen((prev) => !prev);
         }}
         className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 transition hover:bg-white/70 hover:text-indigo-600 dark:hover:bg-white/10 dark:hover:text-indigo-300"
-        aria-label={label}
+        aria-label={label || t("common.actions")}
       >
         <MoreHorizontal size={14} />
       </button>

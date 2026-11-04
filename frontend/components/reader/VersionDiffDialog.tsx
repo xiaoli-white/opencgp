@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle, GitCompare, Loader2, X } from "lucide-react";
 import clsx from "clsx";
 import type { VersionDiffResult } from "@/lib/api";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type VersionDiffDialogProps = {
   open: boolean;
@@ -16,13 +17,14 @@ type VersionDiffDialogProps = {
 
 export default function VersionDiffDialog({
   open,
-  title = "版本对比",
+  title,
   versions,
   initialFrom,
   initialTo,
   fetchDiff,
   onClose,
 }: VersionDiffDialogProps) {
+  const { t } = useI18n();
   const ordered = useMemo(
     () => [...versions].sort((a, b) => a - b),
     [versions],
@@ -51,7 +53,7 @@ export default function VersionDiffDialog({
     if (!from || !to) return;
     if (from === to) {
       setData(null);
-      setError("请选择两个不同的版本");
+      setError(t("reader.sameVersion"));
       return;
     }
     let cancelled = false;
@@ -63,7 +65,8 @@ export default function VersionDiffDialog({
         if (!cancelled) setData(result);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "对比失败");
+        if (!cancelled)
+          setError(err instanceof Error ? err.message : t("reader.diffFailed"));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -97,17 +100,17 @@ export default function VersionDiffDialog({
               <div className="min-w-0">
                 <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-800 dark:text-slate-100">
                   <GitCompare size={14} className="text-indigo-500" />
-                  {title}
+                  {title || t("reader.diffTitle")}
                 </p>
                 <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                  逐行对比两个历史版本，绿色为新增、红色为删除。
+                  {t("reader.diffSubtitle")}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={onClose}
                 className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
-                aria-label="关闭对比"
+                aria-label={t("reader.closeDiff")}
               >
                 <X size={16} />
               </button>
@@ -118,7 +121,7 @@ export default function VersionDiffDialog({
                 value={from}
                 onChange={(event) => setFrom(Number(event.target.value))}
                 className="select w-auto px-2 py-1 text-[11px]"
-                aria-label="对比起始版本"
+                aria-label={t("reader.diffFrom")}
               >
                 {ordered.map((version) => (
                   <option key={version} value={version}>
@@ -131,7 +134,7 @@ export default function VersionDiffDialog({
                 value={to}
                 onChange={(event) => setTo(Number(event.target.value))}
                 className="select w-auto px-2 py-1 text-[11px]"
-                aria-label="对比目标版本"
+                aria-label={t("reader.diffTo")}
               >
                 {ordered.map((version) => (
                   <option key={version} value={version}>
@@ -142,10 +145,10 @@ export default function VersionDiffDialog({
               {data ? (
                 <span className="ml-auto inline-flex items-center gap-2 text-[11px] font-medium">
                   <span className="rounded-full bg-emerald-500/12 px-2 py-0.5 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300">
-                    +{data.added_chars} 字符
+                    {t("reader.addedChars", { count: data.added_chars })}
                   </span>
                   <span className="rounded-full bg-rose-500/12 px-2 py-0.5 text-rose-700 dark:bg-rose-400/15 dark:text-rose-300">
-                    -{data.removed_chars} 字符
+                    {t("reader.removedChars", { count: data.removed_chars })}
                   </span>
                 </span>
               ) : null}
@@ -162,11 +165,11 @@ export default function VersionDiffDialog({
               {loading ? (
                 <p className="flex items-center gap-2 px-2 py-3 text-[11px] text-slate-400">
                   <Loader2 size={12} className="animate-spin" />
-                  正在对比…
+                  {t("reader.diffing")}
                 </p>
               ) : !data || data.hunks.length === 0 ? (
                 <p className="px-2 py-3 text-[11px] text-slate-400">
-                  没有可显示的内容差异。
+                  {t("reader.noDiff")}
                 </p>
               ) : (
                 <div className="space-y-0.5 font-mono text-[11.5px] leading-relaxed">

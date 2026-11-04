@@ -1,5 +1,7 @@
 import clsx from "clsx";
-import { statusLabel, statusTone, type StatusTone } from "@/lib/format";
+import { statusTone, type StatusTone } from "@/lib/format";
+import { lessonStatusLabel } from "@/i18n/labels";
+import { useI18n } from "@/i18n/I18nProvider";
 
 const TONE_CLASS: Record<StatusTone, string> = {
   neutral:
@@ -43,6 +45,7 @@ export default function StatusBadge({
   className?: string;
   withDot?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <span className={statusBadgeClass(status, className)}>
       {withDot ? (
@@ -50,7 +53,7 @@ export default function StatusBadge({
           className={clsx("h-1.5 w-1.5 rounded-full", statusDotClass(status))}
         />
       ) : null}
-      {statusLabel(status)}
+      {lessonStatusLabel(t, status)}
     </span>
   );
 }

@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import { formatRelative } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type ReviewControlsProps = {
   lesson: Lesson;
@@ -39,11 +40,12 @@ export default function ReviewControls({
   lockedReason = "",
 }: ReviewControlsProps) {
   const { can } = useSession();
+  const { t } = useI18n();
   const readOnly = !can("review");
   const writeTitle = readOnly
-    ? "当前角色只读"
+    ? t("course.guardReadOnly")
     : locked
-      ? lockedReason || "该讲正被他人编辑"
+      ? lockedReason || t("course.review.lockedDefault")
       : "";
   const writeBlocked = readOnly || locked;
   const [reviews, setReviews] = useState<LessonReview[]>([]);
@@ -88,13 +90,13 @@ export default function ReviewControls({
       setNoteOpen(false);
       onNotice(
         action === "approve"
-          ? `已通过《${lesson.title}》审核`
-          : `已退回《${lesson.title}》并要求修改`,
+          ? t("course.review.toastApproved", { title: lesson.title })
+          : t("course.review.toastRevision", { title: lesson.title }),
       );
       await loadReviews();
       await onReviewed();
     } catch (err) {
-      onError(err instanceof Error ? err.message : "审核操作失败");
+      onError(err instanceof Error ? err.message : t("course.review.failed"));
     } finally {
       setBusy(null);
     }
@@ -113,11 +115,16 @@ export default function ReviewControls({
             />
           </div>
           <span className="shrink-0 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-            已通过 {approved}/{total || 0}
+            {t("course.progress.reviewApproved", {
+              approved,
+              total: total || 0,
+            })}
           </span>
           {progress ? (
             <span className="hidden shrink-0 text-[10px] text-slate-400 dark:text-slate-500 sm:inline">
-              待审核 {progress.pending_review}
+              {t("course.progress.reviewPending", {
+                pending: progress.pending_review,
+              })}
             </span>
           ) : null}
         </div>
@@ -129,7 +136,9 @@ export default function ReviewControls({
             disabled={writeBlocked || !hasContent || busy !== null}
             title={
               writeTitle ||
-              (hasContent ? "通过本讲审核" : "先生成本讲正文再审核")
+              (hasContent
+                ? t("course.review.approveTitle")
+                : t("course.review.approveBlocked"))
             }
             className={clsx(
               "inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[11.5px] font-medium ring-1 transition",
@@ -143,7 +152,7 @@ export default function ReviewControls({
             ) : (
               <Check size={12} />
             )}
-            通过审核
+            {t("course.review.approve")}
           </button>
           <button
             type="button"
@@ -153,7 +162,7 @@ export default function ReviewControls({
             className="inline-flex items-center gap-1 rounded-full bg-amber-400/18 px-3 py-1.5 text-[11.5px] font-medium text-amber-700 ring-1 ring-amber-500/30 transition hover:bg-amber-400/26 disabled:opacity-50 dark:bg-amber-300/14 dark:text-amber-300 dark:ring-amber-300/25 dark:hover:bg-amber-300/20"
           >
             <MessageSquareWarning size={12} />
-            退回修改
+            {t("course.review.requestRevision")}
           </button>
         </div>
       </div>
@@ -161,7 +170,7 @@ export default function ReviewControls({
       {!hasContent ? (
         <p className="mt-2 flex items-center gap-1.5 text-[10.5px] text-slate-400 dark:text-slate-500">
           <CircleSlash size={11} />
-          这一讲还没有正文，「通过审核」暂时不可用。
+          {t("course.review.noContent")}
         </p>
       ) : null}
 
@@ -179,7 +188,7 @@ export default function ReviewControls({
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
                 rows={2}
-                placeholder="修改意见（可选）：哪一段要补证据、哪里需要重写"
+                placeholder={t("course.review.notePlaceholder")}
                 className="input resize-none text-[12px] leading-relaxed"
               />
               <div className="flex items-center justify-end gap-1.5">
@@ -192,7 +201,7 @@ export default function ReviewControls({
                   className="btn-quiet"
                 >
                   <X size={11} />
-                  取消
+                  {t("common.cancel")}
                 </button>
                 <button
                   type="button"
@@ -206,7 +215,7 @@ export default function ReviewControls({
                   ) : (
                     <Send size={12} />
                   )}
-                  确认退回
+                  {t("course.review.confirmRevision")}
                 </button>
               </div>
             </div>
@@ -218,10 +227,10 @@ export default function ReviewControls({
         <div className="mt-2.5 flex items-start gap-2 rounded-2xl border border-amber-400/40 bg-amber-400/12 px-3 py-2 text-[11px] leading-relaxed text-amber-800 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-200">
           <AlertTriangle size={12} className="mt-0.5 shrink-0" />
           <span className="min-w-0">
-            <span className="font-semibold">待修改</span>
+            <span className="font-semibold">{t("course.review.needsRevision")}</span>
             {reviewsLoading ? (
               <span className="ml-1.5 text-amber-600/70 dark:text-amber-300/70">
-                正在读取最近意见…
+                {t("course.review.loadingNote")}
               </span>
             ) : latest?.note ? (
               <span className="ml-1.5">
@@ -231,7 +240,7 @@ export default function ReviewControls({
                 </span>
               </span>
             ) : (
-              <span className="ml-1.5">· 尚未填写具体修改意见</span>
+              <span className="ml-1.5">· {t("course.review.noNote")}</span>
             )}
           </span>
         </div>
@@ -240,7 +249,7 @@ export default function ReviewControls({
       {lesson.status === "approved" ? (
         <p className="mt-2 flex items-center gap-1.5 text-[10.5px] text-emerald-600 dark:text-emerald-400">
           <Check size={11} />
-          本讲已通过审核
+          {t("course.review.approvedDone")}
           {latest?.created_at ? ` · ${formatRelative(latest.created_at)}` : ""}
         </p>
       ) : null}

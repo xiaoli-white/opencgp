@@ -10,41 +10,45 @@ export function formatDateTime(timestamp: number): string {
   });
 }
 
+let formatLocale: "zh" | "en" = "zh";
+
+export function setFormatLocale(locale: "zh" | "en") {
+  formatLocale = locale === "en" ? "en" : "zh";
+}
+
 export function formatRelative(timestamp: number): string {
   if (!timestamp) return "—";
   const diff = Date.now() / 1000 - timestamp;
-  if (diff < 60) return "刚刚";
-  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
-  if (diff < 86400 * 30) return `${Math.floor(diff / 86400)} 天前`;
+  const en = formatLocale === "en";
+  if (diff < 60) return en ? "just now" : "刚刚";
+  if (diff < 3600) {
+    const n = Math.floor(diff / 60);
+    return en ? `${n} min ago` : `${n} 分钟前`;
+  }
+  if (diff < 86400) {
+    const n = Math.floor(diff / 3600);
+    return en ? `${n} h ago` : `${n} 小时前`;
+  }
+  if (diff < 86400 * 30) {
+    const n = Math.floor(diff / 86400);
+    return en ? `${n} d ago` : `${n} 天前`;
+  }
   return formatDateTime(timestamp).slice(0, 10);
 }
 
-const DIFFICULTY_LABELS: Record<string, string> = {
-  beginner: "入门",
-  elementary: "入门",
-  intermediate: "进阶",
-  advanced: "高级",
-  expert: "专家",
-};
+import {
+  difficultyLabel as difficultyLabelI18n,
+  getActiveTranslate,
+  lessonStatusLabel,
+  modeLabel as modeLabelI18n,
+} from "@/i18n/labels";
 
 export function difficultyLabel(value: string): string {
-  return DIFFICULTY_LABELS[value] ?? (value || "进阶");
+  return difficultyLabelI18n(getActiveTranslate(), value);
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  planned: "待生成",
-  draft: "草稿",
-  generated: "已生成",
-  review: "待审",
-  approved: "已通过",
-  published: "已发布",
-  needs_revision: "待修改",
-  reverted: "已回滚",
-};
-
 export function statusLabel(value: string): string {
-  return STATUS_LABELS[value] ?? (value || "草稿");
+  return lessonStatusLabel(getActiveTranslate(), value || "draft");
 }
 
 export type StatusTone =
@@ -86,13 +90,8 @@ export function sourceLabel(name: string): string {
 
 export const LOOSE_NOTICE_KEYWORD = "由大模型编写";
 
-const MODE_LABELS: Record<string, string> = {
-  strict: "严格",
-  loose: "非严格",
-};
-
 export function modeLabel(mode: string): string {
-  return MODE_LABELS[mode] ?? "严格";
+  return modeLabelI18n(getActiveTranslate(), mode);
 }
 
 export function splitLooseNotice(content: string): {

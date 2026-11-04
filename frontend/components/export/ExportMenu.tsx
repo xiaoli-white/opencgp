@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
+import { useI18n } from "@/i18n/I18nProvider";
 import clsx from "clsx";
 import {
   ApiError,
@@ -30,6 +31,7 @@ export default function ExportMenu({
   fallbackName,
   className,
 }: ExportMenuProps) {
+  const { t } = useI18n();
   const [formats, setFormats] = useState<ExportFormat[]>([]);
   const [includeCitations, setIncludeCitations] = useState(true);
   const [busy, setBusy] = useState<ExportFormatId | "">("");
@@ -73,7 +75,7 @@ export default function ExportMenu({
         window.setTimeout(() => URL.revokeObjectURL(href), 4000);
       } catch (err) {
         setError(
-          err instanceof ApiError || err instanceof Error ? err.message : "导出失败",
+          err instanceof ApiError || err instanceof Error ? err.message : t("export.failed"),
         );
       } finally {
         setBusy("");
@@ -86,7 +88,7 @@ export default function ExportMenu({
     <div className={clsx("relative flex flex-wrap items-center gap-1", className)}>
       <span className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500">
         <Download size={12} />
-        导出
+        {t("export.label")}
       </span>
       {options.map((item) => (
         <button
@@ -94,7 +96,7 @@ export default function ExportMenu({
           type="button"
           disabled={!item.available || Boolean(busy)}
           onClick={() => void download(item.id)}
-          title={item.available ? `导出 ${item.label}` : `${item.label} 不可用`}
+          title={item.available ? t("export.one", { label: item.label }) : t("export.unavailable", { label: item.label })}
           className={clsx(
             "rounded-lg border px-2 py-1 text-[11px] font-medium transition",
             item.available
@@ -116,11 +118,11 @@ export default function ExportMenu({
           onChange={(event) => setIncludeCitations(event.target.checked)}
           className="h-3 w-3 accent-indigo-500"
         />
-        引用
+        {t("export.citations")}
       </label>
       {error ? (
         <span className="text-[10px] text-rose-500" title={error}>
-          导出失败
+          {t("export.failed")}
         </span>
       ) : null}
     </div>

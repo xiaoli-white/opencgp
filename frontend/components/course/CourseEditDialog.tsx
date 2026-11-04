@@ -2,16 +2,13 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { api, type Course } from "@/lib/api";
 import { Modal } from "@/components/common/Dialogs";
+import { useI18n } from "@/i18n/I18nProvider";
 
-const DIFFICULTIES: { value: string; label: string }[] = [
-  { value: "beginner", label: "入门" },
-  { value: "intermediate", label: "进阶" },
-  { value: "advanced", label: "高级" },
-];
+const DIFFICULTIES = ["beginner", "intermediate", "advanced"];
 
-const LANGUAGES: { value: string; label: string }[] = [
-  { value: "zh", label: "中文" },
-  { value: "en", label: "English" },
+const LANGUAGES: { value: string; label: { zh: string; en: string } }[] = [
+  { value: "zh", label: { zh: "中文", en: "Chinese" } },
+  { value: "en", label: { zh: "English", en: "English" } },
 ];
 
 export default function CourseEditDialog({
@@ -25,6 +22,7 @@ export default function CourseEditDialog({
   onClose: () => void;
   onSaved: (course: Course) => void;
 }) {
+  const { t, tm } = useI18n();
   const [title, setTitle] = useState("");
   const [subtitle, setSubtitle] = useState("");
   const [audience, setAudience] = useState("");
@@ -58,7 +56,7 @@ export default function CourseEditDialog({
       onSaved(updated);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "保存失败");
+      setError(err instanceof Error ? err.message : t("course.edit.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -67,55 +65,55 @@ export default function CourseEditDialog({
   return (
     <Modal
       open={open}
-      title="编辑课程信息"
-      subtitle="标题、简介与受众等元信息会同步显示在课程页与首页卡片。"
+      title={t("course.edit.title")}
+      subtitle={t("course.edit.subtitle")}
       onClose={onClose}
     >
       <div className="space-y-3">
         <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-          课程标题
+          {t("course.edit.courseTitle")}
           <input
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             className="input mt-1"
-            placeholder="例如：向量检索入门"
+            placeholder={t("course.edit.courseTitlePlaceholder")}
           />
         </label>
         <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-          副标题
+          {t("course.edit.subtitleLabel")}
           <input
             value={subtitle}
             onChange={(event) => setSubtitle(event.target.value)}
             className="input mt-1"
-            placeholder="一句话说明这门课"
+            placeholder={t("course.edit.subtitlePlaceholder")}
           />
         </label>
         <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-          目标受众
+          {t("course.edit.audienceLabel")}
           <input
             value={audience}
             onChange={(event) => setAudience(event.target.value)}
             className="input mt-1"
-            placeholder="例如：后端工程师"
+            placeholder={t("course.edit.audiencePlaceholder")}
           />
         </label>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-            难度
+            {t("course.edit.difficulty")}
             <select
               value={difficulty}
               onChange={(event) => setDifficulty(event.target.value)}
               className="select mt-1"
             >
               {DIFFICULTIES.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
+                <option key={item} value={item}>
+                  {t(`labels.difficulty.${item}`)}
                 </option>
               ))}
             </select>
           </label>
           <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-            语言
+            {t("course.edit.language")}
             <select
               value={language}
               onChange={(event) => setLanguage(event.target.value)}
@@ -123,7 +121,7 @@ export default function CourseEditDialog({
             >
               {LANGUAGES.map((item) => (
                 <option key={item.value} value={item.value}>
-                  {item.label}
+                  {tm(item.label)}
                 </option>
               ))}
             </select>
@@ -136,7 +134,7 @@ export default function CourseEditDialog({
         ) : null}
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" onClick={onClose} className="btn btn-quiet">
-            取消
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -145,7 +143,7 @@ export default function CourseEditDialog({
             className="btn btn-primary"
           >
             {busy ? <Loader2 size={13} className="animate-spin" /> : null}
-            保存修改
+            {t("common.saveChanges")}
           </button>
         </div>
       </div>

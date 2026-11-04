@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle, Eye, GitCompare, Loader2, X } from "lucide-react";
 import type { Citation } from "@/lib/api";
 import MarkdownReader from "@/components/reader/MarkdownReader";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type VersionPreviewDialogProps = {
   open: boolean;
@@ -15,12 +16,13 @@ type VersionPreviewDialogProps = {
 
 export default function VersionPreviewDialog({
   open,
-  title = "版本预览",
+  title,
   version,
   load,
   onClose,
   onCompare,
 }: VersionPreviewDialogProps) {
+  const { t } = useI18n();
   const [content, setContent] = useState("");
   const [citations, setCitations] = useState<Citation[]>([]);
   const [loading, setLoading] = useState(false);
@@ -44,7 +46,8 @@ export default function VersionPreviewDialog({
         setCitations(result.citations ?? []);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "加载失败");
+        if (!cancelled)
+          setError(err instanceof Error ? err.message : t("reader.loadFailed"));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -78,18 +81,18 @@ export default function VersionPreviewDialog({
               <div className="min-w-0">
                 <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-800 dark:text-slate-100">
                   <Eye size={14} className="text-indigo-500" />
-                  {title}
+                  {title || t("reader.previewTitle")}
                   <span className="chip-muted ml-1">v{version ?? 0}</span>
                 </p>
                 <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                  只读预览，不会修改当前内容。
+                  {t("reader.previewSubtitle")}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={onClose}
                 className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
-                aria-label="关闭预览"
+                aria-label={t("reader.closePreview")}
               >
                 <X size={16} />
               </button>
@@ -106,13 +109,13 @@ export default function VersionPreviewDialog({
               {loading ? (
                 <p className="flex items-center gap-2 px-1 py-3 text-[11px] text-slate-400">
                   <Loader2 size={12} className="animate-spin" />
-                  正在加载版本内容…
+                  {t("reader.loadingVersion")}
                 </p>
               ) : content ? (
                 <MarkdownReader content={content} citations={citations} />
               ) : (
                 <p className="px-1 py-3 text-[11px] text-slate-400">
-                  该版本没有正文内容。
+                  {t("reader.emptyVersion")}
                 </p>
               )}
             </div>
@@ -121,7 +124,7 @@ export default function VersionPreviewDialog({
               <div className="mt-3 flex justify-end">
                 <button type="button" onClick={onCompare} className="btn-quiet">
                   <GitCompare size={12} />
-                  与当前版本对比
+                  {t("reader.compareWithCurrent")}
                 </button>
               </div>
             ) : null}

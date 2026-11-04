@@ -5,6 +5,7 @@ import { api, type LessonVersion } from "@/lib/api";
 import { contentLength, formatDateTime } from "@/lib/format";
 import VersionDiffDialog from "@/components/reader/VersionDiffDialog";
 import VersionPreviewDialog from "@/components/reader/VersionPreviewDialog";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type VersionPanelProps = {
   versions: LessonVersion[];
@@ -25,6 +26,7 @@ export default function VersionPanel({
   lessonId,
   className,
 }: VersionPanelProps) {
+  const { t } = useI18n();
   const [previewVersion, setPreviewVersion] = useState<number | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffAnchor, setDiffAnchor] = useState<number | null>(null);
@@ -52,7 +54,7 @@ export default function VersionPanel({
   };
 
   const fetchDiff = async (from: number, to: number) => {
-    if (!lessonId) throw new Error("缺少讲次信息，无法对比");
+    if (!lessonId) throw new Error(t("reader.missingLesson"));
     return api.diffLessonVersions(lessonId, from, to);
   };
 
@@ -71,9 +73,11 @@ export default function VersionPanel({
       <div className="flex items-center justify-between px-1">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
           <History size={13} />
-          版本历史
+          {t("reader.versions")}
         </div>
-        <span className="chip-muted">当前 v{currentVersion || 0}</span>
+        <span className="chip-muted">
+          {t("reader.currentVersion", { version: currentVersion || 0 })}
+        </span>
       </div>
 
       {versionNumbers.length > 1 ? (
@@ -83,7 +87,7 @@ export default function VersionPanel({
           className="btn-quiet mt-2 w-full justify-center text-[11px]"
         >
           <GitCompare size={12} />
-          任意两版对比
+          {t("reader.compareAny")}
         </button>
       ) : null}
 
@@ -99,7 +103,7 @@ export default function VersionPanel({
           </div>
         ) : ordered.length === 0 ? (
           <p className="px-1 py-4 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-            还没有版本。生成正文或提交一次修改后，会自动沉淀版本记录。
+            {t("reader.versionsEmpty")}
           </p>
         ) : (
           ordered.map((version) => {
@@ -134,24 +138,28 @@ export default function VersionPanel({
                     )}
                     title={
                       version.mode === "loose"
-                        ? "非严格模式：允许模型自由写作，正文标注由大模型编写"
-                        : "严格模式：必须带出处，无据不写"
+                        ? t("reader.modeLooseTip")
+                        : t("reader.modeStrictTip")
                     }
                   >
                     {version.mode || "strict"}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-[12px] text-slate-600 dark:text-slate-300">
-                    {version.note || "自动存档"}
+                    {version.note || t("reader.autoArchive")}
                   </span>
                   {isCurrent && (
                     <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-300">
-                      当前
+                      {t("reader.currentShort")}
                     </span>
                   )}
                 </div>
                 <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-400 dark:text-slate-500">
                   <span>{formatDateTime(version.created_at)}</span>
-                  <span>{contentLength(version.content)} 字</span>
+                  <span>
+                    {t("reader.chars", {
+                      count: contentLength(version.content),
+                    })}
+                  </span>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1">
                   <button
@@ -160,7 +168,7 @@ export default function VersionPanel({
                     className="btn-quiet"
                   >
                     <Eye size={12} />
-                    预览
+                    {t("reader.preview")}
                   </button>
                   <button
                     type="button"
@@ -168,7 +176,7 @@ export default function VersionPanel({
                     className="btn-quiet"
                   >
                     <GitCompare size={12} />
-                    对比
+                    {t("reader.compare")}
                   </button>
                   <button
                     type="button"
@@ -181,7 +189,7 @@ export default function VersionPanel({
                     ) : (
                       <RotateCcw size={12} />
                     )}
-                    回滚
+                    {t("reader.revert")}
                   </button>
                 </div>
               </div>

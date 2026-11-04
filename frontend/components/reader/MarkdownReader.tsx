@@ -8,6 +8,7 @@ import { AlertTriangle, FileText, MessageSquareQuote } from "lucide-react";
 import type { Citation, Evidence, GenerationMode } from "@/lib/api";
 import { splitLooseNotice } from "@/lib/format";
 import MermaidDiagram from "@/components/reader/MermaidDiagram";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type MarkdownReaderProps = {
   content: string;
@@ -30,6 +31,7 @@ type SelectionAnchor = {
 const MARKER_PATTERN = /^\[E(\d+)\]$/;
 
 function CiteMark({ marker, source }: { marker: string; source?: Citation }) {
+  const { t } = useI18n();
   if (!source) {
     return <span className="text-slate-400">[{marker}]</span>;
   }
@@ -39,13 +41,16 @@ function CiteMark({ marker, source }: { marker: string; source?: Citation }) {
       <span className="pointer-events-none absolute bottom-full left-1/2 z-40 mb-2 hidden w-72 -translate-x-1/2 rounded-2xl border border-white/60 bg-white/95 p-3 text-left font-sans text-[11px] font-normal not-italic leading-relaxed text-slate-600 shadow-xl backdrop-blur-xl group-hover:block dark:border-white/15 dark:bg-slate-900/95 dark:text-slate-300">
         <span className="mb-1 flex items-center gap-1 font-semibold text-indigo-600 dark:text-indigo-300">
           <FileText size={11} />
-          {source.source_name || "知识源"}
+          {source.source_name || t("reader.citeSource")}
         </span>
         <span className="block max-h-32 overflow-hidden">
           {source.snippet || source.text}
         </span>
         <span className="mt-1.5 block text-[10px] text-slate-400 dark:text-slate-500">
-          匹配度 {source.score.toFixed(2)} · 片段 #{source.chunk_index}
+          {t("reader.citeScore", {
+            score: source.score.toFixed(2),
+            index: source.chunk_index,
+          })}
         </span>
       </span>
     </span>
@@ -85,6 +90,7 @@ export default function MarkdownReader({
   enableAsk = true,
   showCitations = true,
 }: MarkdownReaderProps) {
+  const { t } = useI18n();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [anchor, setAnchor] = useState<SelectionAnchor | null>(null);
   const askEnabled = enableAsk && Boolean(onAskSelection);
@@ -260,13 +266,13 @@ export default function MarkdownReader({
             className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-300"
           />
           <span className="text-amber-800 dark:text-amber-200">
-            <span className="font-semibold">非严格模式</span>
+            <span className="font-semibold">{t("reader.looseTitle")}</span>
             <span className="mx-1.5 text-amber-500/70 dark:text-amber-300/50">
               /
             </span>
             {notice
               ? notice.replace(/^⚠️?\s*/, "")
-              : "本讲内容由大模型编写，未经知识库证据核实，请核对后使用"}
+              : t("reader.looseFallback")}
           </span>
         </motion.div>
       ) : null}
@@ -298,7 +304,7 @@ export default function MarkdownReader({
               className="brand-gradient absolute z-30 !mt-0 flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 font-sans text-[11px] font-medium text-white shadow-[0_14px_30px_-16px_rgba(99,102,241,0.95)] ring-1 ring-white/45 transition-[filter] hover:brightness-105 dark:ring-white/20"
             >
               <MessageSquareQuote size={13} />
-              针对这段提问
+              {t("reader.askSelection")}
             </motion.button>
           ) : null}
         </AnimatePresence>

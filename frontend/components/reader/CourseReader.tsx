@@ -19,7 +19,9 @@ import {
   type GenerationMode,
   type Lesson,
 } from "@/lib/api";
-import { contentLength, modeLabel } from "@/lib/format";
+import { contentLength } from "@/lib/format";
+import { modeLabel } from "@/i18n/labels";
+import { useI18n } from "@/i18n/I18nProvider";
 import MarkdownReader from "@/components/reader/MarkdownReader";
 import StatusBadge, { statusDotClass } from "@/components/course/StatusBadge";
 
@@ -41,6 +43,7 @@ export default function CourseReader({
   onOpenLesson,
   onGoReader,
 }: CourseReaderProps) {
+  const { t } = useI18n();
   const readable = useMemo(
     () =>
       lessons
@@ -161,14 +164,14 @@ export default function CourseReader({
           <ScrollText size={20} />
         </div>
         <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-200">
-          还没有可连续阅读的正文
+          {t("reader.emptyTitle")}
         </p>
         <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-          连续阅读会把所有已有正文的讲次按顺序串起来。先去阅读视图生成至少一讲正文。
+          {t("reader.emptyBody")}
         </p>
         <button type="button" onClick={onGoReader} className="btn btn-primary mt-4">
           <BookOpen size={14} />
-          去阅读视图生成
+          {t("reader.goGenerate")}
         </button>
       </div>
     );
@@ -179,7 +182,7 @@ export default function CourseReader({
       <div className="flex items-center justify-between gap-2 lg:hidden">
         <span className="chip-muted">
           <ScrollText size={11} />
-          连续阅读 · {readable.length} 讲
+          {t("reader.continuousBadge", { count: readable.length })}
         </span>
         <button
           type="button"
@@ -187,7 +190,7 @@ export default function CourseReader({
           className="btn btn-ghost shrink-0"
         >
           <List size={14} />
-          目录
+          {t("reader.toc")}
         </button>
       </div>
       <AnimatePresence>
@@ -212,18 +215,25 @@ export default function CourseReader({
           <div className="min-w-0">
           <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
             <Layers size={11} />
-            连续阅读
+            {t("reader.continuous")}
           </p>
           <p className="mt-0.5 text-[13px] font-medium text-slate-700 dark:text-slate-200">
-            {readable.length} 讲 ·{" "}
-            {progress ? `已通过 ${progress.approved}/${progress.total}` : "阅读中"}
+            {t("reader.tocSummary", {
+              count: readable.length,
+              progress: progress
+                ? t("reader.approvedProgress", {
+                    approved: progress.approved,
+                    total: progress.total,
+                  })
+                : t("reader.reading"),
+            })}
           </p>
           </div>
           <button
             type="button"
             onClick={() => setTocOpen(false)}
             className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 lg:hidden"
-            aria-label="关闭目录"
+            aria-label={t("reader.closeToc")}
           >
             <X size={16} />
           </button>
@@ -273,7 +283,9 @@ export default function CourseReader({
                     {lesson.order_index}. {lesson.title}
                   </span>
                   <span className="mt-0.5 block text-[10px] text-slate-400 dark:text-slate-500">
-                    {contentLength(lesson.content)} 字
+                    {t("reader.chars", {
+                      count: contentLength(lesson.content),
+                    })}
                   </span>
                 </span>
               </button>
@@ -282,7 +294,7 @@ export default function CourseReader({
         </nav>
 
         <p className="mt-2 border-t border-slate-200/70 px-1 pt-2 text-[10px] leading-relaxed text-slate-400 dark:border-white/10 dark:text-slate-500">
-          滚动进度 {Math.round(ratio * 100)}%
+          {t("reader.scrollProgress", { percent: Math.round(ratio * 100) })}
         </p>
       </aside>
 
@@ -306,7 +318,9 @@ export default function CourseReader({
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200/70 pb-4 dark:border-white/10">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500">
-                    <span>第 {lesson.order_index} 讲</span>
+                    <span>
+                      {t("reader.lessonNo", { index: lesson.order_index })}
+                    </span>
                     <span>·</span>
                     <span>v{lesson.current_version}</span>
                     <StatusBadge status={lesson.status} />
@@ -318,7 +332,7 @@ export default function CourseReader({
                           : "bg-indigo-500/12 text-indigo-600 ring-1 ring-indigo-400/20 dark:bg-indigo-400/14 dark:text-indigo-300 dark:ring-indigo-300/20",
                       )}
                     >
-                      {modeLabel(mode)}模式
+                      {t("reader.modeSuffix", { mode: modeLabel(t, mode) })}
                     </span>
                   </div>
                   <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-[22px]">
@@ -330,7 +344,7 @@ export default function CourseReader({
                   onClick={() => onOpenLesson(lesson.id)}
                   className="btn-quiet"
                 >
-                  单独阅读
+                  {t("reader.readAlone")}
                   <ArrowRight size={11} />
                 </button>
               </div>
@@ -356,7 +370,10 @@ export default function CourseReader({
               <div className="mt-7 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70 pt-4 dark:border-white/10">
                 <span className="flex items-center gap-1.5 text-[10.5px] text-slate-400 dark:text-slate-500">
                   <Clock3 size={11} />
-                  {contentLength(lesson.content)} 字 · {citations.length} 条引用
+                  {t("reader.charsCites", {
+                    chars: contentLength(lesson.content),
+                    cites: citations.length,
+                  })}
                 </span>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <button
@@ -366,7 +383,7 @@ export default function CourseReader({
                     className="btn btn-ghost !px-3 !py-1.5 text-[11px] disabled:opacity-40"
                   >
                     <ChevronLeft size={12} />
-                    上一讲
+                    {t("reader.prevLesson")}
                   </button>
                   <button
                     type="button"
@@ -374,7 +391,7 @@ export default function CourseReader({
                     disabled={!next}
                     className="btn btn-ghost !px-3 !py-1.5 text-[11px] disabled:opacity-40"
                   >
-                    下一讲
+                    {t("reader.nextLesson")}
                     <ChevronRight size={12} />
                   </button>
                   <button
@@ -383,7 +400,7 @@ export default function CourseReader({
                     className="btn btn-primary !px-3 !py-1.5 text-[11px]"
                   >
                     <BookOpen size={12} />
-                    回到该讲单独阅读
+                    {t("reader.backToLesson")}
                   </button>
                 </div>
               </div>

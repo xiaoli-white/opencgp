@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle, Loader2, Save, Share2, X } from "lucide-react";
 import clsx from "clsx";
 import { API_BASE } from "@/lib/api";
+import { useI18n } from "@/i18n/I18nProvider";
 
 export type ShareMember = {
   user_id: string;
@@ -49,6 +50,7 @@ export default function SharePanel({
   onChange,
   onSave,
 }: Props) {
+  const { t } = useI18n();
   const entries = useMemo(
     () =>
       Object.entries(value)
@@ -87,7 +89,12 @@ export default function SharePanel({
                   ) : null}
                 </div>
               </div>
-              <button type="button" onClick={onClose} className="btn-quiet shrink-0 px-1.5" aria-label="关闭">
+              <button
+                type="button"
+                onClick={onClose}
+                className="btn-quiet shrink-0 px-1.5"
+                aria-label={t("sharing.close")}
+              >
                 <X size={14} />
               </button>
             </div>
@@ -109,11 +116,11 @@ export default function SharePanel({
               {loading ? (
                 <p className="flex items-center gap-2 text-[11px] text-slate-400">
                   <Loader2 size={12} className="animate-spin" />
-                  加载中…
+                  {t("sharing.loading")}
                 </p>
               ) : members.length === 0 ? (
                 <p className="rounded-2xl border border-dashed border-white/60 bg-white/40 px-3 py-3 text-[11px] text-slate-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-400">
-                  当前空间暂无其他成员。
+                  {t("sharing.noMembers")}
                 </p>
               ) : (
                 members.map((member) => {
@@ -160,7 +167,7 @@ export default function SharePanel({
                           current ? "text-indigo-600 dark:text-indigo-300" : "",
                         )}
                       >
-                        <option value="">无权限</option>
+                        <option value="">{t("sharing.noPermission")}</option>
                         {options.map((item) => (
                           <option key={item.value} value={item.value}>
                             {item.label}
@@ -190,15 +197,21 @@ export default function SharePanel({
             ) : null}
 
             <div className="mt-4 flex items-center justify-between gap-2">
-              <span className="text-[10px] text-slate-400">已授权 {entries.length} 人</span>
+              <span className="text-[10px] text-slate-400">
+                {t("sharing.authorized", { count: entries.length })}
+              </span>
               <button
                 type="button"
                 onClick={() => void onSave(entries)}
                 disabled={saving || loading}
                 className="btn btn-primary"
               >
-                {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                保存
+                {saving ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Save size={13} />
+                )}
+                {t("common.save")}
               </button>
             </div>
           </motion.aside>

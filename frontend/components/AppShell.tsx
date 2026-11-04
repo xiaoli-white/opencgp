@@ -91,11 +91,12 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
 
   const displayName = me?.user.display_name || me?.user.email || t("nav.localUser");
   const initial = displayName.slice(0, 1).toUpperCase();
-  const roleText =
-    roleName ||
-    (role
-      ? tm({ zh: ROLE_LABEL[role] ?? role, en: ROLE_LABEL_EN[role] ?? role })
-      : t("common.readOnly"));
+  const roleText = role
+    ? tm({
+        zh: ROLE_LABEL[role] ?? roleName ?? role,
+        en: ROLE_LABEL_EN[role] ?? roleName ?? role,
+      })
+    : roleName || t("common.readOnly");
 
   const roleLabel = (value: Role | string) =>
     value in ROLE_LABEL

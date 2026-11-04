@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { api, type ThreadSummary } from "@/lib/api";
 import { formatRelative } from "@/lib/format";
 import { ConfirmDialog, PromptDialog } from "@/components/common/Dialogs";
+import { useI18n } from "@/i18n/I18nProvider";
 
 export default function ThreadsPanel({
   courseId,
@@ -16,6 +17,7 @@ export default function ThreadsPanel({
   onNotice: (message: string) => void;
   onError: (message: string) => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<ThreadSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -30,7 +32,7 @@ export default function ThreadsPanel({
       const data = await api.listThreads();
       setItems(data.threads.filter((item) => !courseId || item.course_id === courseId));
     } catch (err) {
-      onError(err instanceof Error ? err.message : "对话线加载失败");
+      onError(err instanceof Error ? err.message : t("course.threads.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -47,10 +49,10 @@ export default function ThreadsPanel({
     try {
       await api.renameThread(renaming.id, title);
       setRenaming(null);
-      onNotice("对话线已重命名");
+      onNotice(t("course.threads.renamed"));
       await load();
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "重命名失败");
+      setDialogError(err instanceof Error ? err.message : t("course.errors.rename"));
     } finally {
       setBusy(false);
     }
@@ -63,10 +65,10 @@ export default function ThreadsPanel({
     try {
       await api.deleteThread(removing.id);
       setRemoving(null);
-      onNotice("对话线已删除");
+      onNotice(t("course.threads.deleted"));
       await load();
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : "删除失败");
+      setDialogError(err instanceof Error ? err.message : t("course.errors.delete"));
     } finally {
       setBusy(false);
     }
@@ -81,10 +83,14 @@ export default function ThreadsPanel({
       >
         <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
           <MessagesSquare size={12} />
-          本次课程的对话线
+          {t("course.threads.title")}
         </span>
         <span className="flex items-center gap-1.5 text-[10px] text-slate-400 dark:text-slate-500">
-          {loading ? <Loader2 size={11} className="animate-spin" /> : `${items.length} 条`}
+          {loading ? (
+            <Loader2 size={11} className="animate-spin" />
+          ) : (
+            t("course.threads.count", { count: items.length })
+          )}
           <ChevronDown
             size={13}
             className={clsx("transition", open && "rotate-180")}
@@ -95,7 +101,7 @@ export default function ThreadsPanel({
         <div className="mt-2.5 space-y-1.5">
           {items.length === 0 ? (
             <p className="px-1 py-2 text-[11px] text-slate-400 dark:text-slate-500">
-              还没有对话线，在讲次里追问后会生成。
+              {t("course.threads.empty")}
             </p>
           ) : (
             items.map((thread) => (
@@ -108,7 +114,10 @@ export default function ThreadsPanel({
                     {thread.title}
                   </p>
                   <p className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
-                    {thread.message_count ?? 0} 条消息 · {formatRelative(thread.updated_at)}
+                    {t("course.threads.messages", {
+                      count: thread.message_count ?? 0,
+                    })}{" "}
+                    · {formatRelative(thread.updated_at)}
                   </p>
                 </div>
                 {canWrite ? (
@@ -120,7 +129,7 @@ export default function ThreadsPanel({
                         setRenaming(thread);
                       }}
                       className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 transition hover:bg-white/70 hover:text-indigo-600 dark:hover:bg-white/10 dark:hover:text-indigo-300"
-                      aria-label="重命名对话线"
+                      aria-label={t("course.threads.renameTitle")}
                     >
                       <Pencil size={12} />
                     </button>
@@ -131,7 +140,7 @@ export default function ThreadsPanel({
                         setRemoving(thread);
                       }}
                       className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-600"
-                      aria-label="删除对话线"
+                      aria-label={t("course.threads.deleteTitle")}
                     >
                       <Trash2 size={12} />
                     </button>
@@ -145,8 +154,8 @@ export default function ThreadsPanel({
 
       <PromptDialog
         open={Boolean(renaming)}
-        title="重命名对话线"
-        label="对话线名称"
+        title={t("course.threads.renameTitle")}
+        label={t("course.threads.nameLabel")}
         initial={renaming?.title ?? ""}
         busy={busy}
         error={dialogError}
@@ -155,8 +164,10 @@ export default function ThreadsPanel({
       />
       <ConfirmDialog
         open={Boolean(removing)}
-        title="删除对话线"
-        description={`将删除「${removing?.title ?? ""}」及其全部消息，不可恢复。`}
+        title={t("course.threads.deleteTitle")}
+        description={t("course.threads.deleteDesc", {
+          title: removing?.title ?? "",
+        })}
         busy={busy}
         error={dialogError}
         onConfirm={() => void remove()}

@@ -20,10 +20,10 @@ import {
 import clsx from "clsx";
 import { api, type Citation, type GenerationMode } from "@/lib/api";
 import MarkdownReader from "@/components/reader/MarkdownReader";
+import { useI18n } from "@/i18n/I18nProvider";
 import {
   FONT_MAX,
   FONT_MIN,
-  THEME_LABEL,
   WIDTHS,
   applyReaderTheme,
   loadReaderPrefs,
@@ -45,13 +45,24 @@ const CHIP_BTN =
 const ICON_BTN =
   "grid h-8 w-8 place-items-center rounded-full text-slate-500 transition hover:bg-white/70 hover:text-indigo-600 disabled:opacity-35 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-indigo-300";
 
-function splitCourseChapters(lessons: { id: string; title: string; content: string; order_index: number; last_mode?: GenerationMode | "" }[]): Chapter[] {
+type TranslateFn = (path: string, vars?: Record<string, string | number>) => string;
+
+function splitCourseChapters(
+  lessons: {
+    id: string;
+    title: string;
+    content: string;
+    order_index: number;
+    last_mode?: GenerationMode | "";
+  }[],
+  t: TranslateFn,
+): Chapter[] {
   return [...lessons]
     .filter((lesson) => (lesson.content ?? "").trim().length > 0)
     .sort((a, b) => a.order_index - b.order_index)
     .map((lesson) => ({
       id: lesson.id,
-      title: lesson.title || "未命名讲次",
+      title: lesson.title || t("reader.untitledLesson"),
       content: lesson.content,
       mode: lesson.last_mode || "",
       citations: [],
@@ -59,6 +70,7 @@ function splitCourseChapters(lessons: { id: string; title: string; content: stri
 }
 
 export default function ReaderModePage() {
+  const { t } = useI18n();
   const { kind = "course", id = "" } = useParams();
   const navigate = useNavigate();
   const isCourse = kind === "course";
@@ -87,12 +99,12 @@ export default function ReaderModePage() {
   }, [navigate, isCourse, id]);
 
   useEffect(() => {
-    document.title = "阅读模式 · OpenCGP";
+    document.title = t("reader.docTitle");
     const previous = document.title;
     return () => {
       document.title = previous;
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     originalDarkRef.current = document.documentElement.classList.contains("dark");
@@ -130,12 +142,12 @@ export default function ReaderModePage() {
     setActiveIndex(0);
 
     const load = async () => {
-      if (!id) throw new Error("缺少作品 ID");
+      if (!id) throw new Error(t("reader.missingId"));
       if (isCourse) {
         const data = await api.getCourse(id);
         if (!alive) return;
         setTitle(data.course.title);
-        setChapters(splitCourseChapters(data.lessons));
+        setChapters(splitCourseChapters(data.lessons, t));
         return;
       }
       const data = await api.getLongform(id);
@@ -145,7 +157,7 @@ export default function ReaderModePage() {
         .filter((section) => (section.content ?? "").trim().length > 0)
         .map((section, index) => ({
           id: section.id || `section-${index}`,
-          title: section.title || `第 ${index + 1} 节`,
+          title: section.title || t("reader.sectionNo", { index: index + 1 }),
           content: section.content,
           mode: (data.last_mode as GenerationMode) || "",
           citations: data.citations ?? [],
@@ -164,7 +176,8 @@ export default function ReaderModePage() {
 
     load()
       .catch((err) => {
-        if (alive) setError(err instanceof Error ? err.message : "加载失败");
+        if (alive)
+          setError(err instanceof Error ? err.message : t("reader.loadFailed"));
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -173,7 +186,7 @@ export default function ReaderModePage() {
     return () => {
       alive = false;
     };
-  }, [id, isCourse]);
+  }, [id, isCourse, t]);
 
   useEffect(() => {
     if (!isCourse) return;
@@ -357,23 +370,23 @@ export default function ReaderModePage() {
       >
         <div className="glass border-x-0 border-t-0 px-2 shadow-[0_16px_36px_-30px_rgba(15,23,42,0.65)] sm:px-4">
           <div className="mx-auto flex h-12 w-full max-w-[1180px] items-center gap-1">
-            <button type="button" onClick={back} className={clsx(CHIP_BTN, "shrink-0")} aria-label="返回">
+            <button type="button" onClick={back} className={clsx(CHIP_BTN, "shrink-0")} aria-label={t("reader.back")}>
               <ArrowLeft size={15} />
-              <span className="hidden sm:inline">返回</span>
+              <span className="hidden sm:inline">{t("reader.back")}</span>
             </button>
             <span className="mx-1 hidden h-5 w-px shrink-0 bg-slate-300/60 dark:bg-white/10 sm:block" />
             <p className="min-w-0 flex-1 truncate text-[12.5px] font-medium tracking-tight text-slate-700 dark:text-slate-200">
-              {title || (loading ? "正在加载…" : "阅读模式")}
+              {title || (loading ? t("reader.loadingTitle") : t("reader.readerMode"))}
             </p>
             <div className="flex shrink-0 items-center gap-0.5">
               <button
                 type="button"
                 onClick={() => setTocOpen(true)}
                 className={CHIP_BTN}
-                aria-label="目录"
+                aria-label={t("reader.toc")}
               >
                 <List size={15} />
-                <span className="hidden sm:inline">目录</span>
+                <span className="hidden sm:inline">{t("reader.toc")}</span>
               </button>
               <span className="mx-1 hidden h-5 w-px bg-slate-300/60 dark:bg-white/10 sm:block" />
               <button
@@ -381,7 +394,7 @@ export default function ReaderModePage() {
                 onClick={() => stepFont(-1)}
                 disabled={prefs.fontSize <= FONT_MIN}
                 className={ICON_BTN}
-                aria-label="减小字号"
+                aria-label={t("reader.decreaseFont")}
               >
                 <Minus size={15} />
               </button>
@@ -393,7 +406,7 @@ export default function ReaderModePage() {
                 onClick={() => stepFont(1)}
                 disabled={prefs.fontSize >= FONT_MAX}
                 className={ICON_BTN}
-                aria-label="增大字号"
+                aria-label={t("reader.increaseFont")}
               >
                 <Plus size={15} />
               </button>
@@ -401,9 +414,9 @@ export default function ReaderModePage() {
                 type="button"
                 onClick={cycleWidth}
                 className={clsx(CHIP_BTN, "hidden md:inline-flex")}
-                title="切换行宽"
+                title={t("reader.switchWidth")}
               >
-                行宽 {prefs.width}
+                {t("reader.lineWidth", { width: prefs.width })}
               </button>
               <button
                 type="button"
@@ -415,16 +428,24 @@ export default function ReaderModePage() {
                     ? "text-indigo-600 dark:text-indigo-300"
                     : "text-slate-400 line-through dark:text-slate-500",
                 )}
-                title={prefs.citations ? "隐藏引用上标" : "显示引用上标"}
+                title={
+                  prefs.citations
+                    ? t("reader.hideCitations")
+                    : t("reader.showCitations")
+                }
               >
-                引用
+                {t("reader.citationsLabel")}
               </button>
               <button
                 type="button"
                 onClick={cycleTheme}
                 className={ICON_BTN}
-                aria-label={`主题：${THEME_LABEL[prefs.theme]}`}
-                title={`主题：${THEME_LABEL[prefs.theme]}`}
+                aria-label={t("reader.themeTitle", {
+                  theme: t(`reader.theme${prefs.theme[0].toUpperCase()}${prefs.theme.slice(1)}`),
+                })}
+                title={t("reader.themeTitle", {
+                  theme: t(`reader.theme${prefs.theme[0].toUpperCase()}${prefs.theme.slice(1)}`),
+                })}
               >
                 {themeIcon}
               </button>
@@ -432,8 +453,12 @@ export default function ReaderModePage() {
                 type="button"
                 onClick={() => void toggleFullscreen()}
                 className={clsx(ICON_BTN, "hidden sm:grid")}
-                aria-label={fullscreen ? "退出全屏" : "全屏"}
-                title={fullscreen ? "退出全屏" : "全屏"}
+                aria-label={
+                  fullscreen ? t("reader.exitFullscreen") : t("reader.fullscreen")
+                }
+                title={
+                  fullscreen ? t("reader.exitFullscreen") : t("reader.fullscreen")
+                }
               >
                 {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
               </button>
@@ -452,22 +477,24 @@ export default function ReaderModePage() {
         {loading ? (
           <p className="flex items-center gap-2 text-[12px] text-slate-400">
             <Loader2 size={13} className="animate-spin" />
-            正在加载正文…
+            {t("reader.loadingContent")}
           </p>
         ) : error ? (
           <div className="glass rounded-3xl p-6 text-center shadow-glass">
             <p className="text-[13px] text-rose-600 dark:text-rose-300">{error}</p>
             <button type="button" onClick={back} className="btn btn-primary mt-4">
               <ArrowLeft size={14} />
-              返回
+              {t("reader.back")}
             </button>
           </div>
         ) : chapters.length === 0 ? (
           <div className="glass rounded-3xl p-8 text-center shadow-glass">
-            <p className="text-[13px] text-slate-500 dark:text-slate-400">该作品暂无正文内容。</p>
+            <p className="text-[13px] text-slate-500 dark:text-slate-400">
+              {t("reader.emptyWork")}
+            </p>
             <button type="button" onClick={back} className="btn btn-quiet mt-4">
               <ArrowLeft size={14} />
-              返回
+              {t("reader.back")}
             </button>
           </div>
         ) : (
@@ -479,7 +506,10 @@ export default function ReaderModePage() {
                 className="scroll-mt-16 pt-1 first:pt-0"
               >
                 <p className="text-[10.5px] font-medium uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">
-                  第 {index + 1} 章 · 共 {chapters.length} 章
+                  {t("reader.chapterMeta", {
+                    index: index + 1,
+                    total: chapters.length,
+                  })}
                 </p>
                 <h1 className="mt-2 text-xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-2xl">
                   {chapter.title}
@@ -514,10 +544,16 @@ export default function ReaderModePage() {
                 className="btn btn-quiet max-w-[46%] justify-start whitespace-nowrap"
               >
                 <ChevronLeft size={14} />
-                <span className="truncate">上一章</span>
+                <span className="truncate">{t("reader.prevChapter")}</span>
               </button>
               <span className="hidden min-w-0 flex-1 truncate text-center text-[11px] text-slate-400 dark:text-slate-500 sm:block">
-                {activeChapter ? `${activeIndex + 1} / ${chapters.length} · ${activeChapter.title}` : ""}
+                {activeChapter
+                  ? t("reader.chapterProgress", {
+                      index: activeIndex + 1,
+                      total: chapters.length,
+                      title: activeChapter.title,
+                    })
+                  : ""}
               </span>
               <button
                 type="button"
@@ -525,13 +561,13 @@ export default function ReaderModePage() {
                 disabled={activeIndex >= chapters.length - 1}
                 className="btn btn-quiet max-w-[46%] justify-end whitespace-nowrap"
               >
-                <span className="truncate">下一章</span>
+                <span className="truncate">{t("reader.nextChapter")}</span>
                 <ChevronRight size={14} />
               </button>
             </nav>
 
             <p className="mt-6 text-center text-[10.5px] text-slate-400 dark:text-slate-500">
-              ← → 切章 · Esc 返回 · f 全屏 · t 切主题
+              {t("reader.keyboardHint")}
             </p>
           </>
         )}
@@ -560,17 +596,20 @@ export default function ReaderModePage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                      目录
+                      {t("reader.toc")}
                     </p>
                     <p className="mt-0.5 text-[12px] font-medium text-slate-700 dark:text-slate-200">
-                      {chapters.length} 章 · 进度 {progress}%
+                      {t("reader.tocProgress", {
+                        count: chapters.length,
+                        percent: progress,
+                      })}
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setTocOpen(false)}
                     className={ICON_BTN}
-                    aria-label="关闭目录"
+                    aria-label={t("reader.closeToc")}
                   >
                     <X size={15} />
                   </button>
@@ -611,14 +650,14 @@ export default function ReaderModePage() {
                 </div>
                 <div className="mt-3 space-y-2 border-t border-white/50 pt-3 dark:border-white/10">
                   <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                    <span>字号</span>
+                    <span>{t("reader.fontSize")}</span>
                     <span className="flex items-center gap-1">
                       <button
                         type="button"
                         onClick={() => stepFont(-1)}
                         disabled={prefs.fontSize <= FONT_MIN}
                         className={ICON_BTN}
-                        aria-label="减小字号"
+                        aria-label={t("reader.decreaseFont")}
                       >
                         <Minus size={14} />
                       </button>
@@ -628,27 +667,27 @@ export default function ReaderModePage() {
                         onClick={() => stepFont(1)}
                         disabled={prefs.fontSize >= FONT_MAX}
                         className={ICON_BTN}
-                        aria-label="增大字号"
+                        aria-label={t("reader.increaseFont")}
                       >
                         <Plus size={14} />
                       </button>
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                    <span>行宽</span>
+                    <span>{t("reader.lineWidthLabel")}</span>
                     <button type="button" onClick={cycleWidth} className={CHIP_BTN}>
                       {prefs.width}px
                     </button>
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                    <span>主题</span>
+                    <span>{t("reader.theme")}</span>
                     <button type="button" onClick={cycleTheme} className={CHIP_BTN}>
                       {themeIcon}
-                      {THEME_LABEL[prefs.theme]}
+                      {t(`reader.theme${prefs.theme[0].toUpperCase()}${prefs.theme.slice(1)}`)}
                     </button>
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                    <span>引用上标</span>
+                    <span>{t("reader.citationsToggle")}</span>
                     <button
                       type="button"
                       onClick={() => setPrefs((prev) => ({ ...prev, citations: !prev.citations }))}
@@ -657,7 +696,7 @@ export default function ReaderModePage() {
                         prefs.citations ? "text-indigo-600 dark:text-indigo-300" : "text-slate-400",
                       )}
                     >
-                      {prefs.citations ? "显示" : "隐藏"}
+                      {prefs.citations ? t("reader.show") : t("reader.hide")}
                     </button>
                   </div>
                 </div>
