@@ -156,6 +156,10 @@ class UserDeleteForbiddenError(ValueError):
     pass
 
 
+class UserHasWorksError(RuntimeError):
+    pass
+
+
 class CreationProfileNotFoundError(LookupError):
     pass
 

@@ -9,7 +9,14 @@ DEFAULT_USER_EMAIL = "local@studio"
 USER_STATUS_ACTIVE = "active"
 USER_STATUS_PENDING = "pending"
 USER_STATUS_REJECTED = "rejected"
-USER_STATUSES = (USER_STATUS_PENDING, USER_STATUS_ACTIVE, USER_STATUS_REJECTED)
+USER_STATUS_DISABLED = "disabled"
+USER_STATUSES = (
+    USER_STATUS_PENDING,
+    USER_STATUS_ACTIVE,
+    USER_STATUS_REJECTED,
+    USER_STATUS_DISABLED,
+)
+DELETED_EMAIL_MARKER = "__deleted__"
 
 TENANT_KIND_SYSTEM = "system"
 TENANT_KIND_PERSONAL = "personal"
@@ -37,6 +44,7 @@ class User(BaseModel):
     display_name: str = ""
     status: str = USER_STATUS_ACTIVE
     avatar_key: str = ""
+    deleted_at: float = 0.0
     created_at: float = 0.0
     last_login_at: float = 0.0
     updated_at: float = 0.0

@@ -22,6 +22,7 @@ from app.models.auth import (
     TENANT_KIND_PERSONAL,
     TENANT_KIND_SYSTEM,
     USER_STATUS_ACTIVE,
+    USER_STATUS_DISABLED,
     USER_STATUS_PENDING,
     USER_STATUS_REJECTED,
     USER_STATUSES,
@@ -323,6 +324,8 @@ class AuthService:
         self.ensure_default()
         address = (email or "").strip().lower()
         user = self.repository.get_user_by_email(address)
+        if user is None and hasattr(self.repository, "get_user_by_email_any"):
+            user = self.repository.get_user_by_email_any(address)
         if user is None:
             raise InvalidCredentialsError("邮箱或密码不正确")
         stored = self.repository.get_password_hash(user.id)
@@ -338,6 +341,8 @@ class AuthService:
             raise AccountNotActiveError("账号待管理员审核")
         if user.status == USER_STATUS_REJECTED:
             raise AccountNotActiveError("账号审核未通过")
+        if user.status == USER_STATUS_DISABLED or float(user.deleted_at or 0) > 0:
+            raise AccountNotActiveError("账号已停用")
 
     def resolve(self, token: str, tenant_id: str | None = None) -> AuthContext:
         self.ensure_default()
@@ -418,10 +423,18 @@ class AuthService:
         self.ensure_default()
         return self.repository.get_tenant(tenant_id)
 
-    def list_users(self, status: str = "", limit: int = 50, q: str = "") -> list[User]:
+    def list_users(
+        self,
+        status: str = "",
+        limit: int = 50,
+        q: str = "",
+        include_deleted: bool = False,
+    ) -> list[User]:
         self.ensure_default()
         wanted = (status or "").strip().lower()
-        return self.repository.list_users(wanted, limit, q)
+        return self.repository.list_users(
+            wanted, limit, q, include_deleted=include_deleted
+        )
 
     def admin_update_user(
         self,

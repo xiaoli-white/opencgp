@@ -50,3 +50,6 @@ class UserProviderRepository(Protocol):
 
     def delete_all_for_user(self, user_id: str) -> int:
         ...
+
+    def reassign_user(self, user_id: str, target_user_id: str) -> int:
+        ...

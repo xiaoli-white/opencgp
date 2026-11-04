@@ -107,6 +107,9 @@ class LongformService:
     def list_versions(self, longform_id: str) -> list[LongformVersion]:
         return self.repository.list_versions(longform_id)
 
+    def get_version(self, longform_id: str, version: int) -> LongformVersion | None:
+        return self.repository.get_version(longform_id, int(version))
+
     def delete(self, longform_id: str, tenant_id: str | None = None) -> bool:
         return self.repository.delete(longform_id, tenant_id)
 

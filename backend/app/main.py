@@ -57,6 +57,7 @@ from app.services.codecheck import CodeCheckService
 from app.services.media import detect_image_type
 from app.services.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
 from app.services.metrics import get_metrics
+from app.services.textproc import line_diff
 from app.services.errors import (
     ExecLanguageError,
     ExecUnavailableError,
@@ -105,6 +106,7 @@ from app.services.errors import (
     UnsupportedJobKindError,
     JobNotTerminalError,
     UserDeleteForbiddenError,
+    UserHasWorksError,
     CreationProfileNotFoundError,
     SourceNotFoundError,
     ThreadNotFoundError,
@@ -570,6 +572,44 @@ def _require_course(
     return course
 
 
+def _version_summary(version: Any, extra: dict[str, Any], include_content: bool) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": version.id,
+        "version": version.version,
+        "note": version.note,
+        "mode": version.mode,
+        "created_at": version.created_at,
+        "content_length": len(version.content or ""),
+        **extra,
+    }
+    if hasattr(version, "lesson_id"):
+        payload["lesson_id"] = version.lesson_id
+    if hasattr(version, "longform_id"):
+        payload["longform_id"] = version.longform_id
+    if include_content:
+        payload["content"] = version.content
+    return payload
+
+
+def _version_diff(
+    owner_id: str, from_version: int, to_version: int, loader: Any
+) -> dict[str, Any]:
+    before = loader(int(from_version))
+    after = loader(int(to_version))
+    for value, label in ((before, from_version), (after, to_version)):
+        if value is None:
+            raise HTTPException(status_code=404, detail=f"版本不存在: {label}")
+    result = line_diff(before.content, after.content)
+    return {
+        "owner_id": owner_id,
+        "from": int(from_version),
+        "to": int(to_version),
+        "added_chars": result["added_chars"],
+        "removed_chars": result["removed_chars"],
+        "hunks": result["hunks"],
+    }
+
+
 def _require_lesson(
     lesson_id: str, ctx: AuthContext | None = None, level: str = "read"
 ) -> Lesson:
@@ -593,6 +633,7 @@ def create_course(
         difficulty=req.difficulty,
         language=req.language,
         tenant_id=_tenant_of(ctx),
+        user_id=ctx.user.id,
     )
     return course.model_dump()
 
@@ -727,9 +768,43 @@ async def factcheck_lesson(
     return FactCheckReport.build(results, lesson_id).model_dump()
 
 
+@app.get("/api/v1/lessons/{lesson_id}/versions/diff")
+def diff_lesson_versions(
+    lesson_id: str,
+    from_version: int = Query(alias="from", ge=1),
+    to_version: int = Query(alias="to", ge=1),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_lesson(lesson_id, ctx)
+    repository = container.course_repository()
+    return _version_diff(
+        lesson_id,
+        from_version,
+        to_version,
+        lambda item: repository.get_version(lesson_id, item),
+    )
+
+
+@app.get("/api/v1/lessons/{lesson_id}/versions/{version}")
+def get_lesson_version(
+    lesson_id: str,
+    version: int,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_lesson(lesson_id, ctx)
+    record = container.course_repository().get_version(lesson_id, version)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"版本不存在: {version}")
+    return {"lesson_id": lesson_id, "version": record.model_dump()}
+
+
 @app.get("/api/v1/lessons/{lesson_id}/versions")
 def list_lesson_versions(
-    lesson_id: str, ctx: AuthContext = Depends(get_auth_context)
+    lesson_id: str,
+    include_content: bool = Query(default=False),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
     lesson = _require_lesson(lesson_id, ctx)
@@ -738,7 +813,17 @@ def list_lesson_versions(
         "lesson_id": lesson_id,
         "current_version": lesson.current_version,
         "count": len(versions),
-        "versions": [version.model_dump() for version in versions],
+        "versions": [
+            _version_summary(
+                version,
+                {
+                    "citations": len(version.citations),
+                    "content_length": len(version.content),
+                },
+                include_content,
+            )
+            for version in versions
+        ],
     }
 
 
@@ -1346,6 +1431,7 @@ def _admin_user_payload(user: Any) -> dict[str, Any]:
 def admin_list_users(
     status: str = Query(default=""),
     q: str = Query(default=""),
+    include_deleted: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=200),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
@@ -1353,7 +1439,9 @@ def admin_list_users(
     wanted = (status or "").strip().lower()
     if wanted and wanted not in USER_STATUSES:
         raise HTTPException(status_code=400, detail=f"未知状态: {wanted}")
-    users = container.auth_service().list_users(wanted, limit, q)
+    users = container.auth_service().list_users(
+        wanted, limit, q, include_deleted=include_deleted
+    )
     payload = [_admin_user_payload(user) for user in users]
     return {"count": len(payload), "users": payload}
 
@@ -1430,18 +1518,45 @@ def admin_update_user(
     return {"user": _admin_user_payload(user)}
 
 
+class AdminUserDeleteRequest(BaseModel):
+    transfer_to_user_id: str | None = None
+    force: bool = False
+
+
 @app.delete("/api/v1/admin/users/{user_id}")
 def admin_delete_user(
-    user_id: str, ctx: AuthContext = Depends(get_auth_context)
+    user_id: str,
+    req: AdminUserDeleteRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "manage_server")
+    payload = req or AdminUserDeleteRequest()
     try:
-        result = container.account_admin().delete_user(ctx.user.id, user_id)
+        result = container.account_admin().delete_user(
+            ctx.user.id,
+            user_id,
+            transfer_to_user_id=payload.transfer_to_user_id or "",
+            force=bool(payload.force),
+        )
+    except UserHasWorksError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except UserDeleteForbiddenError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except AuthRequiredError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"ok": True, **result}
+
+
+@app.post("/api/v1/admin/users/{user_id}/restore")
+def admin_restore_user(
+    user_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "manage_server")
+    try:
+        result = container.account_admin().restore_user(user_id)
+    except AuthRequiredError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {**result, "user": _admin_user_payload(result["user"])}
 
 
 @app.post("/api/v1/admin/users/{user_id}/reset-password")
@@ -1707,6 +1822,17 @@ def _quota_payload(tenant_id: str) -> dict[str, Any]:
         "remaining": service.remaining(tenant_id),
         "unlimited": service.unlimited(tenant_id),
     }
+
+
+@app.get("/api/v1/quotas/history")
+def get_quota_history(
+    days: int = Query(default=30, ge=1, le=90),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    tenant_id = _tenant_of(ctx)
+    payload = container.quota_service().history(tenant_id, days)
+    return {"tenant_id": tenant_id, **payload}
 
 
 @app.get("/api/v1/quotas")
@@ -2449,6 +2575,7 @@ async def research_to_blueprint(
             title=(payload.course_title or run.topic).strip(),
             subtitle=run.brief.summary[:200],
             tenant_id=_tenant_of(ctx),
+            user_id=ctx.user.id,
         )
         course_id = course.id
     else:
@@ -2639,9 +2766,55 @@ async def rewrite_longform(
     return updated.model_dump()
 
 
+@app.get("/api/v1/longforms/{longform_id}/versions/diff")
+def diff_longform_versions(
+    longform_id: str,
+    from_version: int = Query(alias="from", ge=1),
+    to_version: int = Query(alias="to", ge=1),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_longform(longform_id, ctx)
+    return _version_diff(
+        longform_id,
+        from_version,
+        to_version,
+        lambda item: container.longform().get_version(longform_id, item),
+    )
+
+
+@app.get("/api/v1/longforms/{longform_id}/versions/{version}")
+def get_longform_version(
+    longform_id: str,
+    version: int,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_longform(longform_id, ctx)
+    record = container.longform().get_version(longform_id, version)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"版本不存在: {version}")
+    return {
+        "longform_id": longform_id,
+        "version": {
+            "id": record.id,
+            "longform_id": record.longform_id,
+            "version": record.version,
+            "content": record.content,
+            "outline": [item.model_dump() for item in record.outline],
+            "citations": [item.model_dump() for item in record.citations],
+            "mode": record.mode,
+            "note": record.note,
+            "created_at": record.created_at,
+        },
+    }
+
+
 @app.get("/api/v1/longforms/{longform_id}/versions")
 def list_longform_versions(
-    longform_id: str, ctx: AuthContext = Depends(get_auth_context)
+    longform_id: str,
+    include_content: bool = Query(default=False),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
     _require_longform(longform_id, ctx)
@@ -2649,14 +2822,9 @@ def list_longform_versions(
     return {
         "count": len(versions),
         "versions": [
-            {
-                "id": item.id,
-                "version": item.version,
-                "note": item.note,
-                "mode": item.mode,
-                "created_at": item.created_at,
-                "content_length": len(item.content),
-            }
+            _version_summary(
+                item, {"sections": len(item.outline)}, include_content
+            )
             for item in versions
         ],
     }

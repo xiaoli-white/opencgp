@@ -556,6 +556,8 @@ class Container:
                 provider_settings=self.provider_settings_repository(),
                 locks=self.lock_repository(),
                 conversations=self.conversation_repository(),
+                courses=self.course_repository(),
+                longforms=self.longform_repository(),
             )
 
         return self._get_or_build("account_admin", build)

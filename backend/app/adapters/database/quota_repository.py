@@ -131,6 +131,23 @@ class DatabaseQuotaRepository(QuotaRepository):
         )
         return {str(row["kind"]): int(row["units"] or 0) for row in rows}
 
+    def daily_usage(self, tenant_id: str, since: float) -> list[dict[str, Any]]:
+        self.ensure_schema()
+        rows = self.database.fetchall(
+            "SELECT date(created_at, 'unixepoch', '+8 hours') AS day, kind,"
+            " SUM(units) AS units FROM usage_events"
+            " WHERE tenant_id = ? AND created_at >= ? GROUP BY day, kind ORDER BY day",
+            (tenant_id, float(since)),
+        )
+        return [
+            {
+                "date": str(row["day"]),
+                "kind": str(row["kind"]),
+                "units": int(row["units"] or 0),
+            }
+            for row in rows
+        ]
+
     def record(
         self,
         tenant_id: str,

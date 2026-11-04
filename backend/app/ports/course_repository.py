@@ -30,6 +30,7 @@ class CourseRepository(Protocol):
         difficulty: str = "intermediate",
         language: str = "zh",
         tenant_id: str = "",
+        user_id: str = "",
     ) -> Course:
         ...
 
@@ -53,6 +54,14 @@ class CourseRepository(Protocol):
     def delete_course(
         self, course_id: str, tenant_id: str | None = None
     ) -> dict[str, Any] | None:
+        ...
+
+    def count_by_user(self, user_id: str) -> int:
+        ...
+
+    def transfer_by_user(
+        self, user_id: str, target_user_id: str, tenant_ids: Sequence[str] = ()
+    ) -> int:
         ...
 
     def create_lesson(

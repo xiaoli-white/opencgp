@@ -34,7 +34,11 @@ class AuthRepository(Protocol):
         ...
 
     def list_users(
-        self, status: str = "", limit: int = 50, q: str = ""
+        self,
+        status: str = "",
+        limit: int = 50,
+        q: str = "",
+        include_deleted: bool = False,
     ) -> list[User]:
         ...
 
@@ -50,10 +54,19 @@ class AuthRepository(Protocol):
     def delete_memberships_by_user(self, user_id: str) -> int:
         ...
 
+    def soft_delete_user(self, user_id: str, email: str, deleted_at: float) -> bool:
+        ...
+
+    def restore_user(self, user_id: str, email: str) -> User | None:
+        ...
+
     def get_user(self, user_id: str) -> User | None:
         ...
 
     def get_user_by_email(self, email: str) -> User | None:
+        ...
+
+    def get_user_by_email_any(self, email: str) -> User | None:
         ...
 
     def touch_login(self, user_id: str) -> None:

@@ -12,6 +12,7 @@ class Course(BaseModel):
     audience: str = ""
     difficulty: str = "intermediate"
     language: str = "zh"
+    user_id: str = ""
     created_at: float
     updated_at: float
 

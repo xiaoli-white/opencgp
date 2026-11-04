@@ -30,6 +30,7 @@ SCHEMA: tuple[str, ...] = (
         difficulty TEXT NOT NULL DEFAULT 'intermediate',
         language TEXT NOT NULL DEFAULT 'zh',
         tenant_id TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT '',
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
     )
@@ -69,6 +70,7 @@ SCHEMA: tuple[str, ...] = (
 
 COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("courses", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
+    ("courses", "user_id", "TEXT NOT NULL DEFAULT ''"),
     ("lessons", "last_mode", "TEXT NOT NULL DEFAULT ''"),
     ("lesson_versions", "mode", "TEXT NOT NULL DEFAULT ''"),
 )
@@ -101,6 +103,7 @@ class DatabaseCourseRepository(CourseRepository):
         difficulty: str = "intermediate",
         language: str = "zh",
         tenant_id: str = "",
+        user_id: str = "",
     ) -> Course:
         self.ensure_schema()
         now = time.time()
@@ -111,12 +114,14 @@ class DatabaseCourseRepository(CourseRepository):
             audience=audience,
             difficulty=difficulty,
             language=language,
+            user_id=user_id or "",
             created_at=now,
             updated_at=now,
         )
         self.database.execute(
             "INSERT INTO courses (id, title, subtitle, audience, difficulty, language,"
-            " tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " tenant_id, user_id, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 course.id,
                 course.title,
@@ -125,6 +130,7 @@ class DatabaseCourseRepository(CourseRepository):
                 course.difficulty,
                 course.language,
                 tenant_id or "",
+                user_id or "",
                 course.created_at,
                 course.updated_at,
             ),
@@ -271,6 +277,43 @@ class DatabaseCourseRepository(CourseRepository):
         except Exception:  # noqa: BLE001
             return True
         return row is not None
+
+    def count_by_user(self, user_id: str) -> int:
+        self.ensure_schema()
+        row = self.database.fetchone(
+            "SELECT COUNT(1) AS n FROM courses WHERE user_id = ? AND user_id <> ''",
+            (user_id,),
+        )
+        return int(row["n"]) if row else 0
+
+    def transfer_by_user(
+        self, user_id: str, target_user_id: str, tenant_ids: Sequence[str] = ()
+    ) -> int:
+        self.ensure_schema()
+        scoped = [str(item) for item in tenant_ids if item]
+        if scoped:
+            placeholders = ", ".join("?" for _ in scoped)
+            row = self.database.fetchone(
+                f"SELECT COUNT(1) AS n FROM courses WHERE user_id = ?"
+                f" AND tenant_id IN ({placeholders})",
+                (user_id, *scoped),
+            )
+            total = int(row["n"]) if row else 0
+            self.database.execute(
+                f"UPDATE courses SET user_id = ?, updated_at = ? WHERE user_id = ?"
+                f" AND tenant_id IN ({placeholders})",
+                (target_user_id, time.time(), user_id, *scoped),
+            )
+            return total
+        row = self.database.fetchone(
+            "SELECT COUNT(1) AS n FROM courses WHERE user_id = ?", (user_id,)
+        )
+        total = int(row["n"]) if row else 0
+        self.database.execute(
+            "UPDATE courses SET user_id = ?, updated_at = ? WHERE user_id = ?",
+            (target_user_id, time.time(), user_id),
+        )
+        return total
 
     def create_lesson(
         self,
@@ -547,6 +590,7 @@ def _load_list(raw: Any) -> list[Any]:
 
 
 def _to_course(row: Mapping[str, Any]) -> Course:
+    keys = set(row.keys())
     return Course(
         id=str(row["id"]),
         title=str(row["title"]),
@@ -554,6 +598,7 @@ def _to_course(row: Mapping[str, Any]) -> Course:
         audience=str(row["audience"] or ""),
         difficulty=str(row["difficulty"] or "intermediate"),
         language=str(row["language"] or "zh"),
+        user_id=str(row["user_id"] or "") if "user_id" in keys else "",
         created_at=float(row["created_at"]),
         updated_at=float(row["updated_at"]),
     )

@@ -272,3 +272,25 @@ class DatabaseUserProviderRepository(UserProviderRepository):
         )
         self.database.execute("DELETE FROM user_providers WHERE user_id = ?", (user_id,))
         return removed
+
+    def reassign_user(self, user_id: str, target_user_id: str) -> int:
+        self.ensure_schema()
+        rows = self.database.fetchall(
+            "SELECT id FROM user_providers WHERE user_id = ?", (user_id,)
+        )
+        moved = len(rows)
+        if not moved:
+            return 0
+        self.database.execute(
+            "UPDATE user_providers SET user_id = ?, is_default = 0, updated_at = ?"
+            " WHERE user_id = ?",
+            (target_user_id, time.time(), user_id),
+        )
+        self.database.execute(
+            "UPDATE user_provider_shares SET owner_user_id = ? WHERE owner_user_id = ?",
+            (target_user_id, user_id),
+        )
+        self.database.execute(
+            "DELETE FROM user_provider_shares WHERE user_id = ?", (user_id,)
+        )
+        return moved

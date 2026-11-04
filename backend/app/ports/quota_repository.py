@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from app.models.quota import QuotaLimits, QuotaUsage
 
@@ -20,6 +20,9 @@ class QuotaRepository(Protocol):
         ...
 
     def usage_by_kind(self, tenant_id: str, period_start: float) -> dict[str, int]:
+        ...
+
+    def daily_usage(self, tenant_id: str, since: float) -> list[dict[str, Any]]:
         ...
 
     def record(

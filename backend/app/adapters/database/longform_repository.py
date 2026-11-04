@@ -249,6 +249,43 @@ class DatabaseLongformRepository(LongformRepository):
         )
         return _row_to_version(row) if row is not None else None
 
+    def count_by_user(self, user_id: str) -> int:
+        self.ensure_schema()
+        row = self.database.fetchone(
+            "SELECT COUNT(1) AS n FROM longforms WHERE user_id = ? AND user_id <> ''",
+            (user_id,),
+        )
+        return int(row["n"]) if row else 0
+
+    def transfer_by_user(
+        self, user_id: str, target_user_id: str, tenant_ids: Sequence[str] = ()
+    ) -> int:
+        self.ensure_schema()
+        scoped = [str(item) for item in tenant_ids if item]
+        if scoped:
+            placeholders = ", ".join("?" for _ in scoped)
+            row = self.database.fetchone(
+                f"SELECT COUNT(1) AS n FROM longforms WHERE user_id = ?"
+                f" AND tenant_id IN ({placeholders})",
+                (user_id, *scoped),
+            )
+            total = int(row["n"]) if row else 0
+            self.database.execute(
+                f"UPDATE longforms SET user_id = ?, updated_at = ? WHERE user_id = ?"
+                f" AND tenant_id IN ({placeholders})",
+                (target_user_id, time.time(), user_id, *scoped),
+            )
+            return total
+        row = self.database.fetchone(
+            "SELECT COUNT(1) AS n FROM longforms WHERE user_id = ?", (user_id,)
+        )
+        total = int(row["n"]) if row else 0
+        self.database.execute(
+            "UPDATE longforms SET user_id = ?, updated_at = ? WHERE user_id = ?",
+            (target_user_id, time.time(), user_id),
+        )
+        return total
+
     def delete(self, longform_id: str, tenant_id: str | None = None) -> bool:
         self.ensure_schema()
         if self.get(longform_id, tenant_id) is None:

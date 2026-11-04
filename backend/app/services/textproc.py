@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import difflib
 import re
-from typing import Sequence
+from typing import Any, Sequence
 
 _CJK_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff]+")
 _ASCII_WORD = re.compile(r"[A-Za-z0-9_]+")
@@ -74,3 +75,31 @@ def make_snippet(text: str, terms: Sequence[str], width: int = 80) -> str:
     if end < len(text):
         snippet = snippet + "…"
     return snippet
+
+
+def line_diff(before: str, after: str, context: int = 2) -> dict[str, Any]:
+    old_lines = (before or "").splitlines()
+    new_lines = (after or "").splitlines()
+    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+    hunks: list[dict[str, str]] = []
+    added = 0
+    removed = 0
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            block = old_lines[i1:i2]
+            if not block:
+                continue
+            if len(block) > context * 2 + 2:
+                hunks.append({"type": "same", "text": "\n".join(block[:context])})
+                hunks.append({"type": "same", "text": "…"})
+                hunks.append({"type": "same", "text": "\n".join(block[-context:])})
+            else:
+                hunks.append({"type": "same", "text": "\n".join(block)})
+            continue
+        if tag in ("replace", "delete") and i2 > i1:
+            removed += sum(len(line) for line in old_lines[i1:i2])
+            hunks.append({"type": "del", "text": "\n".join(old_lines[i1:i2])})
+        if tag in ("replace", "insert") and j2 > j1:
+            added += sum(len(line) for line in new_lines[j1:j2])
+            hunks.append({"type": "add", "text": "\n".join(new_lines[j1:j2])})
+    return {"added_chars": added, "removed_chars": removed, "hunks": hunks}

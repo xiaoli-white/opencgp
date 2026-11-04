@@ -51,5 +51,13 @@ class LongformRepository(Protocol):
     def get_version(self, longform_id: str, version: int) -> LongformVersion | None:
         ...
 
+    def count_by_user(self, user_id: str) -> int:
+        ...
+
+    def transfer_by_user(
+        self, user_id: str, target_user_id: str, tenant_ids: Sequence[str] = ()
+    ) -> int:
+        ...
+
     def delete(self, longform_id: str, tenant_id: str | None = None) -> bool:
         ...

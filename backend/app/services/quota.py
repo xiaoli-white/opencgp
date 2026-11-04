@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-import time
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from app.models.quota import (
     GENERATION_KINDS,
+    HISTORY_DEFAULT_DAYS,
+    HISTORY_MAX_DAYS,
     QuotaLimits,
     QuotaUsage,
 )
@@ -16,9 +19,38 @@ class QuotaService:
         self.repository = repository
 
     def period(self) -> tuple[str, float]:
-        now = time.localtime()
-        start = time.mktime((now.tm_year, now.tm_mon, 1, 0, 0, 0, 0, 0, -1))
-        return time.strftime("%Y-%m", now), float(start)
+        now = datetime.now(QUOTA_TZ)
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return start.strftime("%Y-%m"), start.timestamp()
+
+    def history(self, tenant_id: str, days: int = HISTORY_DEFAULT_DAYS) -> dict[str, Any]:
+        span = max(1, min(int(days or HISTORY_DEFAULT_DAYS), HISTORY_MAX_DAYS))
+        today = datetime.now(QUOTA_TZ).date()
+        start_day = today - timedelta(days=span - 1)
+        since = datetime(
+            start_day.year, start_day.month, start_day.day, tzinfo=QUOTA_TZ
+        ).timestamp()
+        buckets: dict[str, dict[str, int]] = {}
+        for offset in range(span):
+            key = (start_day + timedelta(days=offset)).isoformat()
+            buckets[key] = _empty_bucket()
+        for row in self.repository.daily_usage(tenant_id, since):
+            bucket = buckets.get(str(row.get("date") or ""))
+            if bucket is None:
+                continue
+            _accumulate(bucket, str(row.get("kind") or ""), int(row.get("units") or 0))
+        totals = _empty_bucket()
+        ordered: list[dict[str, Any]] = []
+        for key in sorted(buckets):
+            item = {"date": key, **buckets[key]}
+            ordered.append(item)
+            for field, value in buckets[key].items():
+                totals[field] = totals[field] + value
+        return {
+            "period": self.period()[0],
+            "days": ordered,
+            "totals": totals,
+        }
 
     def usage(self, tenant_id: str) -> QuotaUsage:
         name, start = self.period()
@@ -102,3 +134,23 @@ class QuotaService:
             raise QuotaExceededError(f"本月已达上限 {used}/{cap}，请升级或联系管理员")
         self.repository.record(tenant_id, user_id, resolved, amount, ref_id)
         return self.usage(tenant_id)
+
+
+QUOTA_TZ = timezone(timedelta(hours=8))
+
+
+def _empty_bucket() -> dict[str, int]:
+    return {"generations": 0, "uploads": 0, "storage_bytes": 0, "exec": 0, "image": 0}
+
+
+def _accumulate(bucket: dict[str, int], kind: str, units: int) -> None:
+    if kind in ("image",):
+        bucket["image"] = bucket["image"] + units
+    elif kind == "exec":
+        bucket["exec"] = bucket["exec"] + units
+    elif kind == "upload":
+        bucket["uploads"] = bucket["uploads"] + units
+    elif kind == "storage":
+        bucket["storage_bytes"] = bucket["storage_bytes"] + units
+    elif kind in GENERATION_KINDS:
+        bucket["generations"] = bucket["generations"] + units

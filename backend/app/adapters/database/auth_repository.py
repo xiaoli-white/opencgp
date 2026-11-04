@@ -38,6 +38,7 @@ SCHEMA: tuple[str, ...] = (
         password_hash TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'active',
         avatar_key TEXT NOT NULL DEFAULT '',
+        deleted_at REAL NOT NULL DEFAULT 0,
         created_at REAL NOT NULL,
         last_login_at REAL NOT NULL DEFAULT 0,
         updated_at REAL NOT NULL DEFAULT 0
@@ -102,6 +103,7 @@ COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("users", "status", "TEXT NOT NULL DEFAULT 'active'"),
     ("users", "avatar_key", "TEXT NOT NULL DEFAULT ''"),
     ("users", "updated_at", "REAL NOT NULL DEFAULT 0"),
+    ("users", "deleted_at", "REAL NOT NULL DEFAULT 0"),
     ("tenants", "kind", "TEXT NOT NULL DEFAULT 'team'"),
     ("tenants", "owner_user_id", "TEXT NOT NULL DEFAULT ''"),
 )
@@ -209,7 +211,11 @@ class DatabaseAuthRepository(AuthRepository):
         return True
 
     def list_users(
-        self, status: str = "", limit: int = 50, q: str = ""
+        self,
+        status: str = "",
+        limit: int = 50,
+        q: str = "",
+        include_deleted: bool = False,
     ) -> list[User]:
         self.ensure_schema()
         clauses: list[str] = []
@@ -217,6 +223,8 @@ class DatabaseAuthRepository(AuthRepository):
         if status:
             clauses.append("status = ?")
             params.append(status)
+        elif not include_deleted:
+            clauses.append("status <> 'disabled' AND deleted_at = 0")
         keyword = (q or "").strip().lower()
         if keyword:
             clauses.append("(lower(email) LIKE ? OR lower(display_name) LIKE ?)")
@@ -237,6 +245,30 @@ class DatabaseAuthRepository(AuthRepository):
         self.database.execute("DELETE FROM users WHERE id = ?", (user_id,))
         return True
 
+    def soft_delete_user(
+        self, user_id: str, email: str, deleted_at: float
+    ) -> bool:
+        self.ensure_schema()
+        if self.get_user(user_id) is None:
+            return False
+        self.database.execute(
+            "UPDATE users SET email = ?, status = 'disabled', deleted_at = ?,"
+            " updated_at = ? WHERE id = ?",
+            (email.strip().lower(), float(deleted_at), float(deleted_at), user_id),
+        )
+        return True
+
+    def restore_user(self, user_id: str, email: str) -> User | None:
+        self.ensure_schema()
+        if self.get_user(user_id) is None:
+            return None
+        self.database.execute(
+            "UPDATE users SET email = ?, status = 'active', deleted_at = 0,"
+            " updated_at = ? WHERE id = ?",
+            (email.strip().lower(), time.time(), user_id),
+        )
+        return self.get_user(user_id)
+
     def delete_memberships_by_user(self, user_id: str) -> int:
         self.ensure_schema()
         rows = self.database.fetchall(
@@ -254,11 +286,14 @@ class DatabaseAuthRepository(AuthRepository):
         self.ensure_schema()
         excluded = [str(item) for item in exclude_ids if item]
         if not excluded:
-            row = self.database.fetchone("SELECT COUNT(1) AS n FROM users")
+            row = self.database.fetchone(
+                "SELECT COUNT(1) AS n FROM users WHERE status <> 'disabled'"
+            )
             return int(row["n"]) if row else 0
         placeholders = ", ".join("?" for _ in excluded)
         row = self.database.fetchone(
-            f"SELECT COUNT(1) AS n FROM users WHERE id NOT IN ({placeholders})",
+            f"SELECT COUNT(1) AS n FROM users"
+            f" WHERE status <> 'disabled' AND id NOT IN ({placeholders})",
             tuple(excluded),
         )
         return int(row["n"]) if row else 0
@@ -272,6 +307,15 @@ class DatabaseAuthRepository(AuthRepository):
         self.ensure_schema()
         row = self.database.fetchone(
             "SELECT * FROM users WHERE email = ?", (email.strip().lower(),)
+        )
+        return _to_user(row) if row else None
+
+    def get_user_by_email_any(self, email: str) -> User | None:
+        self.ensure_schema()
+        address = (email or "").strip().lower()
+        row = self.database.fetchone(
+            "SELECT * FROM users WHERE email = ? OR email LIKE ? LIMIT 1",
+            (address, f"{address}__deleted__%"),
         )
         return _to_user(row) if row else None
 
@@ -714,6 +758,7 @@ def _to_user(row: Mapping[str, Any]) -> User:
         display_name=str(row["display_name"] or ""),
         status=str(row["status"] or "active") if "status" in keys else "active",
         avatar_key=str(row["avatar_key"] or "") if "avatar_key" in keys else "",
+        deleted_at=float(row["deleted_at"] or 0) if "deleted_at" in keys else 0.0,
         created_at=float(row["created_at"] or 0.0),
         last_login_at=float(row["last_login_at"] or 0.0),
         updated_at=float(row["updated_at"] or 0.0) if "updated_at" in keys else 0.0,
