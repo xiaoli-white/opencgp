@@ -17,6 +17,7 @@ const LongformEditorPage = lazy(() => import("./pages/LongformEditorPage"));
 const JobsPage = lazy(() => import("./pages/JobsPage"));
 const MediaPage = lazy(() => import("./pages/MediaPage"));
 const ReaderModePage = lazy(() => import("./pages/ReaderModePage"));
+const PublicSharePage = lazy(() => import("./pages/PublicSharePage"));
 
 function GlassSkeleton() {
   return (
@@ -33,6 +34,17 @@ function GlassSkeleton() {
 
 function AppRoutes() {
   const location = useLocation();
+
+  if (location.pathname.startsWith("/s/")) {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-[#f8fafc] dark:bg-[#0b1020]" />}>
+        <Routes>
+          <Route path="/s/:token" element={<PublicSharePage />} />
+          <Route path="*" element={<PublicSharePage />} />
+        </Routes>
+      </Suspense>
+    );
+  }
 
   if (location.pathname.startsWith("/read/")) {
     return (

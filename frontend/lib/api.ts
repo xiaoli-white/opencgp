@@ -421,6 +421,7 @@ export type Course = {
   audience: string;
   difficulty: string;
   language: string;
+  profile_id?: string;
   created_at: number;
   updated_at: number;
 };
@@ -942,6 +943,128 @@ export type CreationProfile = {
   updated_at?: number;
 };
 
+export type ProfileMetaSpec = {
+  name?: string;
+  description?: string;
+  tags?: string[];
+  icon?: string;
+};
+
+export type ProfileUnitSpec = {
+  name?: string;
+  plural?: string;
+  min_units?: number;
+  max_units?: number;
+  default_words?: number;
+};
+
+export type ProfileStructureSpec = {
+  depth?: number;
+  sections_per_unit?: number[];
+  requires_outline?: boolean;
+};
+
+export type ProfileVoiceSpec = {
+  tone?: string;
+  pov?: string;
+  tense?: string;
+  forbidden_phrases?: string[];
+};
+
+export type ProfileGroundingSpec = {
+  citation_policy?: string;
+  min_evidence?: number;
+  allow_web?: boolean;
+};
+
+export type ProfileAssetsSpec = {
+  glossary?: boolean;
+  setting_book?: boolean;
+  character_sheet?: boolean;
+};
+
+export type ProfileValidationSpec = {
+  validators?: string[];
+  strictness?: string;
+};
+
+export type ProfilePromptsSpec = {
+  system?: string;
+  outline?: string;
+  unit?: string;
+  revise?: string;
+};
+
+export type ProfileExportSpec = {
+  default_format?: string;
+  include_citations?: boolean;
+};
+
+export type ProfileSpec = {
+  meta?: ProfileMetaSpec;
+  unit?: ProfileUnitSpec;
+  structure?: ProfileStructureSpec;
+  voice?: ProfileVoiceSpec;
+  grounding?: ProfileGroundingSpec;
+  assets?: ProfileAssetsSpec;
+  validation?: ProfileValidationSpec;
+  prompts?: ProfilePromptsSpec;
+  export?: ProfileExportSpec;
+};
+
+export type WorkProfile = {
+  id: string;
+  tenant_id?: string;
+  name: string;
+  description: string;
+  spec: ProfileSpec;
+  is_builtin: boolean;
+  is_owner: boolean;
+  is_shared: boolean;
+  shared_to_me?: boolean;
+  share_level?: string;
+  owner_name?: string;
+  owner_user_id?: string;
+  version: number;
+  created_at?: number;
+  updated_at?: number;
+};
+
+export type ProfileValidationIssue = {
+  path: string;
+  message: string;
+};
+
+export type ProfileValidation = {
+  ok: boolean;
+  errors: ProfileValidationIssue[];
+  warnings: ProfileValidationIssue[];
+  spec: ProfileSpec;
+};
+
+export type ProfilePreview = {
+  profile_id?: string;
+  unit_name?: string;
+  system_prompt: string;
+  outline_prompt: string;
+  unit_prompt: string;
+  revise_prompt?: string;
+};
+
+export type ProfileShareLevel = "read" | "use" | "manage";
+
+export type ProfileShare = {
+  user_id: string;
+  user_email?: string;
+  user_display_name?: string;
+  level: ProfileShareLevel;
+};
+
+export type ProfileShareInput = {
+  user_id: string;
+  level: ProfileShareLevel;
+};
+
 export type KbSource = {
   source_id: string;
   source_name: string;
@@ -962,6 +1085,42 @@ export type ThreadSummary = {
   message_count?: number;
 };
 
+export type ShareResourceType = "course" | "longform";
+
+export type ShareLink = {
+  id: string;
+  resource_type: ShareResourceType;
+  resource_id: string;
+  token: string;
+  url: string;
+  expires_at: number;
+  revoked: boolean | number;
+  view_count: number;
+  created_at: number;
+};
+
+export type PublicShareChapter = {
+  title: string;
+  content: string;
+};
+
+export type PublicShareCitation = {
+  source_name?: string;
+  chunk_index?: number;
+};
+
+export type PublicShare = {
+  resource_type: ShareResourceType;
+  title: string;
+  subtitle?: string;
+  author?: string;
+  created_at: number;
+  chapters: PublicShareChapter[];
+  citations?: PublicShareCitation[];
+  expires_at: number;
+  view_count: number;
+};
+
 export const api = {
   health: () => request<Health>("/health"),
 
@@ -974,6 +1133,7 @@ export const api = {
     audience?: string;
     difficulty?: string;
     language?: string;
+    profile_id?: string;
   }) =>
     request<Course>("/api/v1/courses", {
       method: "POST",
@@ -1603,6 +1763,7 @@ export const api = {
       audience?: string;
       difficulty?: string;
       language?: string;
+      profile_id?: string;
     },
   ) =>
     request<Course>(`/api/v1/courses/${courseId}`, {
@@ -1748,6 +1909,77 @@ export const api = {
       method: "DELETE",
     }),
 
+  listWorkProfiles: () =>
+    request<{ count: number; profiles: WorkProfile[] }>("/api/v1/profiles"),
+
+  getWorkProfile: (profileId: string) =>
+    request<WorkProfile>(`/api/v1/profiles/${profileId}`),
+
+  createWorkProfile: (payload: {
+    name: string;
+    description?: string;
+    spec?: ProfileSpec;
+    is_shared?: boolean;
+  }) =>
+    request<WorkProfile>("/api/v1/profiles", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateWorkProfile: (
+    profileId: string,
+    payload: {
+      name?: string;
+      description?: string;
+      spec?: ProfileSpec;
+      is_shared?: boolean;
+    },
+  ) =>
+    request<WorkProfile>(`/api/v1/profiles/${profileId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteWorkProfile: (profileId: string) =>
+    request<{ ok?: boolean; profile_id?: string }>(`/api/v1/profiles/${profileId}`, {
+      method: "DELETE",
+    }),
+
+  duplicateWorkProfile: (profileId: string, payload?: { name?: string }) =>
+    request<WorkProfile>(`/api/v1/profiles/${profileId}/duplicate`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    }),
+
+  validateWorkProfile: (spec: ProfileSpec) =>
+    request<ProfileValidation>("/api/v1/profiles/validate", {
+      method: "POST",
+      body: JSON.stringify({ spec }),
+    }),
+
+  previewWorkProfile: (
+    profileId: string,
+    payload?: { sample?: Record<string, unknown> },
+  ) =>
+    request<ProfilePreview>(`/api/v1/profiles/${profileId}/preview`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    }),
+
+  getProfileShares: (profileId: string) =>
+    request<{ profile_id: string; count: number; shares: ProfileShare[] }>(
+      `/api/v1/profiles/${profileId}/shares`,
+    ),
+
+  saveProfileShares: (profileId: string, shares: ProfileShareInput[]) =>
+    request<{ profile_id: string; count: number; shares: ProfileShare[] }>(
+      `/api/v1/profiles/${profileId}/shares`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ shares }),
+      },
+    ),
+
   updateAdminUser: (
     userId: string,
     payload: {
@@ -1848,4 +2080,38 @@ export const api = {
 
   deleteMedia: (assetId: string) =>
     request<{ ok?: boolean }>(`/api/v1/media/${assetId}`, { method: "DELETE" }),
+
+  createShareLink: (payload: {
+    resource_type: ShareResourceType;
+    resource_id: string;
+    expires_in_days?: number;
+  }) =>
+    request<ShareLink>("/api/v1/share-links", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  listShareLinks: (
+    params: { resource_type?: ShareResourceType | ""; resource_id?: string } = {},
+  ) => {
+    const search = new URLSearchParams();
+    if (params.resource_type) search.set("resource_type", params.resource_type);
+    if (params.resource_id) search.set("resource_id", params.resource_id);
+    const query = search.toString();
+    return request<{ count: number; links: ShareLink[] }>(
+      `/api/v1/share-links${query ? `?${query}` : ""}`,
+    );
+  },
+
+  deleteShareLink: (linkId: string) =>
+    request<{ ok: boolean }>(`/api/v1/share-links/${encodeURIComponent(linkId)}`, {
+      method: "DELETE",
+    }),
+
+  getPublicShare: (token: string) =>
+    request<PublicShare>(
+      `/api/v1/public/shares/${encodeURIComponent(token)}`,
+      {},
+      { anonymous: true },
+    ),
 };

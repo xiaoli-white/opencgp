@@ -11,6 +11,7 @@ export function Modal({
   onClose,
   children,
   wide,
+  layer = "z-[70]",
 }: {
   open: boolean;
   title: string;
@@ -18,6 +19,7 @@ export function Modal({
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
+  layer?: string;
 }) {
   const { t } = useI18n();
   useEffect(() => {
@@ -36,7 +38,10 @@ export function Modal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/40 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+          className={
+            "fixed inset-0 flex items-end justify-center bg-slate-900/40 p-0 backdrop-blur-sm sm:items-center sm:p-6 " +
+            layer
+          }
           onClick={onClose}
         >
           <motion.div

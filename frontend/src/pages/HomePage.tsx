@@ -14,12 +14,16 @@ import {
 import { api, type Course } from "@/lib/api";
 import { difficultyLabel, formatRelative } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
+import ProfileSelect, { useWorkProfiles } from "@/components/profiles/ProfileSelect";
+import { useI18n } from "@/i18n/I18nProvider";
 
 const FLOW = ["建课", "建讲", "检索取证", "逐讲生成", "追问 / 改版", "版本回滚"];
 
 export default function HomePage() {
   const { can, visibleCourseIds } = useSession();
+  const { t } = useI18n();
   const navigate = useNavigate();
+  const { profiles } = useWorkProfiles();
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -31,7 +35,18 @@ export default function HomePage() {
     audience: "",
     difficulty: "intermediate",
     language: "zh",
+    profileId: "profile_builtin_tutorial",
   });
+
+  useEffect(() => {
+    if (profiles.length === 0) return;
+    const exists = profiles.some((item) => item.id === form.profileId);
+    if (!exists) {
+      const fallback =
+        profiles.find((item) => item.id === "profile_builtin_tutorial") ?? profiles[0];
+      setForm((prev) => ({ ...prev, profileId: fallback.id }));
+    }
+  }, [profiles, form.profileId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +81,7 @@ export default function HomePage() {
         audience: form.audience.trim(),
         difficulty: form.difficulty,
         language: form.language,
+        profile_id: form.profileId,
       });
       window.dispatchEvent(new Event("course-studio:refresh"));
       navigate(`/courses/${course.id}`);
@@ -238,6 +254,16 @@ export default function HomePage() {
                     </select>
                   </label>
                 </div>
+                <label className="sm:col-span-2">
+                  <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    {t("profiles.courseProfileLabel")}
+                  </span>
+                  <ProfileSelect
+                    value={form.profileId}
+                    profiles={profiles}
+                    onChange={(profileId) => setForm({ ...form, profileId })}
+                  />
+                </label>
               </div>
               <div className="mt-4 flex items-center justify-end gap-2">
                 <button

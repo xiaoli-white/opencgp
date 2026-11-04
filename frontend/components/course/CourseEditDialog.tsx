@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { api, type Course } from "@/lib/api";
 import { Modal } from "@/components/common/Dialogs";
+import ProfileSelect, { useWorkProfiles } from "@/components/profiles/ProfileSelect";
 import { useI18n } from "@/i18n/I18nProvider";
 
 const DIFFICULTIES = ["beginner", "intermediate", "advanced"];
@@ -23,11 +24,13 @@ export default function CourseEditDialog({
   onSaved: (course: Course) => void;
 }) {
   const { t, tm } = useI18n();
+  const { profiles } = useWorkProfiles();
   const [title, setTitle] = useState("");
   const [subtitle, setSubtitle] = useState("");
   const [audience, setAudience] = useState("");
   const [difficulty, setDifficulty] = useState("beginner");
   const [language, setLanguage] = useState("zh");
+  const [profileId, setProfileId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -38,6 +41,7 @@ export default function CourseEditDialog({
     setAudience(course.audience ?? "");
     setDifficulty(course.difficulty || "beginner");
     setLanguage(course.language || "zh");
+    setProfileId(course.profile_id ?? "");
     setError("");
   }, [open, course]);
 
@@ -52,6 +56,7 @@ export default function CourseEditDialog({
         audience: audience.trim(),
         difficulty,
         language,
+        profile_id: profileId,
       });
       onSaved(updated);
       onClose();
@@ -127,6 +132,10 @@ export default function CourseEditDialog({
             </select>
           </label>
         </div>
+        <label className="block text-[11px] text-slate-500 dark:text-slate-400">
+          {t("profiles.courseProfileLabel")}
+          <ProfileSelect value={profileId} profiles={profiles} onChange={setProfileId} />
+        </label>
         {error ? (
           <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-700 dark:text-rose-300">
             {error}

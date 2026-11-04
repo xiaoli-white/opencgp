@@ -8,7 +8,7 @@ import AccountCard from "@/components/settings/AccountCard";
 import ProviderCard from "@/components/settings/ProviderCard";
 import MyProvidersCard from "@/components/settings/MyProvidersCard";
 import SpacesCard from "@/components/settings/SpacesCard";
-import CreationProfilesCard from "@/components/settings/CreationProfilesCard";
+import ProfilesCard from "@/components/settings/ProfilesCard";
 import RolesCard from "@/components/settings/RolesCard";
 import MembersCard from "@/components/settings/MembersCard";
 import QuotaCard from "@/components/settings/QuotaCard";
@@ -84,7 +84,7 @@ export default function ProfileSettingsPage() {
 
       <SpacesCard onNotice={handleNotice} onError={handleError} />
 
-      <CreationProfilesCard
+      <ProfilesCard
         canWrite={canWrite}
         onNotice={handleNotice}
         onError={handleError}

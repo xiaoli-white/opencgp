@@ -13,9 +13,14 @@ import {
   X,
 } from "lucide-react";
 import clsx from "clsx";
-import { api, type CreationProfile, type Longform } from "@/lib/api";
+import { api, type Longform } from "@/lib/api";
 import { formatChars, formatDateTime } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
+import ProfileSelect, {
+  profileGenre,
+  useWorkProfiles,
+} from "@/components/profiles/ProfileSelect";
+import { useI18n } from "@/i18n/I18nProvider";
 
 const GENRE_OPTIONS = [
   { value: "article", label: "文章", badge: "文章" },
@@ -43,7 +48,9 @@ function genreLabel(value: string): string {
 export default function LongformsPage() {
   const navigate = useNavigate();
   const { can, roleName } = useSession();
+  const { t } = useI18n();
   const writable = can("write");
+  const { profiles } = useWorkProfiles();
 
   const [items, setItems] = useState<Longform[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,14 +69,6 @@ export default function LongformsPage() {
   const [targetWords, setTargetWords] = useState(3000);
   const [mode, setMode] = useState<"strict" | "loose">("loose");
   const [profileId, setProfileId] = useState("");
-  const [profiles, setProfiles] = useState<CreationProfile[]>([]);
-
-  useEffect(() => {
-    api
-      .listCreationProfiles()
-      .then((data) => setProfiles(data.profiles))
-      .catch(() => setProfiles([]));
-  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -343,31 +342,33 @@ export default function LongformsPage() {
 
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                    使用规则模板
+                    {t("profiles.longformProfileLabel")}
                   </span>
-                  <select
+                  <ProfileSelect
                     value={profileId}
-                    onChange={(event) => {
-                      const next = event.target.value;
+                    profiles={profiles}
+                    onChange={(next, picked) => {
                       setProfileId(next);
-                      const picked = profiles.find((item) => item.id === next);
                       if (!picked) return;
-                      setGenre(picked.genre || "article");
-                      setTone(picked.tone ?? "");
-                      setAudience(picked.audience ?? "");
-                      setPov(picked.pov ?? "");
-                      setCitationPolicy(picked.citation_policy || "optional");
-                      setTargetWords(picked.target_words || 3000);
+                      setGenre(profileGenre(picked));
+                      setTone(picked.spec?.voice?.tone ?? "");
+                      setAudience("");
+                      const pov = picked.spec?.voice?.pov ?? "";
+                      setPov(
+                        pov === "first"
+                          ? t("profiles.povFirst")
+                          : pov === "third_omniscient"
+                            ? t("profiles.povThirdOmniscient")
+                            : pov === "third_limited"
+                              ? t("profiles.povThirdLimited")
+                              : "",
+                      );
+                      setCitationPolicy(
+                        picked.spec?.grounding?.citation_policy || "optional",
+                      );
+                      setTargetWords(picked.spec?.unit?.default_words || 3000);
                     }}
-                    className="select"
-                  >
-                    <option value="">不使用（手动填写）</option>
-                    {profiles.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name} · {item.genre} · {item.target_words} 字
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </label>
 
                 <div className="grid gap-3 sm:grid-cols-2">

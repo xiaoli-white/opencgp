@@ -11,6 +11,7 @@ import {
   ChevronRight,
   History,
   Loader2,
+  Link2,
   List,
   Lock,
   MessageSquare,
@@ -21,6 +22,7 @@ import {
   Sparkles,
   Target,
   Trash2,
+  Wand2,
   X,
 } from "lucide-react";
 import clsx from "clsx";
@@ -54,11 +56,13 @@ import BlueprintBoard from "@/components/blueprint/BlueprintBoard";
 import ReviewControls from "@/components/course/ReviewControls";
 import CodeCheckPanel from "@/components/course/CodeCheckPanel";
 import CourseGrantsPanel from "@/components/course/CourseGrantsPanel";
+import ShareLinksDialog from "@/components/share/ShareLinksDialog";
 import StatusBadge from "@/components/course/StatusBadge";
 import LessonLockBanner from "@/components/course/LessonLockBanner";
 import ExportMenu from "@/components/export/ExportMenu";
 import CourseEditDialog from "@/components/course/CourseEditDialog";
 import ThreadsPanel from "@/components/course/ThreadsPanel";
+import { useWorkProfiles } from "@/components/profiles/ProfileSelect";
 import {
   ConfirmDialog,
   PromptDialog,
@@ -100,6 +104,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   const [pendingSelection, setPendingSelection] = useState<string | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [grantsOpen, setGrantsOpen] = useState(false);
+  const [shareLinksOpen, setShareLinksOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [formOpen, setFormOpen] = useState(false);
@@ -126,6 +131,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   );
   const [lessonBusy, setLessonBusy] = useState(false);
   const [lessonDialogError, setLessonDialogError] = useState("");
+  const { profiles } = useWorkProfiles();
   const navigate = useNavigate();
   const lockController = useRef<LessonLockController | null>(null);
 
@@ -538,6 +544,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   }
 
   const course = detail.course;
+  const currentProfile = profiles.find((item) => item.id === course.profile_id);
 
   return (
     <motion.div
@@ -582,6 +589,18 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                   ? t("course.languageChinese")
                   : course.language}
               </span>
+              {course.profile_id ? (
+                <Link
+                  to="/settings#creation-profiles"
+                  className="chip transition hover:text-indigo-600 dark:hover:text-indigo-200"
+                  title={t("profiles.courseChipHint")}
+                >
+                  <Wand2 size={11} />
+                  {t("profiles.courseChip", {
+                    name: currentProfile?.name ?? course.profile_id,
+                  })}
+                </Link>
+              ) : null}
             </div>
           </div>
           <div className="no-scrollbar -mx-1 flex items-center gap-2 overflow-x-auto px-1">
@@ -631,6 +650,16 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               >
                 <Lock size={13} />
                 {t("course.grants")}
+              </button>
+            ) : null}
+            {canWrite ? (
+              <button
+                type="button"
+                onClick={() => setShareLinksOpen(true)}
+                className="btn btn-ghost shrink-0"
+              >
+                <Link2 size={13} />
+                {t("share.dialogTitle")}
               </button>
             ) : null}
             <button
@@ -1392,6 +1421,14 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         courseId={courseId}
         open={grantsOpen}
         onClose={() => setGrantsOpen(false)}
+      />
+
+      <ShareLinksDialog
+        open={shareLinksOpen}
+        onClose={() => setShareLinksOpen(false)}
+        resourceType="course"
+        resourceId={courseId}
+        title={course.title}
       />
 
       <CourseEditDialog

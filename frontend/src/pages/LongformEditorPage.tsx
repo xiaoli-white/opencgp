@@ -15,6 +15,7 @@ import {
   History,
   Layers,
   ImagePlus,
+  Link2,
   Loader2,
   PenLine,
   Pencil,
@@ -42,6 +43,7 @@ import VersionDiffDialog from "@/components/reader/VersionDiffDialog";
 import VersionPreviewDialog from "@/components/reader/VersionPreviewDialog";
 import { useSession } from "@/components/auth/SessionProvider";
 import SharePanel, { type ShareMember } from "@/components/sharing/SharePanel";
+import ShareLinksDialog from "@/components/share/ShareLinksDialog";
 import ExportMenu from "@/components/export/ExportMenu";
 import ImagePickerDrawer from "@/components/media/ImagePickerDrawer";
 import {
@@ -106,6 +108,7 @@ export default function LongformEditorPage() {
   const [rewriteMode, setRewriteMode] = useState<GenerationMode>("loose");
 
   const [shareOpen, setShareOpen] = useState(false);
+  const [shareLinksOpen, setShareLinksOpen] = useState(false);
   const [shareMembers, setShareMembers] = useState<ShareMember[]>([]);
   const [shareLevels, setShareLevels] = useState<Record<string, string | null>>({});
   const [shareLoading, setShareLoading] = useState(false);
@@ -791,6 +794,16 @@ export default function LongformEditorPage() {
             </button>
             <button
               type="button"
+              onClick={() => setShareLinksOpen(true)}
+              disabled={!writable}
+              className="btn btn-quiet whitespace-nowrap"
+              title={writable ? "生成只读分享链接" : "当前角色只读"}
+            >
+              <Link2 size={13} />
+              分享链接
+            </button>
+            <button
+              type="button"
               onClick={openManual}
               disabled={Boolean(busy) || !writable}
               className="btn btn-quiet whitespace-nowrap"
@@ -1287,6 +1300,14 @@ export default function LongformEditorPage() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      <ShareLinksDialog
+        open={shareLinksOpen}
+        onClose={() => setShareLinksOpen(false)}
+        resourceType="longform"
+        resourceId={longform?.id ?? ""}
+        title={longform?.title}
+      />
 
       <SharePanel
         open={shareOpen}
