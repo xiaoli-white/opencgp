@@ -329,6 +329,33 @@ export type Evidence = {
   citation: Citation;
 };
 
+export type ExportFormatId = "md" | "html" | "epub" | "pdf";
+
+export type ExportFormat = {
+  id: ExportFormatId;
+  label: string;
+  available: boolean;
+};
+
+export type ExportSourceType = "course" | "longform";
+
+export type ExportResult = {
+  blob: Blob;
+  filename: string;
+};
+
+export type MediaAsset = {
+  id: string;
+  kind: string;
+  prompt: string;
+  url: string;
+  content_type: string;
+  bytes: number;
+  width: number;
+  height: number;
+  created_at: number;
+};
+
 export type GenerationMode = "strict" | "loose";
 
 export type Course = {
@@ -747,6 +774,101 @@ export async function request<T>(
     return undefined as T;
   }
   return (await response.json()) as T;
+}
+
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  const token = getToken();
+  const tenantId = getTenantId();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (tenantId) headers["X-Tenant-Id"] = tenantId;
+  return headers;
+}
+
+export function mediaUrl(assetId: string): string {
+  return `${API_BASE}/api/v1/media/${encodeURIComponent(assetId)}`;
+}
+
+function filenameFromDisposition(header: string | null): string {
+  if (!header) return "";
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (encoded?.[1]) {
+    const raw = encoded[1].trim().replace(/^"|"$/g, "");
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  return plain?.[1] ? plain[1].trim() : "";
+}
+
+export async function exportDocument(
+  sourceType: ExportSourceType,
+  sourceId: string,
+  format: ExportFormatId,
+  options: {
+    theme?: "light" | "dark";
+    includeCitations?: boolean;
+    fallbackName?: string;
+  } = {},
+): Promise<ExportResult> {
+  const params = new URLSearchParams({ format });
+  params.set("theme", options.theme ?? "light");
+  params.set("include_citations", options.includeCitations === false ? "false" : "true");
+  let response: Response;
+  try {
+    response = await fetch(
+      `${API_BASE}/api/v1/export/${sourceType}/${encodeURIComponent(sourceId)}?${params.toString()}`,
+      { headers: authHeaders(), cache: "no-store" },
+    );
+  } catch {
+    throw new ApiError(`无法连接后端服务（${API_BASE}）`, 0);
+  }
+  if (!response.ok) {
+    let message = `导出失败（${response.status}）`;
+    let payload: Record<string, unknown> | null = null;
+    try {
+      const body = (await response.json()) as Record<string, unknown> | null;
+      payload = body;
+      const detail = body?.detail;
+      if (typeof detail === "string") message = detail;
+    } catch {
+      message = `${message} ${response.statusText}`.trim();
+    }
+    throw new ApiError(message, response.status, payload);
+  }
+  const blob = await response.blob();
+  const filename =
+    filenameFromDisposition(response.headers.get("content-disposition")) ||
+    `${options.fallbackName || sourceType}.${format}`;
+  return { blob, filename };
+}
+
+export async function uploadMediaFile(file: File): Promise<MediaAsset> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`${API_BASE}/api/v1/media/upload`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    let message = `上传失败（${response.status}）`;
+    let payload: Record<string, unknown> | null = null;
+    try {
+      const body = (await response.json()) as Record<string, unknown> | null;
+      payload = body;
+      const detail = body?.detail;
+      if (typeof detail === "string") message = detail;
+    } catch {
+      message = `${message} ${response.statusText}`.trim();
+    }
+    throw new ApiError(message, response.status, payload);
+  }
+  return (await response.json()) as MediaAsset;
 }
 
 export type CreationProfile = {
@@ -1576,4 +1698,32 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ topic }),
     }),
+
+  getExportFormats: () =>
+    request<{ formats: ExportFormat[] }>("/api/v1/export/formats"),
+
+  listMedia: (params: { kind?: string; limit?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (params.kind) search.set("kind", params.kind);
+    if (params.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return request<{ count: number; assets: MediaAsset[] }>(
+      `/api/v1/media${query ? `?${query}` : ""}`,
+    );
+  },
+
+  uploadMedia: (file: File) => uploadMediaFile(file),
+
+  generateMedia: (payload: { prompt: string; size?: string; n?: number }) =>
+    request<{ assets: MediaAsset[] }>("/api/v1/media/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        prompt: payload.prompt,
+        size: payload.size ?? "1024x1024",
+        n: payload.n ?? 1,
+      }),
+    }),
+
+  deleteMedia: (assetId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/media/${assetId}`, { method: "DELETE" }),
 };

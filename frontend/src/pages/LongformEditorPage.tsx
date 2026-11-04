@@ -11,6 +11,7 @@ import {
   FileText,
   History,
   Layers,
+  ImagePlus,
   Loader2,
   PenLine,
   Pencil,
@@ -36,6 +37,8 @@ import { contentLength, formatChars, formatDateTime } from "@/lib/format";
 import MarkdownReader from "@/components/reader/MarkdownReader";
 import { useSession } from "@/components/auth/SessionProvider";
 import SharePanel, { type ShareMember } from "@/components/sharing/SharePanel";
+import ExportMenu from "@/components/export/ExportMenu";
+import ImagePickerDrawer from "@/components/media/ImagePickerDrawer";
 import {
   ConfirmDialog,
   Modal,
@@ -100,6 +103,7 @@ export default function LongformEditorPage() {
   const [shareLoading, setShareLoading] = useState(false);
   const [shareSaving, setShareSaving] = useState(false);
   const [shareError, setShareError] = useState("");
+  const [pickOpen, setPickOpen] = useState(false);
 
   const [titleEditOpen, setTitleEditOpen] = useState(false);
   const [targetEditOpen, setTargetEditOpen] = useState(false);
@@ -762,6 +766,21 @@ export default function LongformEditorPage() {
             </button>
             <button
               type="button"
+              onClick={() => setPickOpen(true)}
+              disabled={Boolean(busy) || !writable}
+              className="btn btn-quiet whitespace-nowrap"
+              title={!writable ? "当前角色只读" : "从图片库插入图片到章节末尾"}
+            >
+              <ImagePlus size={13} />
+              插入图片
+            </button>
+            <ExportMenu
+              sourceType="longform"
+              sourceId={longform.id}
+              fallbackName={longform.title}
+            />
+            <button
+              type="button"
               onClick={() => void load(true)}
               disabled={Boolean(busy)}
               className="btn btn-quiet whitespace-nowrap"
@@ -1234,6 +1253,16 @@ export default function LongformEditorPage() {
           setShareLevels((prev) => ({ ...prev, [userId]: level }))
         }
         onSave={saveShare}
+      />
+
+      <ImagePickerDrawer
+        open={pickOpen}
+        longform={longform}
+        onClose={() => setPickOpen(false)}
+        onInserted={(message) => {
+          setNotice(message);
+          void load(true);
+        }}
       />
 
       <PromptDialog

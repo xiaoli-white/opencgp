@@ -6,6 +6,7 @@ import {
   BookOpen,
   BrainCircuit,
   IdCard,
+  Image as ImageIcon,
   LayoutGrid,
   Library,
   ListChecks,
@@ -39,6 +40,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/research", label: "深度研究", icon: BrainCircuit, exact: false },
   { href: "/longforms", label: "长篇写作", icon: PenLine, exact: false },
   { href: "/jobs", label: "任务中心", icon: ListChecks, exact: false },
+  { href: "/media", label: "图片库", icon: ImageIcon, exact: false },
   { href: "/settings", label: "个人设置", icon: IdCard, exact: true },
   {
     href: "/settings/server",
@@ -320,6 +322,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             ? "长篇写作"
             : pathname === "/jobs"
               ? "任务中心"
+              : pathname === "/media"
+                ? "图片库"
               : pathname === "/settings"
               ? "个人设置"
               : pathname === "/settings/server"

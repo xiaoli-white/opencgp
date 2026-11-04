@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, FileText, MessageSquareQuote } from "lucide-react";
 import type { Citation, Evidence, GenerationMode } from "@/lib/api";
 import { splitLooseNotice } from "@/lib/format";
+import MermaidDiagram from "@/components/reader/MermaidDiagram";
 
 type MarkdownReaderProps = {
   content: string;
@@ -198,6 +199,32 @@ export default function MarkdownReader({
           <a href={href} target="_blank" rel="noreferrer">
             {children}
           </a>
+        );
+      },
+      pre({ children }) {
+        const list = Array.isArray(children) ? children : [children];
+        const hasMermaid = list.some(
+          (child) =>
+            (child as { props?: Record<string, unknown> } | null)?.props?.[
+              "data-mermaid"
+            ] === "1",
+        );
+        if (hasMermaid) return <>{children}</>;
+        return <pre>{children}</pre>;
+      },
+      code({ className, children, ...rest }) {
+        const language = /language-([\w-]+)/.exec(className ?? "")?.[1];
+        if (language === "mermaid") {
+          return (
+            <span data-mermaid="1" className="block">
+              <MermaidDiagram code={String(children)} />
+            </span>
+          );
+        }
+        return (
+          <code className={className} {...rest}>
+            {children}
+          </code>
         );
       },
     }),

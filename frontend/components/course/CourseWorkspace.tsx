@@ -55,6 +55,7 @@ import ReviewControls from "@/components/course/ReviewControls";
 import CourseGrantsPanel from "@/components/course/CourseGrantsPanel";
 import StatusBadge from "@/components/course/StatusBadge";
 import LessonLockBanner from "@/components/course/LessonLockBanner";
+import ExportMenu from "@/components/export/ExportMenu";
 import CourseEditDialog from "@/components/course/CourseEditDialog";
 import ThreadsPanel from "@/components/course/ThreadsPanel";
 import {
@@ -573,6 +574,11 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
             </div>
           </div>
           <div className="no-scrollbar -mx-1 flex items-center gap-2 overflow-x-auto px-1">
+            <ExportMenu
+              sourceType="course"
+              sourceId={course.id}
+              fallbackName={course.title}
+            />
             {canWrite ? (
               <button
                 type="button"
