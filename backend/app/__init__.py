@@ -1,4 +1,4 @@
-"""AI 课程工作室 · 后端应用包。
+"""OpenCGP · 后端应用包。
 
 遵循 Ports & Adapters 架构：
 

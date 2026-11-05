@@ -21,7 +21,7 @@ DIFFICULTY_LABELS: dict[str, str] = {
     "intermediate": "进阶",
     "advanced": "高级",
 }
-DEFAULT_AUTHOR = "AI 课程工作室"
+DEFAULT_AUTHOR = "OpenCGP"
 
 
 class ExportService:

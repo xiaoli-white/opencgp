@@ -181,7 +181,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
-    description="AI 课程工作室 · 以对话为中心、以课程为活文档的创作工作台",
+    description="OpenCGP · 以对话为中心、以作品为活文档的内容生成平台",
     lifespan=lifespan,
 )
 
