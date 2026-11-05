@@ -246,7 +246,7 @@ class Container:
             from app.adapters.rerank.remote_rerank import RemoteRerank
 
             batch = cfg.batch
-            if "COURSE_STUDIO_RERANK_BATCH" not in os.environ:
+            if "OPENCGP_RERANK_BATCH" not in os.environ and "COURSE_STUDIO_RERANK_BATCH" not in os.environ:
                 batch = int(preset.get("batch") or cfg.batch)
             if preset["format"] == "cohere":
                 batch = min(100, batch)
@@ -286,7 +286,7 @@ class Container:
 
                 dsn = settings.dsn or self.settings.database.dsn
                 if not dsn:
-                    raise ValueError("postgres 向量库需要 COURSE_STUDIO_VECTORSTORE_DSN")
+                    raise ValueError("postgres 向量库需要 OPENCGP_VECTORSTORE_DSN")
                 return PostgresVectorStore(
                     database=PostgresDatabase(dsn=dsn, pool_size=settings.pool_size),
                     embedder=self.embedder(),

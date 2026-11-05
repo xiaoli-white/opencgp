@@ -189,7 +189,7 @@ class AuthService:
         require_approval: bool = True,
     ) -> None:
         self.repository = repository
-        self.secret = secret or "course-studio-dev-secret"
+        self.secret = secret or "opencgp-dev-secret"
         self.ttl_seconds = ttl_seconds
         self.mode = (mode or "disabled").strip().lower()
         self.require_approval = bool(require_approval)

@@ -7,48 +7,48 @@ metadata:
     {{- include "opencgp.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 data:
-  COURSE_STUDIO_APP_NAME: {{ .Values.config.appName | quote }}
-  COURSE_STUDIO_ENV: {{ .Values.config.env | quote }}
-  COURSE_STUDIO_AUTH_MODE: {{ .Values.config.authMode | quote }}
-  COURSE_STUDIO_AUTH_TOKEN_TTL_HOURS: {{ .Values.config.authTokenTtlHours | quote }}
-  COURSE_STUDIO_REQUIRE_APPROVAL: {{ .Values.config.requireApproval | quote }}
-  COURSE_STUDIO_LOCK_TTL_SECONDS: {{ .Values.config.lockTtlSeconds | quote }}
-  COURSE_STUDIO_DATABASE_BACKEND: {{ .Values.config.databaseBackend | quote }}
-  COURSE_STUDIO_DATABASE_PATH: {{ .Values.config.databasePath | quote }}
-  COURSE_STUDIO_DATABASE_POOL_SIZE: {{ .Values.config.databasePoolSize | quote }}
-  COURSE_STUDIO_VECTORSTORE_BACKEND: {{ .Values.config.vectorstoreBackend | quote }}
-  COURSE_STUDIO_VECTORSTORE_PATH: {{ .Values.config.vectorstorePath | quote }}
-  COURSE_STUDIO_STORAGE_BACKEND: {{ .Values.config.storageBackend | quote }}
-  COURSE_STUDIO_STORAGE_ROOT: {{ .Values.config.storageRoot | quote }}
-  COURSE_STUDIO_S3_ENDPOINT: {{ include "opencgp.s3Endpoint" . | quote }}
-  COURSE_STUDIO_S3_BUCKET: {{ include "opencgp.s3Bucket" . | quote }}
-  COURSE_STUDIO_S3_REGION: {{ include "opencgp.s3Region" . | quote }}
-  COURSE_STUDIO_S3_PREFIX: {{ include "opencgp.s3Prefix" . | quote }}
-  COURSE_STUDIO_QUEUE_BACKEND: {{ .Values.config.queueBackend | quote }}
-  COURSE_STUDIO_REDIS_URL: {{ include "opencgp.redisUrl" . | quote }}
-  COURSE_STUDIO_JOB_CONCURRENCY: {{ .Values.config.jobConcurrency | quote }}
-  COURSE_STUDIO_JOB_SSE_PING_SECONDS: {{ .Values.config.jobSsePingSeconds | quote }}
-  COURSE_STUDIO_EXECUTOR_BACKEND: {{ .Values.config.executorBackend | quote }}
-  COURSE_STUDIO_EXEC_TIMEOUT: {{ .Values.config.execTimeout | quote }}
-  COURSE_STUDIO_NOTIFY_BACKEND: {{ .Values.config.notifyBackend | quote }}
-  COURSE_STUDIO_SMTP_HOST: {{ .Values.config.smtpHost | quote }}
-  COURSE_STUDIO_SMTP_PORT: {{ .Values.config.smtpPort | quote }}
-  COURSE_STUDIO_SMTP_USER: {{ .Values.config.smtpUser | quote }}
-  COURSE_STUDIO_SMTP_FROM: {{ .Values.config.smtpFrom | quote }}
-  COURSE_STUDIO_SMTP_TLS: {{ .Values.config.smtpTls | quote }}
-  COURSE_STUDIO_SMTP_TIMEOUT: {{ .Values.config.smtpTimeout | quote }}
-  COURSE_STUDIO_WEBSEARCH_BACKEND: {{ .Values.config.websearchBackend | quote }}
-  COURSE_STUDIO_WEBSEARCH_URL: {{ .Values.config.websearchUrl | quote }}
-  COURSE_STUDIO_WEBSEARCH_METHOD: {{ .Values.config.websearchMethod | quote }}
-  COURSE_STUDIO_WEBSEARCH_RESULT_PATH: {{ .Values.config.websearchResultPath | quote }}
-  COURSE_STUDIO_IMAGE_BACKEND: {{ .Values.config.imageBackend | quote }}
-  COURSE_STUDIO_IMAGE_BASE_URL: {{ .Values.config.imageBaseUrl | quote }}
-  COURSE_STUDIO_IMAGE_MODEL: {{ .Values.config.imageModel | quote }}
-  COURSE_STUDIO_LLM_BACKEND: {{ .Values.config.llmBackend | quote }}
-  COURSE_STUDIO_LLM_BASE_URL: {{ .Values.config.llmBaseUrl | quote }}
-  COURSE_STUDIO_LLM_MODEL: {{ .Values.config.llmModel | quote }}
-  COURSE_STUDIO_EMBEDDING_BACKEND: {{ .Values.config.embeddingBackend | quote }}
-  COURSE_STUDIO_EXPORTER_BACKEND: "builtin"
+  OPENCGP_APP_NAME: {{ .Values.config.appName | quote }}
+  OPENCGP_ENV: {{ .Values.config.env | quote }}
+  OPENCGP_AUTH_MODE: {{ .Values.config.authMode | quote }}
+  OPENCGP_AUTH_TOKEN_TTL_HOURS: {{ .Values.config.authTokenTtlHours | quote }}
+  OPENCGP_REQUIRE_APPROVAL: {{ .Values.config.requireApproval | quote }}
+  OPENCGP_LOCK_TTL_SECONDS: {{ .Values.config.lockTtlSeconds | quote }}
+  OPENCGP_DATABASE_BACKEND: {{ .Values.config.databaseBackend | quote }}
+  OPENCGP_DATABASE_PATH: {{ .Values.config.databasePath | quote }}
+  OPENCGP_DATABASE_POOL_SIZE: {{ .Values.config.databasePoolSize | quote }}
+  OPENCGP_VECTORSTORE_BACKEND: {{ .Values.config.vectorstoreBackend | quote }}
+  OPENCGP_VECTORSTORE_PATH: {{ .Values.config.vectorstorePath | quote }}
+  OPENCGP_STORAGE_BACKEND: {{ .Values.config.storageBackend | quote }}
+  OPENCGP_STORAGE_ROOT: {{ .Values.config.storageRoot | quote }}
+  OPENCGP_S3_ENDPOINT: {{ include "opencgp.s3Endpoint" . | quote }}
+  OPENCGP_S3_BUCKET: {{ include "opencgp.s3Bucket" . | quote }}
+  OPENCGP_S3_REGION: {{ include "opencgp.s3Region" . | quote }}
+  OPENCGP_S3_PREFIX: {{ include "opencgp.s3Prefix" . | quote }}
+  OPENCGP_QUEUE_BACKEND: {{ .Values.config.queueBackend | quote }}
+  OPENCGP_REDIS_URL: {{ include "opencgp.redisUrl" . | quote }}
+  OPENCGP_JOB_CONCURRENCY: {{ .Values.config.jobConcurrency | quote }}
+  OPENCGP_JOB_SSE_PING_SECONDS: {{ .Values.config.jobSsePingSeconds | quote }}
+  OPENCGP_EXECUTOR_BACKEND: {{ .Values.config.executorBackend | quote }}
+  OPENCGP_EXEC_TIMEOUT: {{ .Values.config.execTimeout | quote }}
+  OPENCGP_NOTIFY_BACKEND: {{ .Values.config.notifyBackend | quote }}
+  OPENCGP_SMTP_HOST: {{ .Values.config.smtpHost | quote }}
+  OPENCGP_SMTP_PORT: {{ .Values.config.smtpPort | quote }}
+  OPENCGP_SMTP_USER: {{ .Values.config.smtpUser | quote }}
+  OPENCGP_SMTP_FROM: {{ .Values.config.smtpFrom | quote }}
+  OPENCGP_SMTP_TLS: {{ .Values.config.smtpTls | quote }}
+  OPENCGP_SMTP_TIMEOUT: {{ .Values.config.smtpTimeout | quote }}
+  OPENCGP_WEBSEARCH_BACKEND: {{ .Values.config.websearchBackend | quote }}
+  OPENCGP_WEBSEARCH_URL: {{ .Values.config.websearchUrl | quote }}
+  OPENCGP_WEBSEARCH_METHOD: {{ .Values.config.websearchMethod | quote }}
+  OPENCGP_WEBSEARCH_RESULT_PATH: {{ .Values.config.websearchResultPath | quote }}
+  OPENCGP_IMAGE_BACKEND: {{ .Values.config.imageBackend | quote }}
+  OPENCGP_IMAGE_BASE_URL: {{ .Values.config.imageBaseUrl | quote }}
+  OPENCGP_IMAGE_MODEL: {{ .Values.config.imageModel | quote }}
+  OPENCGP_LLM_BACKEND: {{ .Values.config.llmBackend | quote }}
+  OPENCGP_LLM_BASE_URL: {{ .Values.config.llmBaseUrl | quote }}
+  OPENCGP_LLM_MODEL: {{ .Values.config.llmModel | quote }}
+  OPENCGP_EMBEDDING_BACKEND: {{ .Values.config.embeddingBackend | quote }}
+  OPENCGP_EXPORTER_BACKEND: "builtin"
   PYTHONDONTWRITEBYTECODE: "1"
   PYTHONUNBUFFERED: "1"
   XDG_CACHE_HOME: "/tmp/.cache"

@@ -83,7 +83,7 @@ docker push registry.example.com/opencgp/frontend:0.1.0
 
 - `VITE_API_BASE` 是 **构建期** 变量（Vite 会把它内联进 bundle）。必须构建为 `/api`，否则前端会回落到 `http://127.0.0.1:8000`。
 - 运行时由 Chart 注入的 nginx 配置把 `/api` 反代到 `{release}-api`（HA）或 `{release}-backend`（单机），浏览器只发同源请求，不需要 CORS。
-- 后端镜像内置 `libcairo/libpango`（PDF 导出依赖）。中文字体需自行随镜像带入，并通过 `COURSE_STUDIO_EXPORTER_FONT_REGULAR` / `_FONT_BOLD` 指向 `.ttf` 路径。
+- 后端镜像内置 `libcairo/libpango`（PDF 导出依赖）。中文字体需自行随镜像带入，并通过 `OPENCGP_EXPORTER_FONT_REGULAR` / `_FONT_BOLD` 指向 `.ttf` 路径。
 - 后端容器以非 root（uid 10001）运行且根文件系统只读，写盘目录只有 `/data`（仅单机 backend）与 `emptyDir`（`/tmp`）；Chart 已注入 `XDG_CACHE_HOME=/tmp/.cache`、`HOME=/tmp`。
 - `backend.image` 同时用于单机 backend、API 与 Worker，三者的镜像必须完全一致。
 
@@ -288,10 +288,10 @@ redis-cli -h redis.database.svc.cluster.local -a password ping
 | `postgres.storage` | `20Gi` | 内置 PG PVC 大小 |
 | `postgres.credentials` | `opencgp` / `opencgp` / `opencgp` | user / password / database，**生产必须改密码** |
 | `redis.enabled` | `true` | 内置 Redis（仅单机） |
-| `redis.auth.enabled` | `false` | 开启后自动写进 `COURSE_STUDIO_REDIS_URL` |
+| `redis.auth.enabled` | `false` | 开启后自动写进 `OPENCGP_REDIS_URL` |
 | `rustfs.enabled` | `true` | 内置对象存储（仅单机） |
 | `config.databaseBackend` | `postgres` | 统一 PostgreSQL，Chart 不再提供 SQLite |
-| `config.vectorstoreBackend` | `postgres` | 复用 `DATABASE_DSN`；需要则单独设 `COURSE_STUDIO_VECTORSTORE_DSN` |
+| `config.vectorstoreBackend` | `postgres` | 复用 `DATABASE_DSN`；需要则单独设 `OPENCGP_VECTORSTORE_DSN` |
 | `config.queueBackend` | `redis` | `local` / `redis` |
 | `config.storageBackend` | `s3` | `local` / `s3` / `rustfs` |
 | `config.authMode` | `required` | `disabled` 时隐式 owner、免登录（仅本地自用） |
@@ -304,7 +304,7 @@ redis-cli -h redis.database.svc.cluster.local -a password ping
 | `ingress.enabled` / `className` / `hosts` / `tls` | `false` | Ingress 只指向 frontend Service |
 | `networkPolicy.enabled` | `false` | 限制 api/worker/backend / postgres / redis / rustfs 的入站来源 |
 
-ConfigMap 里的键统一带 `COURSE_STUDIO_` 前缀（例如逻辑上的 `DATABASE_BACKEND` 实际是 `COURSE_STUDIO_DATABASE_BACKEND`），`JOB_CONCURRENCY` 由各 Deployment 用 `env` 覆盖 ConfigMap 的默认值。
+ConfigMap 里的键统一带 `OPENCGP_` 前缀（例如逻辑上的 `DATABASE_BACKEND` 实际是 `OPENCGP_DATABASE_BACKEND`），`JOB_CONCURRENCY` 由各 Deployment 用 `env` 覆盖 ConfigMap 的默认值。
 
 > `values.yaml` 顶层的 `notes` 字段是纯说明性文本，Helm 会原样保留，不会渲染进任何资源。
 
@@ -321,7 +321,7 @@ ConfigMap 里的键统一带 `COURSE_STUDIO_` 前缀（例如逻辑上的 `DATAB
 - **独立滚动发布**：Worker 重启会中断正在执行的任务（`terminationGracePeriodSeconds=120` 让任务尽量收尾），API 重启则只影响连接；拆开可以把两类抖动隔离开。
 - **故障隔离**：任务里的 OOM 不会把 API 一起打挂。
 
-对应到 Chart：`api-deployment.yaml` 里 `COURSE_STUDIO_JOB_CONCURRENCY` 恒为 `"0"`；`worker-deployment.yaml` 里为 `{{ .Values.worker.jobConcurrency }}`。Worker 没有 Service、没有 readinessProbe，不进入任何 Service Endpoints，因此不会收到 HTTP 流量。
+对应到 Chart：`api-deployment.yaml` 里 `OPENCGP_JOB_CONCURRENCY` 恒为 `"0"`；`worker-deployment.yaml` 里为 `{{ .Values.worker.jobConcurrency }}`。Worker 没有 Service、没有 readinessProbe，不进入任何 Service Endpoints，因此不会收到 HTTP 流量。
 
 ### 7.2 为什么必须同一个 Redis DB
 
@@ -426,29 +426,29 @@ kubectl -n opencgp scale deploy/ocgp-opencgp-worker --replicas=6
 
 | Key | 来源 |
 |---|---|
-| `COURSE_STUDIO_AUTH_SECRET` | `randAlphaNum 48`，`lookup` 保留旧值 |
-| `COURSE_STUDIO_DATABASE_DSN` | 由 `externalDatabase.dsn` 或内置 PG 拼接（含密码，因此放在 Secret 而不是 ConfigMap） |
-| `COURSE_STUDIO_S3_ACCESS_KEY` / `_SECRET_KEY` | `externalS3.*` 或 `secrets.*`，否则随机生成 |
+| `OPENCGP_AUTH_SECRET` | `randAlphaNum 48`，`lookup` 保留旧值 |
+| `OPENCGP_DATABASE_DSN` | 由 `externalDatabase.dsn` 或内置 PG 拼接（含密码，因此放在 Secret 而不是 ConfigMap） |
+| `OPENCGP_S3_ACCESS_KEY` / `_SECRET_KEY` | `externalS3.*` 或 `secrets.*`，否则随机生成 |
 | `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` | 与上面同值，供内置 rustfs 使用 |
-| `COURSE_STUDIO_LLM_API_KEY` / `_IMAGE_API_KEY` / `_WEBSEARCH_API_KEY` | 仅当 `secrets.*ApiKey` 非空时写入 |
-| `COURSE_STUDIO_SMTP_PASSWORD` | 仅当 `secrets.smtpPassword` 非空时写入 |
+| `OPENCGP_LLM_API_KEY` / `_IMAGE_API_KEY` / `_WEBSEARCH_API_KEY` | 仅当 `secrets.*ApiKey` 非空时写入 |
+| `OPENCGP_SMTP_PASSWORD` | 仅当 `secrets.smtpPassword` 非空时写入 |
 
 读取自动生成的管理密钥：
 
 ```bash
-kubectl -n opencgp get secret ocgp-opencgp-secret -o jsonpath='{.data.COURSE_STUDIO_AUTH_SECRET}' | base64 -d
-kubectl -n opencgp get secret ocgp-opencgp-secret -o jsonpath='{.data.COURSE_STUDIO_DATABASE_DSN}' | base64 -d
+kubectl -n opencgp get secret ocgp-opencgp-secret -o jsonpath='{.data.OPENCGP_AUTH_SECRET}' | base64 -d
+kubectl -n opencgp get secret ocgp-opencgp-secret -o jsonpath='{.data.OPENCGP_DATABASE_DSN}' | base64 -d
 ```
 
 生产环境推荐用外部 Secret（SealedSecret / External Secrets / Vault）：
 
 ```bash
 kubectl -n opencgp create secret generic opencgp-secrets \
-  --from-literal=COURSE_STUDIO_AUTH_SECRET="$(openssl rand -base64 36)" \
-  --from-literal=COURSE_STUDIO_DATABASE_DSN='postgresql://opencgp:password@pg:5432/opencgp' \
-  --from-literal=COURSE_STUDIO_S3_ACCESS_KEY=xxx \
-  --from-literal=COURSE_STUDIO_S3_SECRET_KEY=yyy \
-  --from-literal=COURSE_STUDIO_LLM_API_KEY=sk-xxx
+  --from-literal=OPENCGP_AUTH_SECRET="$(openssl rand -base64 36)" \
+  --from-literal=OPENCGP_DATABASE_DSN='postgresql://opencgp:password@pg:5432/opencgp' \
+  --from-literal=OPENCGP_S3_ACCESS_KEY=xxx \
+  --from-literal=OPENCGP_S3_SECRET_KEY=yyy \
+  --from-literal=OPENCGP_LLM_API_KEY=sk-xxx
 
 helm upgrade --install opencgp deploy/helm/opencgp -n opencgp \
   --set secrets.existingSecret=opencgp-secrets -f my-ha-values.yaml
@@ -456,8 +456,8 @@ helm upgrade --install opencgp deploy/helm/opencgp -n opencgp \
 
 注意：
 
-- `secrets.existingSecret` 生效时 Chart 不再渲染 Secret，也不会 `lookup` 保留逻辑——**`COURSE_STUDIO_DATABASE_DSN`、`AUTH_SECRET`、`S3_*` 都必须由外部 Secret 提供**，键名保持 `COURSE_STUDIO_` 大写下划线风格。
-- `COURSE_STUDIO_AUTH_SECRET` 一旦变化，所有已签发 token 立即失效（用户需重新登录）。
+- `secrets.existingSecret` 生效时 Chart 不再渲染 Secret，也不会 `lookup` 保留逻辑——**`OPENCGP_DATABASE_DSN`、`AUTH_SECRET`、`S3_*` 都必须由外部 Secret 提供**，键名保持 `OPENCGP_` 大写下划线风格。
+- `OPENCGP_AUTH_SECRET` 一旦变化，所有已签发 token 立即失效（用户需重新登录）。
 - Secret 带 `helm.sh/resource-policy: keep`，`helm uninstall` 不会删除它，便于原地重装时保持 token 有效。
 - **永远不要把敏感值写进 `values.yaml` 提交到仓库**，用 `--set` / `--set-file` / 外部 Secret。
 
@@ -627,7 +627,7 @@ Chart 不做数据迁移，步骤如下：
 4. 同步对象存储（内置 rustfs → 外部桶）：
    ```bash
    kubectl -n opencgp port-forward svc/ocgp-opencgp-rustfs 9000:9000
-   aws --endpoint-url http://127.0.0.1:9000 s3 sync s3://course-studio s3://opencgp --profile local
+   aws --endpoint-url http://127.0.0.1:9000 s3 sync s3://<旧bucket> s3://opencgp --profile local
    ```
 5. 用第 5 节的 HA values 执行 `helm upgrade --install`（`mode=ha` + 外部依赖）。
 6. 校验：`/health` 200、登录可用、旧课程能打开、队列能消化。
@@ -643,8 +643,8 @@ Chart 不做数据迁移，步骤如下：
 | 任务提交后一直「排队中」 | API 与 Worker 的 `REDIS_URL` 不一致（尤其 DB 编号不同），或 Worker 副本为 0；用第 7.3 节的命令逐字符比对 |
 | 任务被重复执行 / 结果错乱 | 多实例指向不同 Redis DB，分布式锁各管各的；统一 DB 编号 |
 | `/api/v1/exec` 返回 503「未配置代码执行后端」 | 集群 Pod 内没有 docker daemon/socket，`executor.backend=docker` 不可用。保持 `config.executorBackend=none`；需要代码实跑请把 `local` 后端部署到可信节点，或单独跑一个带 docker socket 的 runner |
-| `CreateContainerConfigError: secret "xxx" not found` | 设了 `secrets.existingSecret` 但没建对应 Secret，或键名不匹配（需 `COURSE_STUDIO_*` 大写键，且 HA 下必须含 `COURSE_STUDIO_DATABASE_DSN`） |
-| 后端启动报 `未配置 COURSE_STUDIO_DATABASE_DSN` | 用了 `secrets.existingSecret` 但外部 Secret 缺 DSN；Chart 自己管理 Secret 时不会出现 |
+| `CreateContainerConfigError: secret "xxx" not found` | 设了 `secrets.existingSecret` 但没建对应 Secret，或键名不匹配（需 `OPENCGP_*` 大写键，且 HA 下必须含 `OPENCGP_DATABASE_DSN`） |
+| 后端启动报 `未配置 OPENCGP_DATABASE_DSN` | 用了 `secrets.existingSecret` 但外部 Secret 缺 DSN；Chart 自己管理 Secret 时不会出现 |
 | PostgreSQL 报 `too many clients` | `(api.replicas + worker.replicas) * pool_size` 超限；调小 `config.databasePoolSize` 或上 PgBouncer |
 | 向量检索报 `type "vector" does not exist` | 外部 PG 未启用 `pgvector` 扩展，或当前账号无权 `CREATE EXTENSION` |
 | 前端 502 / `/api` 打不通 | 确认 Service 名与模式匹配（HA 是 `*-api`，单机是 `*-backend`，Chart 已自动关联），以及 `api.service.port` 与容器端口一致 |
@@ -652,11 +652,11 @@ Chart 不做数据迁移，步骤如下：
 | 上传文档 413 | 调大 `frontend.clientMaxBodySize`（默认 32m），并确认 Ingress 的 `proxy-body-size` |
 | 任务 SSE 卡住不刷新 | Ingress 默认缓冲；Chart 的 nginx 已 `proxy_buffering off`，若前置还有一层 LB/Ingress 需同样关闭缓冲并调大 `proxy-read-timeout` |
 | 上传/导出报 `Read-only file system` | 根文件系统只读；写盘只能走 `/data`（仅单机）与 `/tmp`，自定义路径请加 `backend.extraVolumes` |
-| PDF 中文变方块 | 镜像缺少 NotoSansSC；把字体放进镜像并设 `COURSE_STUDIO_EXPORTER_FONT_REGULAR` / `_FONT_BOLD` |
+| PDF 中文变方块 | 镜像缺少 NotoSansSC；把字体放进镜像并设 `OPENCGP_EXPORTER_FONT_REGULAR` / `_FONT_BOLD` |
 | rustfs Pod CrashLoopBackOff | `rustfs.image.tag` 默认 `latest`，请按实际发布版固定；并用 `kubectl logs` 确认 `args` 与镜像 CLI 一致 |
 | HPA 显示 `<unknown>/70%` | Pod 未设置 `resources.requests.cpu`（Chart 默认已设），或 metrics-server 未就绪 |
 | `metric=queue` 的 Worker HPA 不扩 | prometheus-adapter 未配置 `opencgp_queue_backlog` 的 Pods 规则（见第 8.2 节） |
-| 改名/换 namespace 后用户全部掉登录 | `COURSE_STUDIO_AUTH_SECRET` 变了；外部 Secret 场景请显式固定该值 |
+| 改名/换 namespace 后用户全部掉登录 | `OPENCGP_AUTH_SECRET` 变了；外部 Secret 场景请显式固定该值 |
 
 排查命令：
 
@@ -714,5 +714,5 @@ PY
 - `mode=single`：出现 `backend` Deployment、内置 `postgres` StatefulSet，**不出现** `api` / `worker` Deployment；
 - `mode=ha`：出现 `api`（`JOB_CONCURRENCY=0`）与 `worker`（`JOB_CONCURRENCY>0`）Deployment，**不出现** `backend` Deployment 与内置 `postgres` StatefulSet；
 - `mode=ha` 且缺 `externalDatabase.dsn` 时 `helm template` 直接失败并给出可读错误；
-- `COURSE_STUDIO_AUTH_SECRET` 与 `COURSE_STUDIO_DATABASE_DSN` 只出现在 Secret，绝不出现在 ConfigMap；
+- `OPENCGP_AUTH_SECRET` 与 `OPENCGP_DATABASE_DSN` 只出现在 Secret，绝不出现在 ConfigMap；
 - 目标环境已有可用的 StorageClass、镜像仓库凭据，以及外部 PG / Redis / S3。

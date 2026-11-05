@@ -57,7 +57,7 @@ spec:
             - secretRef:
                 name: {{ include "opencgp.secretName" . }}
           env:
-            - name: COURSE_STUDIO_JOB_CONCURRENCY
+            - name: OPENCGP_JOB_CONCURRENCY
               value: {{ .Values.worker.jobConcurrency | quote }}
             {{- with .Values.worker.extraEnv }}
             {{- toYaml . | nindent 12 }}

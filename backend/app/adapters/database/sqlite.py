@@ -21,7 +21,7 @@ from app.ports.database import Database
 class SQLiteDatabase(Database):
     """基于 SQLite 文件的数据库实现。"""
 
-    def __init__(self, path: str = "data/course_studio.db") -> None:
+    def __init__(self, path: str = "data/opencgp.db") -> None:
         self.path = Path(path)
         self._conn: Optional[sqlite3.Connection] = None
         self._lock = threading.RLock()

@@ -1,10 +1,12 @@
 """配置加载器（单一事实来源）。
 
 所有配置从环境变量读取，并支持 ``.env`` 文件（``.env`` 中的值不会覆盖已存在的
-环境变量）。统一前缀 ``COURSE_STUDIO_``，模块用双下划线后缀区分，例如：
+环境变量）。统一前缀 ``OPENCGP_``，模块用双下划线后缀区分，例如：
 
-    COURSE_STUDIO_DATABASE_BACKEND=sqlite
-    COURSE_STUDIO_DATABASE_PATH=data/course_studio.db
+    OPENCGP_DATABASE_BACKEND=sqlite
+    OPENCGP_DATABASE_PATH=data/opencgp.db
+
+兼容旧前缀 ``COURSE_STUDIO_``（仅作回退，新部署请统一用 ``OPENCGP_``）。
 
 原则：代码里不硬编码任何可配置项；切换 adapter 只改配置、不改代码。
 """
@@ -16,7 +18,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-ENV_PREFIX = "COURSE_STUDIO_"
+ENV_PREFIX = "OPENCGP_"
+LEGACY_ENV_PREFIXES = ("COURSE_STUDIO_",)
 
 # 各模块允许的 adapter 名称（供文档与校验参考）
 DATABASE_BACKENDS = ("sqlite", "postgres")
@@ -68,14 +71,21 @@ def _load_dotenv(path: Path | None = None) -> None:
 
 
 def _env(key: str, default: str = "") -> str:
-    """读取 ``COURSE_STUDIO_<KEY>`` 环境变量，缺失时返回默认值。"""
-    return os.environ.get(ENV_PREFIX + key, default)
+    """读取 ``OPENCGP_<KEY>`` 环境变量，回退旧前缀，再回退默认值。"""
+    value = os.environ.get(ENV_PREFIX + key)
+    if value is not None:
+        return value
+    for prefix in LEGACY_ENV_PREFIXES:
+        legacy = os.environ.get(prefix + key)
+        if legacy is not None:
+            return legacy
+    return default
 
 
 @dataclass
 class DatabaseConfig:
     backend: str = "sqlite"
-    path: str = "data/course_studio.db"
+    path: str = "data/opencgp.db"
     dsn: str = ""
     pool_size: int = 8
 
@@ -83,7 +93,7 @@ class DatabaseConfig:
     def from_env(cls) -> "DatabaseConfig":
         return cls(
             backend=_env("DATABASE_BACKEND", "sqlite"),
-            path=_env("DATABASE_PATH", "data/course_studio.db"),
+            path=_env("DATABASE_PATH", "data/opencgp.db"),
             dsn=_env("DATABASE_DSN", ""),
             pool_size=int(_env("DATABASE_POOL_SIZE", "8") or 8),
         )

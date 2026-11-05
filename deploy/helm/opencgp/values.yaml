@@ -171,7 +171,7 @@ externalRedis:
 externalS3:
   enabled: false
   endpoint: ""
-  bucket: course-studio
+  bucket: opencgp
   region: us-east-1
   accessKey: ""
   secretKey: ""
@@ -339,14 +339,14 @@ config:
   requireApproval: "true"
   lockTtlSeconds: 120
   databaseBackend: postgres
-  databasePath: /data/course_studio.db
+  databasePath: /data/opencgp.db
   databasePoolSize: 8
   vectorstoreBackend: postgres
   vectorstorePath: /data/vectorstore
   storageBackend: s3
   storageRoot: /data/storage
   s3Endpoint: ""
-  s3Bucket: course-studio
+  s3Bucket: opencgp
   s3Region: us-east-1
   s3Prefix: tenants
   queueBackend: redis
