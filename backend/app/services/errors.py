@@ -245,3 +245,7 @@ class ShareExpiredError(Exception):
 
 class ShareRateLimitedError(Exception):
     pass
+
+
+class QueueUnavailableError(RuntimeError):
+    pass

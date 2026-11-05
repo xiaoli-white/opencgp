@@ -120,6 +120,7 @@ from app.services.errors import (
     SourceNotFoundError,
     ThreadNotFoundError,
     ProviderCallError,
+    QueueUnavailableError,
 )
 
 settings = get_settings()
@@ -387,6 +388,7 @@ def health() -> dict[str, Any]:
         adapters["websearch"] = {
             "ok": bool(searcher.healthcheck()),
             "backend": getattr(searcher, "name", ""),
+            "fetch": bool(getattr(searcher, "fetch_enabled", False)),
             "optional": True,
         }
     except Exception as exc:  # noqa: BLE001
@@ -3132,6 +3134,8 @@ def submit_job(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except QuotaExceededError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except QueueUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return _job_payload(job)
 
 

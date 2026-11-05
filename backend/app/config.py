@@ -276,6 +276,10 @@ class WebSearchConfig:
     result_path: str = "results"
     method: str = "POST"
     timeout: float = 10.0
+    fetch_enabled: bool = True
+    fetch_top: int = 2
+    fetch_chars: int = 4000
+    fetch_timeout: float = 8.0
 
     @classmethod
     def from_env(cls) -> "WebSearchConfig":
@@ -286,6 +290,13 @@ class WebSearchConfig:
             result_path=_env("WEBSEARCH_RESULT_PATH", "results") or "results",
             method=_env("WEBSEARCH_METHOD", "POST") or "POST",
             timeout=float(_env("WEBSEARCH_TIMEOUT", "10") or 10),
+            fetch_enabled=(_env("WEBSEARCH_FETCH_ENABLED", "true") or "true")
+            .strip()
+            .lower()
+            not in ("0", "false", "no", "off"),
+            fetch_top=int(_env("WEBSEARCH_FETCH_TOP", "2") or 2),
+            fetch_chars=int(_env("WEBSEARCH_FETCH_CHARS", "4000") or 4000),
+            fetch_timeout=float(_env("WEBSEARCH_FETCH_TIMEOUT", "8") or 8),
         )
 
 

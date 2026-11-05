@@ -51,7 +51,12 @@ class IngestService:
             raise ValueError(f"文件超过 {self.max_file_mb}MB 上限")
         if not self.parser.supports(filename):
             raise ValueError(f"不支持的文档类型: {Path(filename).suffix or filename!r}")
-        parsed = self.parser.parse(data, filename)
+        try:
+            parsed = self.parser.parse(data, filename)
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f"文件解析失败: {exc}") from exc
         digest = hashlib.sha256(data).hexdigest()
         merged_meta = {"filename": filename, "sha256": digest, **parsed.meta, **(meta or {})}
         resolved_id = source_id or _source_id(digest)

@@ -15,4 +15,5 @@ class Citation(BaseModel):
     score: float
     start: int
     end: int
+    sources: list[str] = Field(default_factory=list)
     meta: dict[str, Any] = Field(default_factory=dict)

@@ -441,6 +441,10 @@ class Container:
                     base_url=settings.url or "https://api.deepseek.com",
                     api_key=settings.api_key,
                     timeout=settings.timeout,
+                    fetch_enabled=settings.fetch_enabled,
+                    fetch_top=settings.fetch_top,
+                    fetch_chars=settings.fetch_chars,
+                    fetch_timeout=settings.fetch_timeout,
                 )
             if backend in ("generic", "http_json", "generic_json"):
                 from app.adapters.websearch.http_json import HttpJsonWebSearch

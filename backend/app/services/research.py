@@ -192,7 +192,12 @@ class ResearchService:
                             score=0.0,
                             start=0,
                             end=0,
-                            meta={"kind": "web", "url": result.url},
+                            sources=list(result.sources),
+                            meta={
+                                "kind": "web",
+                                "url": result.url,
+                                "sources": list(result.sources),
+                            },
                         )
                     )
         return citations[: self.max_evidence], web_used, web_available

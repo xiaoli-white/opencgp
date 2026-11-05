@@ -24,6 +24,7 @@ from app.models.job import (
     is_terminal,
 )
 from app.services.errors import (
+    QueueUnavailableError,
     JobNotFoundError,
     JobNotTerminalError,
     UnsupportedJobKindError,
@@ -109,7 +110,13 @@ class JobService:
         )
         self.repository.create(job)
         if self.queue is not None:
-            self.queue.enqueue(job.id)
+            try:
+                self.queue.enqueue(job.id)
+            except Exception as exc:
+                self.repository.update_status(
+                    job.id, "failed", error=f"队列不可用: {exc}"
+                )
+                raise QueueUnavailableError(f"任务队列不可用: {exc}") from exc
         return job
 
     def get(self, job_id: str, tenant_id: str | None = None) -> Job | None:
