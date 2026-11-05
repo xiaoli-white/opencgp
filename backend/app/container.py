@@ -154,12 +154,58 @@ class Container:
 
     def embedder(self) -> EmbeddingProvider | None:
         def build() -> EmbeddingProvider | None:
-            backend = self.settings.embedding.backend
+            cfg = self.settings.embedding
+            backend = (cfg.backend or "none").strip().lower()
             if backend in ("", "none"):
                 return None
-            raise ValueError(f"不支持的 embedding backend: {backend!r}")
+            if backend in ("openai", "openai_compat"):
+                from app.adapters.embedding.openai_embedding import OpenAIEmbedding
+
+                return OpenAIEmbedding(
+                    base_url=cfg.base_url,
+                    api_key=cfg.api_key,
+                    model=cfg.model,
+                    dim=cfg.dim,
+                    batch=cfg.batch,
+                    timeout=cfg.timeout,
+                    query_prefix=cfg.query_prefix,
+                )
+            if backend == "hash":
+                from app.adapters.embedding.hash_embedding import HashEmbedding
+
+                return HashEmbedding(
+                    dim=cfg.dim,
+                    query_prefix=cfg.query_prefix,
+                )
+            print(f"[embedding] 不支持的后端，已禁用: {backend!r}")
+            return None
 
         return self._get_or_build("embedder", build)
+
+    def reranker(self, user_id: str = ""):
+        cfg = self.settings.rerank
+        backend = (cfg.backend or "none").strip().lower()
+        if backend == "llm":
+            from app.adapters.rerank.llm_rerank import LLMReranker
+
+            provider = self.llm_for(user_id) if user_id else self.llm()
+            return LLMReranker(
+                llm=provider,
+                timeout=cfg.timeout,
+                batch_size=min(12, max(1, int(cfg.top_n or 12))),
+            )
+        if backend == "http":
+            from app.adapters.rerank.http_rerank import HTTPReranker
+
+            return HTTPReranker(
+                base_url=cfg.base_url,
+                api_key=cfg.api_key,
+                model=cfg.model,
+                timeout=cfg.timeout,
+            )
+        from app.adapters.rerank.none import NoneReranker
+
+        return NoneReranker()
 
     def vectorstore(self) -> VectorStore:
         def build() -> VectorStore:
@@ -171,6 +217,8 @@ class Container:
                 return SimpleVectorStore(
                     path=settings.path,
                     embedder=self.embedder(),
+                    vector_weight=settings.vector_weight,
+                    max_vector_rows=settings.max_vector_rows,
                 )
             if backend in ("postgres", "postgresql", "pg"):
                 from app.adapters.database.postgres import PostgresDatabase
@@ -181,6 +229,9 @@ class Container:
                     raise ValueError("postgres 向量库需要 COURSE_STUDIO_VECTORSTORE_DSN")
                 return PostgresVectorStore(
                     database=PostgresDatabase(dsn=dsn, pool_size=settings.pool_size),
+                    embedder=self.embedder(),
+                    vector_weight=settings.vector_weight,
+                    max_vector_rows=settings.max_vector_rows,
                 )
             raise ValueError(f"不支持的 vectorstore backend: {backend!r}")
 
@@ -197,6 +248,7 @@ class Container:
                 chunk_size=self.settings.ingest.chunk_size,
                 chunk_overlap=self.settings.ingest.chunk_overlap,
                 max_file_mb=self.settings.ingest.max_file_mb,
+                embedder=self.embedder(),
             )
 
         return self._get_or_build("ingest", build)

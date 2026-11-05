@@ -8,6 +8,7 @@ from typing import Any, Sequence
 from app.models.chunk import Chunk
 from app.models.citation import Citation
 from app.models.ingest import IngestResult
+from app.ports.embedding import EmbeddingPort
 from app.ports.parser import DocumentParser
 from app.ports.vectorstore import VectorStore
 from app.services.chunking import chunk_texts
@@ -24,6 +25,7 @@ class IngestService:
         max_file_mb: int = 20,
         storage: Any = None,
         storage_prefix: str = "",
+        embedder: EmbeddingPort | None = None,
     ) -> None:
         self.vectorstore = vectorstore
         self.parser = parser
@@ -32,6 +34,7 @@ class IngestService:
         self.max_file_mb = max_file_mb
         self.storage = storage
         self.storage_prefix = (storage_prefix or "").strip("/")
+        self.embedder = embedder
         self.last_object_key = ""
         self.last_object_error = ""
 
@@ -87,6 +90,7 @@ class IngestService:
         if not chunks:
             raise ValueError("文档分块结果为空")
         await self.vectorstore.add_chunks(resolved_id, chunks, tenant_id=tenant_id)
+        await self._embed_chunks(resolved_id, chunks, tenant_id)
         parser_name = str((meta or {}).get("parser", "unknown"))
         return IngestResult(
             source_id=resolved_id,
@@ -101,6 +105,37 @@ class IngestService:
                 "ingested_at": time.time(),
             },
         )
+
+    async def _embed_chunks(
+        self, source_id: str, chunks: Sequence[Chunk], tenant_id: str
+    ) -> None:
+        if self.embedder is None or not chunks:
+            return
+        try:
+            vectors = await self.embedder.embed([chunk.text for chunk in chunks])
+        except Exception as exc:
+            print(f"[ingest] 向量化失败，跳过 embedding: {exc!r}")
+            return
+        if len(vectors) != len(chunks):
+            print(
+                f"[ingest] 向量数量不匹配，跳过 embedding: {len(vectors)} != {len(chunks)}"
+            )
+            return
+        rows = [
+            {
+                "chunk_id": chunk.chunk_id,
+                "source_id": source_id,
+                "tenant_id": tenant_id,
+                "model": self.embedder.model,
+                "dim": self.embedder.dim,
+                "vec": vector,
+            }
+            for chunk, vector in zip(chunks, vectors)
+        ]
+        try:
+            await self.vectorstore.upsert_embeddings(rows)
+        except Exception as exc:
+            print(f"[ingest] embedding 写入失败，已跳过: {exc!r}")
 
     def _store_raw(
         self, data: bytes, filename: str, source_id: str, tenant_id: str

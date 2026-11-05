@@ -33,6 +33,7 @@ _INSERT_OR_REPLACE = re.compile(
 )
 _INSERT_TABLE = re.compile(r"\bINSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
 _REAL_TYPE = re.compile(r"\bREAL\b", re.IGNORECASE)
+_BLOB_TYPE = re.compile(r"\bBLOB\b", re.IGNORECASE)
 _DDL = re.compile(r"^\s*(?:CREATE|ALTER)\s+TABLE\b", re.IGNORECASE)
 _RETURNING = re.compile(r"\bRETURNING\b", re.IGNORECASE)
 
@@ -157,7 +158,10 @@ def translate(
             lambda m: "to_timestamp(" + m.group(1) + ")", text
         )
 
-    if _DDL.match(text) and _REAL_TYPE.search(text):
-        text = _REAL_TYPE.sub("DOUBLE PRECISION", text)
+    if _DDL.match(text):
+        if _REAL_TYPE.search(text):
+            text = _REAL_TYPE.sub("DOUBLE PRECISION", text)
+        if _BLOB_TYPE.search(text):
+            text = _BLOB_TYPE.sub("BYTEA", text)
 
     return _convert_placeholders(text, escape_percent=bool(params))

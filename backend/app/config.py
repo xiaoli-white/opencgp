@@ -25,7 +25,8 @@ LLM_BACKENDS = ("openai_compat", "dummy")
 VECTORSTORE_BACKENDS = ("simple", "postgres", "pgvector")
 EXPORTER_BACKENDS = ("builtin",)
 PARSER_BACKENDS = ("builtin",)
-EMBEDDING_BACKENDS = ("none", "openai_compat")
+EMBEDDING_BACKENDS = ("none", "openai", "openai_compat", "hash")
+RERANK_BACKENDS = ("none", "llm", "http")
 IMAGE_BACKENDS = ("none", "openai_images")
 EXECUTOR_BACKENDS = ("docker", "local", "none")
 
@@ -129,6 +130,8 @@ class VectorStoreConfig:
     min_score: float = 0.15
     dsn: str = ""
     pool_size: int = 8
+    vector_weight: float = 0.55
+    max_vector_rows: int = 20000
 
     @classmethod
     def from_env(cls) -> "VectorStoreConfig":
@@ -138,6 +141,8 @@ class VectorStoreConfig:
             min_score=float(_env("SEARCH_MIN_SCORE", "0.15") or 0.15),
             dsn=_env("VECTORSTORE_DSN", "") or _env("DATABASE_DSN", ""),
             pool_size=int(_env("VECTORSTORE_POOL_SIZE", "8") or 8),
+            vector_weight=float(_env("HYBRID_VECTOR_WEIGHT", "0.55") or 0.55),
+            max_vector_rows=int(_env("HYBRID_MAX_VECTOR_ROWS", "20000") or 20000),
         )
 
 
@@ -172,17 +177,55 @@ class EmbeddingConfig:
     backend: str = "none"
     base_url: str = ""
     api_key: str = ""
-    model: str = ""
-    dimension: int = 1024
+    model: str = "text-embedding-3-small"
+    dim: int = 1024
+    batch: int = 32
+    timeout: float = 20.0
+    query_prefix: str = ""
+
+    @property
+    def dimension(self) -> int:
+        return self.dim
 
     @classmethod
     def from_env(cls) -> "EmbeddingConfig":
         return cls(
-            backend=_env("EMBEDDING_BACKEND", "none"),
+            backend=(_env("EMBEDDING_BACKEND", "none") or "none").strip().lower(),
             base_url=_env("EMBEDDING_BASE_URL", ""),
             api_key=_env("EMBEDDING_API_KEY", ""),
-            model=_env("EMBEDDING_MODEL", ""),
-            dimension=int(_env("EMBEDDING_DIMENSION", "1024") or 1024),
+            model=_env("EMBEDDING_MODEL", "text-embedding-3-small")
+            or "text-embedding-3-small",
+            dim=int(
+                _env("EMBEDDING_DIM", "")
+                or _env("EMBEDDING_DIMENSION", "1024")
+                or 1024
+            ),
+            batch=max(1, int(_env("EMBEDDING_BATCH", "32") or 32)),
+            timeout=float(_env("EMBEDDING_TIMEOUT", "20") or 20),
+            query_prefix=_env("EMBEDDING_QUERY_PREFIX", ""),
+        )
+
+
+@dataclass
+class RerankConfig:
+    backend: str = "none"
+    top_n: int = 12
+    weight: float = 0.5
+    timeout: float = 20.0
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+
+    @classmethod
+    def from_env(cls) -> "RerankConfig":
+        return cls(
+            backend=(_env("RERANK_BACKEND", "none") or "none").strip().lower(),
+            top_n=max(1, int(_env("RERANK_TOP_N", "12") or 12)),
+            weight=float(_env("RERANK_WEIGHT", "0.5") or 0.5),
+            timeout=float(_env("RERANK_TIMEOUT", "20") or 20),
+            base_url=_env("RERANK_BASE_URL", ""),
+            model=_env("RERANK_MODEL", ""),
+            api_key=_env("RERANK_API_KEY", ""),
         )
 
 
@@ -429,6 +472,7 @@ class Settings:
     exporter: ExporterConfig = field(default_factory=ExporterConfig)
     parser: ParserConfig = field(default_factory=ParserConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+    rerank: RerankConfig = field(default_factory=RerankConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     blueprint: BlueprintConfig = field(default_factory=BlueprintConfig)
@@ -453,6 +497,7 @@ class Settings:
             exporter=ExporterConfig.from_env(),
             parser=ParserConfig.from_env(),
             embedding=EmbeddingConfig.from_env(),
+            rerank=RerankConfig.from_env(),
             ingest=IngestConfig.from_env(),
             generation=GenerationConfig.from_env(),
             blueprint=BlueprintConfig.from_env(),

@@ -449,6 +449,37 @@ def health() -> dict[str, Any]:
         }
     except Exception as exc:  # noqa: BLE001
         adapters["imagegen"] = {"ok": False, "error": str(exc), "optional": True}
+    try:
+        embedder = container.embedder()
+        adapters["embedding"] = {
+            "ok": True if embedder is None else bool(embedder.healthcheck()),
+            "backend": (settings.embedding.backend or "none").strip().lower(),
+            "model": getattr(embedder, "model", ""),
+            "dim": int(getattr(embedder, "dim", 0) or 0),
+            "optional": True,
+        }
+    except Exception as exc:  # noqa: BLE001
+        adapters["embedding"] = {
+            "ok": False,
+            "error": str(exc),
+            "backend": (settings.embedding.backend or "none").strip().lower(),
+            "optional": True,
+        }
+    try:
+        reranker = container.reranker("")
+        adapters["rerank"] = {
+            "ok": bool(reranker.healthcheck()),
+            "backend": (settings.rerank.backend or "none").strip().lower(),
+            "model": settings.rerank.model,
+            "optional": True,
+        }
+    except Exception as exc:  # noqa: BLE001
+        adapters["rerank"] = {
+            "ok": False,
+            "error": str(exc),
+            "backend": (settings.rerank.backend or "none").strip().lower(),
+            "optional": True,
+        }
     queue_info: dict[str, Any] = {"backend": "unknown", "ok": False}
     jobs_info: dict[str, int] = {"queued": 0, "running": 0}
     try:
@@ -543,17 +574,121 @@ async def kb_search(
     req: SearchRequest, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
+    rerank_cfg = settings.rerank
+    rerank_enabled = (rerank_cfg.backend or "none").strip().lower() != "none"
+    candidate_k = req.top_k * 3 if rerank_enabled else req.top_k
     citations: list[Citation] = await container.ingest().search(
         req.query,
-        top_k=req.top_k,
+        top_k=candidate_k,
         source_ids=req.source_ids,
         tenant_id=_tenant_of(ctx),
     )
+    if rerank_enabled and citations:
+        try:
+            reranker = container.reranker(ctx.user.id)
+            docs = [citation.text for citation in citations]
+            scores = await reranker.rerank(req.query, docs, rerank_cfg.top_n)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[search] rerank 失败，跳过重排: {exc!r}")
+            scores = []
+        if len(scores) == len(citations):
+            weight = min(1.0, max(0.0, float(rerank_cfg.weight)))
+            for citation, score in zip(citations, scores):
+                final_score = (1.0 - weight) * citation.score + weight * float(score)
+                citation.rerank_score = round(float(score), 6)
+                citation.score = round(float(final_score), 6)
+            citations.sort(key=lambda item: item.score, reverse=True)
+    citations = citations[: req.top_k]
     return {
         "query": req.query,
         "top_k": req.top_k,
         "count": len(citations),
         "citations": [citation.model_dump() for citation in citations],
+    }
+
+
+class EmbeddingBackfillRequest(BaseModel):
+    source_id: str | None = None
+
+
+@app.post("/api/v1/kb/embeddings/backfill")
+async def kb_embeddings_backfill(
+    req: EmbeddingBackfillRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    cfg = settings.embedding
+    embedder = container.embedder()
+    if embedder is None:
+        return {"embedded": 0, "skipped": 0, "model": "", "dim": 0}
+    source_id = (req.source_id if req else None) or ""
+    store = container.vectorstore()
+    tenant_id = _tenant_of(ctx)
+    chunks = await store.list_chunks(tenant_id, source_id)
+    existing = await store.embedded_index(tenant_id, source_id)
+    todo: list[dict] = []
+    skipped = 0
+    for chunk in chunks:
+        current = existing.get(str(chunk.get("chunk_id") or ""))
+        if current and current[0] == embedder.model and int(current[1]) == int(embedder.dim):
+            skipped += 1
+            continue
+        todo.append(chunk)
+    embedded = 0
+    step = max(1, int(cfg.batch)) * 4
+    for start in range(0, len(todo), step):
+        batch = todo[start : start + step]
+        try:
+            vectors = await embedder.embed([str(item.get("text") or "") for item in batch])
+        except Exception as exc:  # noqa: BLE001
+            print(f"[backfill] 向量化失败，停止回填: {exc!r}")
+            break
+        if len(vectors) != len(batch):
+            print(f"[backfill] 向量数量不匹配，停止回填: {len(vectors)} != {len(batch)}")
+            break
+        rows = [
+            {
+                "chunk_id": str(item.get("chunk_id") or ""),
+                "source_id": str(item.get("source_id") or ""),
+                "tenant_id": tenant_id,
+                "model": embedder.model,
+                "dim": embedder.dim,
+                "vec": vector,
+            }
+            for item, vector in zip(batch, vectors)
+        ]
+        try:
+            embedded += await store.upsert_embeddings(rows)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[backfill] embedding 写入失败，停止回填: {exc!r}")
+            break
+    return {
+        "embedded": embedded,
+        "skipped": skipped,
+        "model": embedder.model,
+        "dim": embedder.dim,
+    }
+
+
+@app.get("/api/v1/kb/embeddings/status")
+async def kb_embeddings_status(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    cfg = settings.embedding
+    embedder = container.embedder()
+    store = container.vectorstore()
+    counts = await store.embedding_status(_tenant_of(ctx))
+    total = int(counts.get("chunks_total") or 0)
+    embedded = int(counts.get("chunks_embedded") or 0)
+    coverage = round(embedded / total, 6) if total > 0 else 0.0
+    return {
+        "backend": (cfg.backend or "none").strip().lower(),
+        "model": getattr(embedder, "model", "") or cfg.model,
+        "dim": int(getattr(embedder, "dim", 0) or cfg.dim),
+        "chunks_total": total,
+        "chunks_embedded": embedded,
+        "coverage": coverage,
     }
 
 
