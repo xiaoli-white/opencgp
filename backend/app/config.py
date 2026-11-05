@@ -310,6 +310,7 @@ class NotifyConfig:
     smtp_from: str = ""
     smtp_tls: bool = True
     smtp_timeout: float = 10.0
+    admin_email: str = ""
 
     @classmethod
     def from_env(cls) -> "NotifyConfig":
@@ -322,6 +323,7 @@ class NotifyConfig:
             smtp_from=_env("SMTP_FROM", ""),
             smtp_tls=(_env("SMTP_TLS", "true") or "true").strip().lower() not in ("0", "false", "no"),
             smtp_timeout=float(_env("SMTP_TIMEOUT", "10") or 10),
+            admin_email=_env("NOTIFY_ADMIN_EMAIL", ""),
         )
 
 

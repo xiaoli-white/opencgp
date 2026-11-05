@@ -790,7 +790,9 @@ class Container:
             from app.services.notifications import NotificationService
 
             return NotificationService(
-                notifier=self.notifier(), auth_repository=self.auth_repository()
+                notifier=self.notifier(),
+                auth_repository=self.auth_repository(),
+                admin_email=self.settings.notify.admin_email,
             )
 
         return self._get_or_build("notifications", build)

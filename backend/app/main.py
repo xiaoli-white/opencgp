@@ -12,15 +12,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import sqlite3
 import time
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 from urllib.parse import quote
 
+import psycopg
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
+
+try:
+    from psycopg_pool import PoolTimeout as _PsycopgPoolTimeout
+except Exception:
+    _PsycopgPoolTimeout = None
 
 from app.config import get_settings
 from app.container import get_container
@@ -125,6 +133,23 @@ from app.services.errors import (
 
 settings = get_settings()
 container = get_container()
+logger = logging.getLogger(__name__)
+
+
+def _db_unavailable(exc: BaseException) -> bool:
+    kinds: list[type[BaseException]] = [
+        psycopg.OperationalError,
+        psycopg.InterfaceError,
+    ]
+    if _PsycopgPoolTimeout is not None:
+        kinds.append(_PsycopgPoolTimeout)
+    if isinstance(exc, tuple(kinds)):
+        return True
+    if isinstance(exc, sqlite3.OperationalError):
+        message = str(exc).lower()
+        return "unable to open" in message or "database is locked" in message
+    return False
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -187,6 +212,28 @@ async def provider_call_error_handler(
     request: Request, exc: ProviderCallError
 ) -> JSONResponse:
     return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    if _db_unavailable(exc):
+        logger.error(
+            "database unavailable on %s %s",
+            request.method,
+            request.url.path,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "数据库暂不可用，请稍后重试"},
+        )
+    logger.error(
+        "unhandled exception on %s %s",
+        request.method,
+        request.url.path,
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    return JSONResponse(status_code=500, content={"detail": "服务器内部错误"})
 
 
 app.add_middleware(
@@ -1388,6 +1435,7 @@ def auth_register(req: RegisterRequest) -> dict[str, Any]:
         raise _auth_error(exc) from exc
     if not token:
         container.notifications().registration_pending(user)
+        container.notifications().registration_received(user)
         return {
             "pending": True,
             "message": "注册已提交，等待管理员审核",
@@ -1685,7 +1733,7 @@ def admin_reset_password(
         container.account_admin().reset_password(user_id, req.new_password)
         reset_user = container.auth_repository().get_user(user_id)
         if reset_user is not None:
-            container.notifications().password_reset(reset_user)
+            container.notifications().password_reset(reset_user, req.new_password)
     except AuthRequiredError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
