@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import os
 from collections import OrderedDict
 from typing import Any, Callable
 
@@ -63,6 +64,51 @@ from app.services.accounts import AccountAdminService
 from app.services.media import MediaService
 
 PROVIDER_CACHE_SIZE = 64
+
+RERANK_PRESETS = {
+    "cohere": {
+        "format": "cohere",
+        "base_url": "https://api.cohere.com/v1/rerank",
+        "model": "rerank-v3.5",
+        "batch": 100,
+    },
+    "jina": {
+        "format": "cohere",
+        "base_url": "https://api.jina.ai/v1/rerank",
+        "model": "jina-reranker-v2-base-multilingual",
+        "batch": 100,
+    },
+    "siliconflow": {
+        "format": "cohere",
+        "base_url": "https://api.siliconflow.cn/v1/rerank",
+        "model": "BAAI/bge-reranker-v2-m3",
+        "batch": 100,
+    },
+    "zhipu": {
+        "format": "cohere",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4/rerank",
+        "model": "rerank",
+        "batch": 100,
+    },
+    "tei": {
+        "format": "tei",
+        "base_url": "http://127.0.0.1:8080/rerank",
+        "model": "BAAI/bge-reranker-v2-m3",
+        "batch": 32,
+    },
+    "generic": {
+        "format": "generic",
+        "base_url": "",
+        "model": "",
+        "batch": 100,
+    },
+    "http": {
+        "format": "generic",
+        "base_url": "",
+        "model": "",
+        "batch": 100,
+    },
+}
 
 
 class Container:
@@ -195,15 +241,26 @@ class Container:
                 batch_size=min(12, max(1, int(cfg.top_n or 12))),
                 max_doc_chars=cfg.chars,
             )
-        if backend == "http":
-            from app.adapters.rerank.http_rerank import HTTPReranker
+        preset = RERANK_PRESETS.get(backend)
+        if preset is not None:
+            from app.adapters.rerank.remote_rerank import RemoteRerank
 
-            return HTTPReranker(
-                base_url=cfg.base_url,
+            batch = cfg.batch
+            if "COURSE_STUDIO_RERANK_BATCH" not in os.environ:
+                batch = int(preset.get("batch") or cfg.batch)
+            if preset["format"] == "cohere":
+                batch = min(100, batch)
+            return RemoteRerank(
+                format=preset["format"],
+                base_url=cfg.base_url or str(preset.get("base_url") or ""),
+                model=cfg.model or str(preset.get("model") or ""),
                 api_key=cfg.api_key,
-                model=cfg.model,
                 timeout=cfg.timeout,
                 retries=cfg.retries,
+                batch=batch,
+                chars=cfg.chars,
+                normalize=cfg.normalize,
+                raw_scores=cfg.raw_scores,
             )
         from app.adapters.rerank.none import NoneReranker
 

@@ -26,7 +26,17 @@ VECTORSTORE_BACKENDS = ("simple", "postgres", "pgvector")
 EXPORTER_BACKENDS = ("builtin",)
 PARSER_BACKENDS = ("builtin",)
 EMBEDDING_BACKENDS = ("none", "openai", "openai_compat", "hash")
-RERANK_BACKENDS = ("none", "llm", "http")
+RERANK_BACKENDS = (
+    "none",
+    "llm",
+    "http",
+    "cohere",
+    "jina",
+    "siliconflow",
+    "zhipu",
+    "tei",
+    "generic",
+)
 IMAGE_BACKENDS = ("none", "openai_images")
 EXECUTOR_BACKENDS = ("docker", "local", "none")
 
@@ -215,7 +225,10 @@ class RerankConfig:
     weight: float = 0.5
     timeout: float = 20.0
     retries: int = 2
-    chars: int = 600
+    batch: int = 100
+    chars: int = 2000
+    normalize: str = "auto"
+    raw_scores: bool = False
     base_url: str = ""
     model: str = ""
     api_key: str = ""
@@ -228,7 +241,11 @@ class RerankConfig:
             weight=float(_env("RERANK_WEIGHT", "0.5") or 0.5),
             timeout=float(_env("RERANK_TIMEOUT", "20") or 20),
             retries=max(0, int(_env("RERANK_RETRIES", "2") or 2)),
-            chars=max(80, int(_env("RERANK_CHARS", "600") or 600)),
+            batch=max(1, int(_env("RERANK_BATCH", "100") or 100)),
+            chars=max(80, int(_env("RERANK_CHARS", "2000") or 2000)),
+            normalize=(_env("RERANK_NORMALIZE", "auto") or "auto").strip().lower(),
+            raw_scores=(_env("RERANK_RAW_SCORES", "false") or "false").strip().lower()
+            in ("1", "true", "yes", "on"),
             base_url=_env("RERANK_BASE_URL", ""),
             model=_env("RERANK_MODEL", ""),
             api_key=_env("RERANK_API_KEY", ""),

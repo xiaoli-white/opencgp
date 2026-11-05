@@ -126,6 +126,46 @@ npm run dev
 - 完整配置项见 [`backend/.env.example`](backend/.env.example)。
 - 前端跨域/API 地址后续用 `NEXT_PUBLIC_API_BASE_URL` 注入。
 
+### Rerank 专用模型
+
+`COURSE_STUDIO_RERANK_BACKEND` 支持下列预设，全部走专用 rerank 端点（不是 chat completions）。`none` 为默认；`llm` 复用聊天模型打分，仅在无专用 rerank 服务时兜底，效果与成本都不如专用模型。
+
+| 预设 | 默认 URL | 默认 model | 协议 |
+|---|---|---|---|
+| `cohere` | `https://api.cohere.com/v1/rerank` | `rerank-v3.5` | Cohere |
+| `jina` | `https://api.jina.ai/v1/rerank` | `jina-reranker-v2-base-multilingual` | Cohere |
+| `siliconflow` | `https://api.siliconflow.cn/v1/rerank` | `BAAI/bge-reranker-v2-m3` | Cohere |
+| `zhipu` | `https://open.bigmodel.cn/api/paas/v4/rerank` | `rerank` | Cohere |
+| `tei` | `http://127.0.0.1:8080/rerank` | `BAAI/bge-reranker-v2-m3` | TEI |
+| `generic` | 手动指定 | 手动指定 | Cohere 请求 / 兼容多种响应 |
+
+鉴权统一为 `Authorization: Bearer $COURSE_STUDIO_RERANK_API_KEY`；显式设置的 `RERANK_BASE_URL` / `RERANK_MODEL` 覆盖预设默认值。
+
+```bash
+# Cohere（key: https://dashboard.cohere.com/api-keys）
+COURSE_STUDIO_RERANK_BACKEND=cohere
+COURSE_STUDIO_RERANK_API_KEY=...
+
+# Jina（key: https://jina.ai/reranker/）
+COURSE_STUDIO_RERANK_BACKEND=jina
+COURSE_STUDIO_RERANK_API_KEY=...
+
+# SiliconFlow（key: https://cloud.siliconflow.cn/account/ak）
+COURSE_STUDIO_RERANK_BACKEND=siliconflow
+COURSE_STUDIO_RERANK_API_KEY=...
+
+# 智谱（key: https://open.bigmodel.cn/usercenter/apikeys）
+COURSE_STUDIO_RERANK_BACKEND=zhipu
+COURSE_STUDIO_RERANK_API_KEY=...
+
+# TEI 自建（无需 key）
+COURSE_STUDIO_RERANK_BACKEND=tei
+COURSE_STUDIO_RERANK_BASE_URL=http://127.0.0.1:8080/rerank
+COURSE_STUDIO_RERANK_BATCH=32
+```
+
+调优项：`RERANK_BATCH`（默认 100，Cohere 上限 100，TEI 默认 32）、`RERANK_CHARS`（单条文档字符截断，默认 2000，按字符非 token）、`RERANK_NORMALIZE=auto|sigmoid|minmax|none`（默认 auto）、`RERANK_RAW_SCORES`（TEI 返回 logits 时设 `true`，默认 false）、`RERANK_RETRIES=2`（仅重试 429/5xx/超时）。失败时检索自动回落到混合检索原序，不会中断请求。
+
 ---
 
 ## API 一览（M0）

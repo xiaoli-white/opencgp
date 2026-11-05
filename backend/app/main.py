@@ -562,26 +562,43 @@ async def health() -> dict[str, Any]:
     rerank_backend = (settings.rerank.backend or "none").strip().lower()
     try:
         reranker = container.reranker("")
+        rerank_model = str(
+            getattr(reranker, "model", "") or settings.rerank.model or ""
+        )
         rerank_info: dict[str, Any] = {
-            "ok": bool(reranker.healthcheck()),
+            "ok": False,
             "backend": rerank_backend,
-            "model": settings.rerank.model,
+            "model": rerank_model,
             "optional": True,
+            "probe": "stale",
         }
-        if rerank_backend == "http":
-            key = "rerank:http:%s:%s" % (
+        remote_backends = {
+            "cohere",
+            "jina",
+            "siliconflow",
+            "zhipu",
+            "tei",
+            "generic",
+            "http",
+        }
+        if rerank_backend in remote_backends:
+            key = "rerank:%s:%s:%s" % (
+                rerank_backend,
                 getattr(reranker, "base_url", ""),
-                getattr(reranker, "model", ""),
+                rerank_model,
             )
 
             async def _rerank_factory(adapter=reranker) -> dict[str, Any]:
                 result = await adapter.probe()
-                result["backend"] = "http"
-                result["model"] = getattr(adapter, "model", "")
+                result["backend"] = rerank_backend
+                result["model"] = str(
+                    getattr(adapter, "model", "") or rerank_model
+                )
                 return result
 
             probe_jobs.append(("rerank", _probe_with_cache(key, _rerank_factory)))
         else:
+            rerank_info["ok"] = bool(reranker.healthcheck())
             rerank_info["probe"] = "config"
         adapters["rerank"] = rerank_info
     except Exception as exc:  # noqa: BLE001
