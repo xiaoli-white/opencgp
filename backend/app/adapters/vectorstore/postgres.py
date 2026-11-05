@@ -20,8 +20,16 @@ from app.services.scoring import (
     select_top,
     term_score,
 )
+from app.services.lsh import neighbor_buckets, project_bucket
 from app.services.textproc import make_snippet, query_terms
-from app.services.vector_math import pack_vector, packed_cosine
+from app.services.vector_math import (
+    cache_key,
+    cached_cosine,
+    clear_vector_cache,
+    clear_vector_cache_entry,
+    pack_vector,
+    unpack_vector,
+)
 
 MAX_QUERY_TERMS = 12
 
@@ -64,11 +72,14 @@ _SCHEMA: tuple[str, ...] = (
         model TEXT NOT NULL DEFAULT '',
         dim INTEGER NOT NULL DEFAULT 0,
         vec BLOB,
+        bucket INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL DEFAULT 0
     )
     """,
+    "ALTER TABLE chunk_embeddings ADD COLUMN IF NOT EXISTS bucket INTEGER NOT NULL DEFAULT 0",
     "CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_tenant ON chunk_embeddings(tenant_id)",
     "CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_updated ON chunk_embeddings(updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_lsh ON chunk_embeddings(tenant_id, model, dim, bucket)",
 )
 
 _TRGM_EXTENSION = "CREATE EXTENSION IF NOT EXISTS pg_trgm"
@@ -90,7 +101,8 @@ class PostgresVectorStore(VectorStore):
         max_scan_rows: int = 400,
         embedder: EmbeddingProvider | None = None,
         vector_weight: float = 0.55,
-        max_vector_rows: int = 20000,
+        max_vector_rows: int = 200000,
+        lsh_bits: int = 12,
     ) -> None:
         self.db = database
         self.keyword_weight = keyword_weight
@@ -100,6 +112,7 @@ class PostgresVectorStore(VectorStore):
         self.embedder = embedder
         self.vector_weight = min(1.0, max(0.0, float(vector_weight)))
         self.max_vector_rows = max(1, int(max_vector_rows))
+        self.lsh_bits = max(1, min(32, int(lsh_bits)))
         self.last_warning = ""
         self.trigram_index = False
         self._schema_lock = threading.Lock()
@@ -193,8 +206,19 @@ class PostgresVectorStore(VectorStore):
     ) -> dict[str, tuple[str, int]]:
         return await asyncio.to_thread(self._embedded_index_sync, tenant_id, source_id)
 
-    async def embedding_status(self, tenant_id: str = "") -> dict:
-        return await asyncio.to_thread(self._embedding_status_sync, tenant_id)
+    async def embedding_status(
+        self, tenant_id: str = "", model: str = "", dim: int = 0
+    ) -> dict:
+        return await asyncio.to_thread(
+            self._embedding_status_sync, tenant_id, model, dim
+        )
+
+    async def purge_stale_embeddings(
+        self, tenant_id: str, model: str, dim: int
+    ) -> dict:
+        return await asyncio.to_thread(
+            self._purge_stale_embeddings_sync, tenant_id, model, dim
+        )
 
     async def delete_by_source(self, source_id: str, tenant_id: str = "") -> int:
         return await asyncio.to_thread(self._delete_sync, source_id, tenant_id)
@@ -461,6 +485,7 @@ class PostgresVectorStore(VectorStore):
                     start=int(row.get("start_offset") or 0),
                     end=int(row.get("end_offset") or 0),
                     meta=_load_meta(row.get("meta_json")),
+                    keyword_score=round(float(scores.get(chunk_id, 0.0)), 6),
                 )
             )
         if min_score is not None:
@@ -492,30 +517,88 @@ class PostgresVectorStore(VectorStore):
         limit: int,
         source_ids: Sequence[str] | None,
     ) -> list[tuple[str, float]]:
+        return self._search_vector_ranked(
+            tenant_id, query_vec, limit, source_ids, use_lsh=True
+        )
+
+    def _search_vector_scan_sync(
+        self,
+        tenant_id: str,
+        query_vec: Sequence[float],
+        limit: int,
+        source_ids: Sequence[str] | None,
+    ) -> list[tuple[str, float]]:
+        return self._search_vector_ranked(
+            tenant_id, query_vec, limit, source_ids, use_lsh=False
+        )
+
+    def _search_vector_ranked(
+        self,
+        tenant_id: str,
+        query_vec: Sequence[float],
+        limit: int,
+        source_ids: Sequence[str] | None,
+        use_lsh: bool,
+    ) -> list[tuple[str, float]]:
         self._ensure_schema()
         clause, params = _tenant_filter_plain(tenant_id)
-        sql = "SELECT chunk_id, vec FROM chunk_embeddings WHERE vec IS NOT NULL"
-        sql += clause
         values: list[Any] = [*params]
+        model = ""
+        dim = 0
+        filters = ""
         if self.embedder is not None:
-            sql += " AND model = ? AND dim = ?"
-            values.extend([self.embedder.model, int(self.embedder.dim)])
+            model = self.embedder.model
+            dim = int(self.embedder.dim)
+            filters += " AND model = ? AND dim = ?"
+            values.extend([model, dim])
         if source_ids:
-            sql += f" AND source_id IN ({','.join('?' for _ in source_ids)})"
+            filters += f" AND source_id IN ({','.join('?' for _ in source_ids)})"
             values.extend(source_ids)
-        sql += " ORDER BY updated_at DESC LIMIT ?"
-        values.append(self.max_vector_rows)
+        cap = max(1, int(limit))
+        if use_lsh and model:
+            buckets = neighbor_buckets(
+                project_bucket(model, query_vec, self.lsh_bits), self.lsh_bits
+            )
+            placeholders = ",".join("?" for _ in buckets)
+            sql = (
+                "SELECT chunk_id, model, dim, vec FROM chunk_embeddings"
+                " WHERE vec IS NOT NULL" + clause + filters
+                + f" AND bucket IN ({placeholders}) LIMIT ?"
+            )
+            try:
+                rows = list(self.db.fetchall(sql, [*values, *buckets, self.max_vector_rows]))
+            except Exception:
+                rows = []
+            if len(rows) >= cap:
+                return self._rank_vector_rows(rows, query_vec, cap)
+        sql = (
+            "SELECT chunk_id, model, dim, vec FROM chunk_embeddings"
+            " WHERE vec IS NOT NULL" + clause + filters
+            + " ORDER BY updated_at DESC LIMIT ?"
+        )
         try:
-            rows = list(self.db.fetchall(sql, values))
+            rows = list(self.db.fetchall(sql, [*values, self.max_vector_rows]))
         except Exception:
             return []
+        return self._rank_vector_rows(rows, query_vec, cap)
+
+    def _rank_vector_rows(
+        self,
+        rows: Sequence[dict],
+        query_vec: Sequence[float],
+        cap: int,
+    ) -> list[tuple[str, float]]:
         best: list[tuple[float, str]] = []
-        cap = max(1, int(limit))
         for row in rows:
-            score = packed_cosine(query_vec, row.get("vec"))
             chunk_id = str(row.get("chunk_id") or "")
             if not chunk_id:
                 continue
+            key = cache_key(
+                chunk_id,
+                str(row.get("model") or ""),
+                int(row.get("dim") or 0),
+            )
+            score = cached_cosine(key, query_vec, row.get("vec"))
             if len(best) < cap:
                 heapq.heappush(best, (score, chunk_id))
             elif score > best[0][0]:
@@ -543,20 +626,24 @@ class PostgresVectorStore(VectorStore):
             else:
                 blob = pack_vector(vec or [])
             dim = int(row.get("dim") or (len(blob) // 4))
+            model = str(row.get("model") or "")
+            bucket = project_bucket(model, unpack_vector(blob), self.lsh_bits)
             self.db.execute(
                 "INSERT OR REPLACE INTO chunk_embeddings"
-                " (chunk_id, source_id, tenant_id, model, dim, vec, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " (chunk_id, source_id, tenant_id, model, dim, vec, bucket, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     chunk_id,
                     str(row.get("source_id") or ""),
                     _tenant_scope(str(row.get("tenant_id") or "")),
-                    str(row.get("model") or ""),
+                    model,
                     dim,
                     blob,
+                    bucket,
                     int(row.get("updated_at") or now),
                 ),
             )
+            clear_vector_cache_entry(chunk_id, model, dim)
             written += 1
         return written
 
@@ -610,9 +697,12 @@ class PostgresVectorStore(VectorStore):
             for row in rows
         }
 
-    def _embedding_status_sync(self, tenant_id: str = "") -> dict:
+    def _embedding_status_sync(
+        self, tenant_id: str = "", model: str = "", dim: int = 0
+    ) -> dict:
         self._ensure_schema()
         clause, params = _tenant_filter(tenant_id)
+        embedding_clause = clause.replace("c.tenant_id", "e.tenant_id")
         try:
             total_row = self.db.fetchone(
                 f"SELECT count(*) AS total FROM vs_chunks c WHERE 1 = 1{clause}",
@@ -621,15 +711,74 @@ class PostgresVectorStore(VectorStore):
             embedded_row = self.db.fetchone(
                 "SELECT count(*) AS total FROM chunk_embeddings e"
                 " JOIN vs_chunks c ON c.id = e.chunk_id"
-                " WHERE 1 = 1" + clause.replace("c.tenant_id", "c.tenant_id"),
-                list(params),
+                " WHERE 1 = 1" + clause + " AND e.model = ? AND e.dim = ?",
+                [*params, model, int(dim)],
+            )
+            group_rows = list(
+                self.db.fetchall(
+                    "SELECT e.model AS model, e.dim AS dim, count(*) AS chunks"
+                    " FROM chunk_embeddings e WHERE 1 = 1" + embedding_clause
+                    + " GROUP BY e.model, e.dim ORDER BY chunks DESC, e.model",
+                    list(params),
+                )
+            )
+            stale_row = self.db.fetchone(
+                "SELECT count(*) AS chunks,"
+                " COALESCE(SUM(COALESCE(LENGTH(e.vec), 0)), 0) AS bytes"
+                " FROM chunk_embeddings e WHERE 1 = 1" + embedding_clause
+                + " AND (e.model != ? OR e.dim != ?)",
+                [*params, model, int(dim)],
             )
         except Exception:
-            return {"chunks_total": 0, "chunks_embedded": 0}
+            return {
+                "chunks_total": 0,
+                "chunks_embedded": 0,
+                "models": [],
+                "stale": {"chunks": 0, "bytes": 0},
+            }
         return {
             "chunks_total": int((total_row or {}).get("total") or 0),
             "chunks_embedded": int((embedded_row or {}).get("total") or 0),
+            "models": [
+                {
+                    "model": str(row.get("model") or ""),
+                    "dim": int(row.get("dim") or 0),
+                    "chunks": int(row.get("chunks") or 0),
+                }
+                for row in group_rows
+            ],
+            "stale": {
+                "chunks": int((stale_row or {}).get("chunks") or 0),
+                "bytes": int((stale_row or {}).get("bytes") or 0),
+            },
         }
+
+    def _purge_stale_embeddings_sync(
+        self, tenant_id: str, model: str, dim: int
+    ) -> dict:
+        self._ensure_schema()
+        clause, params = _tenant_filter(tenant_id)
+        embedding_clause = clause.replace("c.tenant_id", "e.tenant_id")
+        values = [*params, model, int(dim)]
+        try:
+            row = self.db.fetchone(
+                "SELECT count(*) AS chunks,"
+                " COALESCE(SUM(COALESCE(LENGTH(e.vec), 0)), 0) AS bytes"
+                " FROM chunk_embeddings e WHERE 1 = 1" + embedding_clause
+                + " AND (e.model != ? OR e.dim != ?)",
+                values,
+            )
+        except Exception:
+            row = None
+        deleted = int((row or {}).get("chunks") or 0)
+        freed = int((row or {}).get("bytes") or 0)
+        self.db.execute(
+            "DELETE FROM chunk_embeddings e WHERE 1 = 1" + embedding_clause
+            + " AND (e.model != ? OR e.dim != ?)",
+            values,
+        )
+        clear_vector_cache()
+        return {"deleted": deleted, "freed_bytes": freed}
 
     def _candidates(
         self,

@@ -41,7 +41,14 @@ class VectorStore(Protocol):
     ) -> dict[str, tuple[str, int]]:
         ...
 
-    async def embedding_status(self, tenant_id: str = "") -> dict:
+    async def embedding_status(
+        self, tenant_id: str = "", model: str = "", dim: int = 0
+    ) -> dict:
+        ...
+
+    async def purge_stale_embeddings(
+        self, tenant_id: str, model: str, dim: int
+    ) -> dict:
         ...
 
     async def delete_by_source(self, source_id: str, tenant_id: str = "") -> int:

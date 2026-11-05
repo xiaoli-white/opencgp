@@ -65,6 +65,18 @@ class OpenAIEmbedding:
         vectors = await self.embed([f"{self.query_prefix}{text or ''}"])
         return vectors[0] if vectors else []
 
+    async def probe(self) -> dict[str, Any]:
+        vectors = await self.embed(["ping"])
+        if not vectors:
+            return {"ok": False, "dim": 0, "model": self.model, "error": "空向量"}
+        actual = len(vectors[0])
+        return {
+            "ok": actual == self.dim,
+            "dim": actual,
+            "model": self.model,
+            "expected_dim": self.dim,
+        }
+
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         last_error: Exception | None = None
         for attempt in range(3):

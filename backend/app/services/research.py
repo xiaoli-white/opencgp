@@ -4,7 +4,7 @@ import json
 import re
 import time
 import uuid
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from app.models.citation import Citation
 from app.models.research import (
@@ -51,6 +51,9 @@ class ResearchService:
         web_limit: int = 3,
         evidence_char_limit: int = MAX_SECTION_CHARS,
         min_score: float = 0.15,
+        reranker_factory: Callable[[str], Any] | None = None,
+        rerank_weight: float = 0.5,
+        rerank_top_n: int = 12,
     ) -> None:
         self.repository = repository
         self.vectorstore = vectorstore
@@ -61,6 +64,9 @@ class ResearchService:
         self.web_limit = web_limit
         self.evidence_char_limit = evidence_char_limit
         self.min_score = max(0.05, float(min_score) * 0.5)
+        self.reranker_factory = reranker_factory
+        self.rerank_weight = min(1.0, max(0.0, float(rerank_weight)))
+        self.rerank_top_n = max(1, int(rerank_top_n or 12))
 
     async def run(
         self,
@@ -94,6 +100,9 @@ class ResearchService:
             run.questions = questions
             citations, web_used, web_available = await self._gather(
                 questions, resolved_top_k, source_ids, tenant_id
+            )
+            citations = await self._apply_rerank(
+                resolved_topic, citations, user_id
             )
             run.citations = citations
             run.web_used = web_used
@@ -201,6 +210,29 @@ class ResearchService:
                         )
                     )
         return citations[: self.max_evidence], web_used, web_available
+
+    async def _apply_rerank(
+        self, query: str, citations: list[Citation], user_id: str
+    ) -> list[Citation]:
+        if not citations or self.reranker_factory is None:
+            return citations
+        try:
+            reranker = self.reranker_factory(user_id or "")
+            scores = await reranker.rerank(
+                query, [citation.text for citation in citations], self.rerank_top_n
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[research] rerank 失败，跳过重排: {exc!r}")
+            return citations
+        if len(scores) != len(citations):
+            return citations
+        weight = self.rerank_weight
+        for citation, score in zip(citations, scores):
+            final_score = (1.0 - weight) * citation.score + weight * float(score)
+            citation.rerank_score = round(float(score), 6)
+            citation.score = round(float(final_score), 6)
+        citations.sort(key=lambda item: item.score, reverse=True)
+        return citations
 
     async def _synthesize(
         self,

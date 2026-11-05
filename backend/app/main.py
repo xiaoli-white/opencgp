@@ -58,7 +58,7 @@ from app.models.mode import GenerationMode
 from app.models.thread import LessonThreadView
 from app.models.longform import LongformProfile
 from app.models.research import ResearchRun
-from app.models.job import JOB_KINDS, JOB_STATUSES, Job
+from app.models.job import JOB_KINDS, JOB_STATUSES, KIND_KB_EMBED_BACKFILL, Job
 from app.models.factcheck import FactCheckReport
 from app.services.jobs import JobContext
 from app.services.codecheck import CodeCheckService
@@ -384,8 +384,80 @@ def root() -> dict:
     }
 
 
+_PROBE_TTL_SECONDS = 60.0
+_PROBE_WAIT_SECONDS = 0.10
+_probe_cache: dict[str, dict[str, Any]] = {}
+_probe_refreshing: set[str] = set()
+
+
+def _probe_cached(key: str) -> dict[str, Any] | None:
+    entry = _probe_cache.get(key)
+    if not entry:
+        return None
+    return dict(entry.get("value") or {})
+
+
+def _probe_is_fresh(key: str, now: float) -> bool:
+    entry = _probe_cache.get(key)
+    return bool(entry and now - float(entry.get("at") or 0.0) < _PROBE_TTL_SECONDS)
+
+
+def _probe_store(key: str, value: dict[str, Any]) -> None:
+    _probe_cache[key] = {"at": time.time(), "value": dict(value)}
+
+
+async def _probe_refresh(key: str, factory) -> None:
+    try:
+        value = await factory()
+        if not isinstance(value, dict):
+            value = {"ok": bool(value)}
+        _probe_store(key, value)
+    except Exception as exc:  # noqa: BLE001
+        _probe_store(key, {"ok": False, "error": str(exc)})
+    finally:
+        _probe_refreshing.discard(key)
+
+
+async def _probe_with_cache(key: str, factory) -> dict[str, Any]:
+    now = time.time()
+    if _probe_is_fresh(key, now):
+        value = _probe_cached(key) or {"ok": False}
+        value["probe"] = "cache"
+        return value
+    if key in _probe_refreshing:
+        value = _probe_cached(key)
+        if value is not None:
+            value["probe"] = "stale"
+            return value
+        return {"ok": False, "error": "probe in progress", "probe": "stale"}
+    _probe_refreshing.add(key)
+    try:
+        value = await asyncio.wait_for(factory(), timeout=_PROBE_WAIT_SECONDS)
+    except asyncio.TimeoutError:
+        asyncio.create_task(_probe_refresh(key, factory))
+        cached = _probe_cached(key)
+        if cached is not None:
+            cached["probe"] = "stale"
+            return cached
+        return {"ok": False, "error": "probe timeout", "probe": "stale"}
+    except Exception as exc:  # noqa: BLE001
+        _probe_refreshing.discard(key)
+        value = {"ok": False, "error": str(exc)}
+        _probe_store(key, value)
+        value = dict(value)
+        value["probe"] = "live"
+        return value
+    _probe_refreshing.discard(key)
+    if not isinstance(value, dict):
+        value = {"ok": bool(value)}
+    _probe_store(key, value)
+    value = dict(value)
+    value["probe"] = "live"
+    return value
+
+
 @app.get("/health")
-def health() -> dict[str, Any]:
+async def health() -> dict[str, Any]:
     """健康检查：报告应用状态与各 adapter 探活结果。
 
     adapter 探活失败不会导致 500，而是以 ``degraded`` 状态如实返回，
@@ -449,37 +521,104 @@ def health() -> dict[str, Any]:
         }
     except Exception as exc:  # noqa: BLE001
         adapters["imagegen"] = {"ok": False, "error": str(exc), "optional": True}
+    probe_jobs: list[tuple[str, Any]] = []
+    embedding_backend = (settings.embedding.backend or "none").strip().lower()
     try:
         embedder = container.embedder()
-        adapters["embedding"] = {
+        embedding_info: dict[str, Any] = {
             "ok": True if embedder is None else bool(embedder.healthcheck()),
-            "backend": (settings.embedding.backend or "none").strip().lower(),
-            "model": getattr(embedder, "model", ""),
+            "backend": embedding_backend,
+            "model": getattr(embedder, "model", "") or (settings.embedding.model if embedder is None else ""),
             "dim": int(getattr(embedder, "dim", 0) or 0),
             "optional": True,
         }
+        if embedding_backend in ("openai", "openai_compat") and embedder is not None:
+            key = "embedding:%s:%s:%s:%s" % (
+                embedding_backend,
+                getattr(embedder, "base_url", ""),
+                getattr(embedder, "model", ""),
+                getattr(embedder, "dim", 0),
+            )
+
+            async def _embedding_factory(adapter=embedder) -> dict[str, Any]:
+                result = await adapter.probe()
+                result["backend"] = embedding_backend
+                result["model"] = getattr(adapter, "model", "")
+                result["dim"] = int(result.get("dim") or 0)
+                return result
+
+            probe_jobs.append(("embedding", _probe_with_cache(key, _embedding_factory)))
+        else:
+            embedding_info["probe"] = "config"
+        adapters["embedding"] = embedding_info
     except Exception as exc:  # noqa: BLE001
         adapters["embedding"] = {
             "ok": False,
             "error": str(exc),
-            "backend": (settings.embedding.backend or "none").strip().lower(),
+            "backend": embedding_backend,
             "optional": True,
+            "probe": "stale",
         }
+    rerank_backend = (settings.rerank.backend or "none").strip().lower()
     try:
         reranker = container.reranker("")
-        adapters["rerank"] = {
+        rerank_info: dict[str, Any] = {
             "ok": bool(reranker.healthcheck()),
-            "backend": (settings.rerank.backend or "none").strip().lower(),
+            "backend": rerank_backend,
             "model": settings.rerank.model,
             "optional": True,
         }
+        if rerank_backend == "http":
+            key = "rerank:http:%s:%s" % (
+                getattr(reranker, "base_url", ""),
+                getattr(reranker, "model", ""),
+            )
+
+            async def _rerank_factory(adapter=reranker) -> dict[str, Any]:
+                result = await adapter.probe()
+                result["backend"] = "http"
+                result["model"] = getattr(adapter, "model", "")
+                return result
+
+            probe_jobs.append(("rerank", _probe_with_cache(key, _rerank_factory)))
+        else:
+            rerank_info["probe"] = "config"
+        adapters["rerank"] = rerank_info
     except Exception as exc:  # noqa: BLE001
         adapters["rerank"] = {
             "ok": False,
             "error": str(exc),
-            "backend": (settings.rerank.backend or "none").strip().lower(),
+            "backend": rerank_backend,
             "optional": True,
+            "probe": "stale",
         }
+    if probe_jobs:
+        try:
+            probe_values = await asyncio.wait_for(
+                asyncio.gather(
+                    *(job for _, job in probe_jobs), return_exceptions=True
+                ),
+                timeout=0.25,
+            )
+        except asyncio.TimeoutError:
+            probe_values = [None for _ in probe_jobs]
+        for (name, _), value in zip(probe_jobs, probe_values):
+            if isinstance(value, Exception):
+                adapters[name] = {
+                    "ok": False,
+                    "error": str(value),
+                    "backend": (
+                        embedding_backend if name == "embedding" else rerank_backend
+                    ),
+                    "optional": True,
+                    "probe": "stale",
+                }
+            elif isinstance(value, dict):
+                merged = dict(adapters.get(name) or {})
+                merged.update(value)
+                merged.setdefault("probe", "live")
+                merged["optional"] = True
+                adapters[name] = merged
     queue_info: dict[str, Any] = {"backend": "unknown", "ok": False}
     jobs_info: dict[str, int] = {"queued": 0, "running": 0}
     try:
@@ -611,62 +750,74 @@ class EmbeddingBackfillRequest(BaseModel):
     source_id: str | None = None
 
 
+def _embedding_identity() -> tuple[str, int]:
+    cfg = settings.embedding
+    embedder = container.embedder()
+    model = str(getattr(embedder, "model", "") or cfg.model or "")
+    dim = int(getattr(embedder, "dim", 0) or cfg.dim or 0)
+    return model, dim
+
+
 @app.post("/api/v1/kb/embeddings/backfill")
 async def kb_embeddings_backfill(
     req: EmbeddingBackfillRequest | None = None,
+    sync: bool = Query(default=False),
     ctx: AuthContext = Depends(get_auth_context),
-) -> dict[str, Any]:
+) -> Any:
     _enforce(ctx, "write")
     cfg = settings.embedding
     embedder = container.embedder()
-    if embedder is None:
-        return {"embedded": 0, "skipped": 0, "model": "", "dim": 0}
-    source_id = (req.source_id if req else None) or ""
     store = container.vectorstore()
     tenant_id = _tenant_of(ctx)
+    source_id = (req.source_id if req else None) or ""
+    model, dim = _embedding_identity()
+    stats = await store.embedding_status(tenant_id, model, dim)
+    stale = stats.get("stale") or {"chunks": 0, "bytes": 0}
+    if not sync:
+        job = container.job_service().submit(
+            KIND_KB_EMBED_BACKFILL,
+            {"source_id": source_id, "batch": max(1, int(cfg.batch))},
+            JobContext(tenant_id=tenant_id, user_id=ctx.user.id),
+        )
+        return JSONResponse(
+            status_code=201,
+            content={"job_id": job.id, "queued": True, "stale": stale},
+        )
     chunks = await store.list_chunks(tenant_id, source_id)
-    existing = await store.embedded_index(tenant_id, source_id)
-    todo: list[dict] = []
-    skipped = 0
-    for chunk in chunks:
-        current = existing.get(str(chunk.get("chunk_id") or ""))
-        if current and current[0] == embedder.model and int(current[1]) == int(embedder.dim):
-            skipped += 1
-            continue
-        todo.append(chunk)
-    embedded = 0
-    step = max(1, int(cfg.batch)) * 4
-    for start in range(0, len(todo), step):
-        batch = todo[start : start + step]
-        try:
-            vectors = await embedder.embed([str(item.get("text") or "") for item in batch])
-        except Exception as exc:  # noqa: BLE001
-            print(f"[backfill] 向量化失败，停止回填: {exc!r}")
-            break
-        if len(vectors) != len(batch):
-            print(f"[backfill] 向量数量不匹配，停止回填: {len(vectors)} != {len(batch)}")
-            break
-        rows = [
-            {
-                "chunk_id": str(item.get("chunk_id") or ""),
-                "source_id": str(item.get("source_id") or ""),
-                "tenant_id": tenant_id,
-                "model": embedder.model,
-                "dim": embedder.dim,
-                "vec": vector,
-            }
-            for item, vector in zip(batch, vectors)
-        ]
-        try:
-            embedded += await store.upsert_embeddings(rows)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[backfill] embedding 写入失败，停止回填: {exc!r}")
-            break
+    if len(chunks) > 2000:
+        raise HTTPException(
+            status_code=429,
+            detail="chunk 数超过 2000，请改用异步回填（去掉 sync=true）",
+        )
+    if embedder is None:
+        return {
+            "embedded": 0,
+            "skipped": 0,
+            "failed": 0,
+            "model": "",
+            "dim": 0,
+            "elapsed_ms": 0,
+            "stale": stale,
+        }
+    from app.services.embedding_backfill import backfill_embeddings
+
+    started = time.perf_counter()
+    result = await backfill_embeddings(
+        store=store,
+        embedder=embedder,
+        tenant_id=tenant_id,
+        source_id=source_id,
+        batch_size=max(1, int(cfg.batch)),
+    )
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
     return {
-        "embedded": embedded,
-        "skipped": skipped,
-        "model": embedder.model,
-        "dim": embedder.dim,
+        "embedded": int(result.get("embedded") or 0),
+        "skipped": int(result.get("skipped") or 0),
+        "failed": int(result.get("failed") or 0),
+        "model": model,
+        "dim": dim,
+        "elapsed_ms": elapsed_ms,
+        "stale": stale,
     }
 
 
@@ -676,20 +827,37 @@ async def kb_embeddings_status(
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
     cfg = settings.embedding
-    embedder = container.embedder()
     store = container.vectorstore()
-    counts = await store.embedding_status(_tenant_of(ctx))
+    model, dim = _embedding_identity()
+    counts = await store.embedding_status(_tenant_of(ctx), model, dim)
     total = int(counts.get("chunks_total") or 0)
     embedded = int(counts.get("chunks_embedded") or 0)
     coverage = round(embedded / total, 6) if total > 0 else 0.0
     return {
         "backend": (cfg.backend or "none").strip().lower(),
-        "model": getattr(embedder, "model", "") or cfg.model,
-        "dim": int(getattr(embedder, "dim", 0) or cfg.dim),
+        "current_backend": (cfg.backend or "none").strip().lower(),
+        "model": model,
+        "dim": dim,
         "chunks_total": total,
         "chunks_embedded": embedded,
         "coverage": coverage,
+        "models": list(counts.get("models") or []),
+        "stale": dict(counts.get("stale") or {"chunks": 0, "bytes": 0}),
+        "note": (
+            "stale 统计的是与当前 backend/model/dim 不匹配的历史向量；"
+            "当前 backend=none 时，存量 hash 向量会被计入 stale，属于预期。"
+        ),
     }
+
+
+@app.post("/api/v1/kb/embeddings/purge")
+async def kb_embeddings_purge(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    store = container.vectorstore()
+    model, dim = _embedding_identity()
+    return await store.purge_stale_embeddings(_tenant_of(ctx), model, dim)
 
 
 @app.get("/api/v1/kb/sources")
@@ -4385,7 +4553,7 @@ def lesson_code_check(
     return {"lesson_id": lesson_id, **payload}
 
 
-def _metrics_snapshot() -> dict[str, Any]:
+def _metrics_snapshot_sync() -> dict[str, Any]:
     snapshot: dict[str, Any] = {
         "jobs_total": [],
         "jobs_active": 0,
@@ -4419,7 +4587,22 @@ def _metrics_snapshot() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         print(f"[metrics] 队列统计失败: {exc!r}")
     try:
-        payload = health()
+        payload = {"adapters": {}}
+        for name in (
+            "database",
+            "storage",
+            "llm",
+            "vectorstore",
+            "exporter",
+            "parser",
+            "notifier",
+        ):
+            try:
+                payload["adapters"][name] = {
+                    "ok": bool(getattr(container, name)().healthcheck())
+                }
+            except Exception as exc:  # noqa: BLE001
+                payload["adapters"][name] = {"ok": False, "error": str(exc)}
         snapshot["adapter_up"] = [
             {"name": name, "up": bool(info.get("ok"))}
             for name, info in (payload.get("adapters") or {}).items()

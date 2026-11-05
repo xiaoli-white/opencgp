@@ -20,8 +20,16 @@ from app.services.scoring import (
     select_top,
     term_score,
 )
+from app.services.lsh import neighbor_buckets, project_bucket
 from app.services.textproc import index_tokens, make_snippet, query_terms
-from app.services.vector_math import pack_vector, packed_cosine
+from app.services.vector_math import (
+    cache_key,
+    cached_cosine,
+    clear_vector_cache,
+    clear_vector_cache_entry,
+    pack_vector,
+    unpack_vector,
+)
 
 _SCHEMA = (
     """
@@ -66,6 +74,7 @@ _SCHEMA = (
         model TEXT NOT NULL DEFAULT '',
         dim INTEGER NOT NULL DEFAULT 0,
         vec BLOB,
+        bucket INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL DEFAULT 0
     )
     """,
@@ -78,6 +87,7 @@ _COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("sources", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
     ("chunks", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
     ("sources", "object_key", "TEXT NOT NULL DEFAULT ''"),
+    ("chunk_embeddings", "bucket", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -92,7 +102,8 @@ class SimpleVectorStore(VectorStore):
         min_relative_coverage: float = 0.5,
         max_scan_rows: int = 20000,
         vector_weight: float = 0.55,
-        max_vector_rows: int = 20000,
+        max_vector_rows: int = 200000,
+        lsh_bits: int = 12,
     ) -> None:
         self.root = Path(path)
         self.db_path = self.root / db_name
@@ -103,6 +114,7 @@ class SimpleVectorStore(VectorStore):
         self.max_scan_rows = max_scan_rows
         self.vector_weight = min(1.0, max(0.0, float(vector_weight)))
         self.max_vector_rows = max(1, int(max_vector_rows))
+        self.lsh_bits = max(1, min(32, int(lsh_bits)))
         self._conn: sqlite3.Connection | None = None
         self._lock = threading.RLock()
 
@@ -121,6 +133,10 @@ class SimpleVectorStore(VectorStore):
                         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_chunks_tenant ON chunks(tenant_id)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_lsh"
+                    " ON chunk_embeddings(tenant_id, model, dim, bucket)"
                 )
                 conn.commit()
                 self._conn = conn
@@ -199,8 +215,19 @@ class SimpleVectorStore(VectorStore):
     ) -> dict[str, tuple[str, int]]:
         return await asyncio.to_thread(self._embedded_index_sync, tenant_id, source_id)
 
-    async def embedding_status(self, tenant_id: str = "") -> dict:
-        return await asyncio.to_thread(self._embedding_status_sync, tenant_id)
+    async def embedding_status(
+        self, tenant_id: str = "", model: str = "", dim: int = 0
+    ) -> dict:
+        return await asyncio.to_thread(
+            self._embedding_status_sync, tenant_id, model, dim
+        )
+
+    async def purge_stale_embeddings(
+        self, tenant_id: str, model: str, dim: int
+    ) -> dict:
+        return await asyncio.to_thread(
+            self._purge_stale_embeddings_sync, tenant_id, model, dim
+        )
 
     def _upsert_embeddings_sync(self, rows: list[dict]) -> int:
         if not rows:
@@ -221,20 +248,24 @@ class SimpleVectorStore(VectorStore):
                 else:
                     blob = pack_vector(vec or [])
                 dim = int(row.get("dim") or (len(blob) // 4))
+                model = str(row.get("model") or "")
+                bucket = project_bucket(model, unpack_vector(blob), self.lsh_bits)
                 conn.execute(
                     "INSERT OR REPLACE INTO chunk_embeddings"
-                    " (chunk_id, source_id, tenant_id, model, dim, vec, updated_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    " (chunk_id, source_id, tenant_id, model, dim, vec, bucket, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         chunk_id,
                         str(row.get("source_id") or ""),
                         _tenant_scope(str(row.get("tenant_id") or "")),
-                        str(row.get("model") or ""),
+                        model,
                         dim,
                         blob,
+                        bucket,
                         int(row.get("updated_at") or now),
                     ),
                 )
+                clear_vector_cache_entry(chunk_id, model, dim)
                 written += 1
         return written
 
@@ -245,28 +276,86 @@ class SimpleVectorStore(VectorStore):
         limit: int,
         source_ids: Sequence[str] | None,
     ) -> list[tuple[str, float]]:
+        return self._search_vector_ranked(
+            tenant_id, query_vec, limit, source_ids, use_lsh=True
+        )
+
+    def _search_vector_scan_sync(
+        self,
+        tenant_id: str,
+        query_vec: Sequence[float],
+        limit: int,
+        source_ids: Sequence[str] | None,
+    ) -> list[tuple[str, float]]:
+        return self._search_vector_ranked(
+            tenant_id, query_vec, limit, source_ids, use_lsh=False
+        )
+
+    def _search_vector_ranked(
+        self,
+        tenant_id: str,
+        query_vec: Sequence[float],
+        limit: int,
+        source_ids: Sequence[str] | None,
+        use_lsh: bool,
+    ) -> list[tuple[str, float]]:
         conn = self._connection()
         clause, params = _tenant_filter_plain(tenant_id)
-        sql = "SELECT chunk_id, vec FROM chunk_embeddings WHERE vec IS NOT NULL"
-        sql += clause
         values: list[object] = [*params]
+        model = ""
+        dim = 0
+        filters = ""
         if self.embedder is not None:
-            sql += " AND model = ? AND dim = ?"
-            values.extend([self.embedder.model, int(self.embedder.dim)])
+            model = self.embedder.model
+            dim = int(self.embedder.dim)
+            filters += " AND model = ? AND dim = ?"
+            values.extend([model, dim])
         if source_ids:
-            sql += f" AND source_id IN ({','.join('?' for _ in source_ids)})"
+            filters += f" AND source_id IN ({','.join('?' for _ in source_ids)})"
             values.extend(source_ids)
-        sql += " ORDER BY updated_at DESC LIMIT ?"
-        values.append(self.max_vector_rows)
-        best: list[tuple[float, str]] = []
         cap = max(1, int(limit))
+        if use_lsh and model:
+            buckets = neighbor_buckets(
+                project_bucket(model, query_vec, self.lsh_bits), self.lsh_bits
+            )
+            placeholders = ",".join("?" for _ in buckets)
+            sql = (
+                "SELECT chunk_id, model, dim, vec FROM chunk_embeddings"
+                " WHERE vec IS NOT NULL" + clause + filters
+                + f" AND bucket IN ({placeholders}) LIMIT ?"
+            )
+            try:
+                rows = conn.execute(
+                    sql, [*values, *buckets, self.max_vector_rows]
+                ).fetchall()
+            except sqlite3.Error:
+                rows = []
+            if len(rows) >= cap:
+                return self._rank_vector_rows(rows, query_vec, cap)
+        sql = (
+            "SELECT chunk_id, model, dim, vec FROM chunk_embeddings"
+            " WHERE vec IS NOT NULL" + clause + filters
+            + " ORDER BY updated_at DESC LIMIT ?"
+        )
         try:
-            cursor = conn.execute(sql, values)
+            rows = conn.execute(sql, [*values, self.max_vector_rows]).fetchall()
         except sqlite3.Error:
             return []
-        for row in cursor:
-            score = packed_cosine(query_vec, row["vec"])
+        return self._rank_vector_rows(rows, query_vec, cap)
+
+    def _rank_vector_rows(
+        self,
+        rows: Sequence[sqlite3.Row],
+        query_vec: Sequence[float],
+        cap: int,
+    ) -> list[tuple[str, float]]:
+        best: list[tuple[float, str]] = []
+        for row in rows:
             chunk_id = str(row["chunk_id"])
+            if not chunk_id:
+                continue
+            key = cache_key(chunk_id, str(row["model"] or ""), int(row["dim"] or 0))
+            score = cached_cosine(key, query_vec, row["vec"])
             if len(best) < cap:
                 heapq.heappush(best, (score, chunk_id))
             elif score > best[0][0]:
@@ -314,21 +403,75 @@ class SimpleVectorStore(VectorStore):
             for row in rows
         }
 
-    def _embedding_status_sync(self, tenant_id: str = "") -> dict:
+    def _embedding_status_sync(
+        self, tenant_id: str = "", model: str = "", dim: int = 0
+    ) -> dict:
         conn = self._connection()
         clause, params = _tenant_filter_plain(tenant_id)
         total_row = conn.execute(
             "SELECT count(*) FROM chunks WHERE 1 = 1" + clause, list(params)
         ).fetchone()
+        chunk_clause = clause.replace("tenant_id", "c.tenant_id")
+        embedding_clause = clause.replace("tenant_id", "e.tenant_id")
         embedded_row = conn.execute(
             "SELECT count(*) FROM chunk_embeddings e JOIN chunks c ON c.id = e.chunk_id"
-            " WHERE 1 = 1" + clause.replace("tenant_id", "c.tenant_id"),
+            " WHERE 1 = 1" + chunk_clause + " AND e.model = ? AND e.dim = ?",
+            [*params, model, int(dim)],
+        ).fetchone()
+        groups = conn.execute(
+            "SELECT e.model AS model, e.dim AS dim, count(*) AS chunks"
+            " FROM chunk_embeddings e WHERE 1 = 1" + embedding_clause
+            + " GROUP BY e.model, e.dim ORDER BY chunks DESC, e.model",
             list(params),
+        ).fetchall()
+        stale_row = conn.execute(
+            "SELECT count(*) AS chunks,"
+            " COALESCE(SUM(COALESCE(LENGTH(e.vec), 0)), 0) AS bytes"
+            " FROM chunk_embeddings e WHERE 1 = 1" + embedding_clause
+            + " AND (e.model != ? OR e.dim != ?)",
+            [*params, model, int(dim)],
         ).fetchone()
         return {
             "chunks_total": int(total_row[0]) if total_row else 0,
             "chunks_embedded": int(embedded_row[0]) if embedded_row else 0,
+            "models": [
+                {
+                    "model": str(row["model"] or ""),
+                    "dim": int(row["dim"] or 0),
+                    "chunks": int(row["chunks"] or 0),
+                }
+                for row in groups
+            ],
+            "stale": {
+                "chunks": int(stale_row["chunks"] or 0) if stale_row else 0,
+                "bytes": int(stale_row["bytes"] or 0) if stale_row else 0,
+            },
         }
+
+    def _purge_stale_embeddings_sync(
+        self, tenant_id: str, model: str, dim: int
+    ) -> dict:
+        conn = self._connection()
+        clause, params = _tenant_filter_plain(tenant_id)
+        embedding_clause = clause.replace("tenant_id", "e.tenant_id")
+        values = [*params, model, int(dim)]
+        row = conn.execute(
+            "SELECT count(*) AS chunks,"
+            " COALESCE(SUM(COALESCE(LENGTH(e.vec), 0)), 0) AS bytes"
+            " FROM chunk_embeddings e WHERE 1 = 1" + embedding_clause
+            + " AND (e.model != ? OR e.dim != ?)",
+            values,
+        ).fetchone()
+        deleted = int(row["chunks"] or 0) if row else 0
+        freed = int(row["bytes"] or 0) if row else 0
+        with self._lock, conn:
+            conn.execute(
+                "DELETE FROM chunk_embeddings WHERE 1 = 1" + clause
+                + " AND (model != ? OR dim != ?)",
+                values,
+            )
+        clear_vector_cache()
+        return {"deleted": deleted, "freed_bytes": freed}
 
     async def delete_by_source(self, source_id: str, tenant_id: str = "") -> int:
         return await asyncio.to_thread(self._delete_sync, source_id, tenant_id)
@@ -541,7 +684,7 @@ class SimpleVectorStore(VectorStore):
         selected = select_top(
             ranked, covs, top_k, self.min_relative_score, self.min_relative_coverage
         )
-        citations = self._build_citations(conn, selected, terms)
+        citations = self._build_citations(conn, selected, terms, scores)
         if min_score is not None:
             threshold = float(min_score)
             citations = [item for item in citations if item.score >= threshold]

@@ -193,6 +193,7 @@ class Container:
                 llm=provider,
                 timeout=cfg.timeout,
                 batch_size=min(12, max(1, int(cfg.top_n or 12))),
+                max_doc_chars=cfg.chars,
             )
         if backend == "http":
             from app.adapters.rerank.http_rerank import HTTPReranker
@@ -202,6 +203,7 @@ class Container:
                 api_key=cfg.api_key,
                 model=cfg.model,
                 timeout=cfg.timeout,
+                retries=cfg.retries,
             )
         from app.adapters.rerank.none import NoneReranker
 
@@ -219,6 +221,7 @@ class Container:
                     embedder=self.embedder(),
                     vector_weight=settings.vector_weight,
                     max_vector_rows=settings.max_vector_rows,
+                    lsh_bits=settings.lsh_bits,
                 )
             if backend in ("postgres", "postgresql", "pg"):
                 from app.adapters.database.postgres import PostgresDatabase
@@ -232,6 +235,7 @@ class Container:
                     embedder=self.embedder(),
                     vector_weight=settings.vector_weight,
                     max_vector_rows=settings.max_vector_rows,
+                    lsh_bits=settings.lsh_bits,
                 )
             raise ValueError(f"不支持的 vectorstore backend: {backend!r}")
 
@@ -532,6 +536,9 @@ class Container:
                 llm=self.llm(),
                 web_search=self.web_search(),
                 min_score=self.settings.vectorstore.min_score,
+                reranker_factory=self.reranker,
+                rerank_weight=self.settings.rerank.weight,
+                rerank_top_n=self.settings.rerank.top_n,
             )
 
         return self._get_or_build("research", build)
@@ -616,6 +623,9 @@ class Container:
                 quota=self.quota_service(),
                 llm_for=self.llm_for,
                 events=self.job_events(),
+                vectorstore=self.vectorstore(),
+                embedder=self.embedder(),
+                embedding_batch=self.settings.embedding.batch,
                 default_top_k=self.settings.generation.top_k,
                 default_mode=self.settings.generation.default_mode,
             )

@@ -131,7 +131,8 @@ class VectorStoreConfig:
     dsn: str = ""
     pool_size: int = 8
     vector_weight: float = 0.55
-    max_vector_rows: int = 20000
+    max_vector_rows: int = 200000
+    lsh_bits: int = 12
 
     @classmethod
     def from_env(cls) -> "VectorStoreConfig":
@@ -142,7 +143,8 @@ class VectorStoreConfig:
             dsn=_env("VECTORSTORE_DSN", "") or _env("DATABASE_DSN", ""),
             pool_size=int(_env("VECTORSTORE_POOL_SIZE", "8") or 8),
             vector_weight=float(_env("HYBRID_VECTOR_WEIGHT", "0.55") or 0.55),
-            max_vector_rows=int(_env("HYBRID_MAX_VECTOR_ROWS", "20000") or 20000),
+            max_vector_rows=int(_env("HYBRID_MAX_VECTOR_ROWS", "200000") or 200000),
+            lsh_bits=max(1, min(32, int(_env("HYBRID_LSH_BITS", "12") or 12))),
         )
 
 
@@ -212,6 +214,8 @@ class RerankConfig:
     top_n: int = 12
     weight: float = 0.5
     timeout: float = 20.0
+    retries: int = 2
+    chars: int = 600
     base_url: str = ""
     model: str = ""
     api_key: str = ""
@@ -223,6 +227,8 @@ class RerankConfig:
             top_n=max(1, int(_env("RERANK_TOP_N", "12") or 12)),
             weight=float(_env("RERANK_WEIGHT", "0.5") or 0.5),
             timeout=float(_env("RERANK_TIMEOUT", "20") or 20),
+            retries=max(0, int(_env("RERANK_RETRIES", "2") or 2)),
+            chars=max(80, int(_env("RERANK_CHARS", "600") or 600)),
             base_url=_env("RERANK_BASE_URL", ""),
             model=_env("RERANK_MODEL", ""),
             api_key=_env("RERANK_API_KEY", ""),

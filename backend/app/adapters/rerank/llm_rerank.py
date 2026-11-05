@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import statistics
 from typing import Any, Sequence
 
 from app.ports.llm import LLMProvider
@@ -13,6 +14,9 @@ _SYSTEM = (
     "分数范围 0 到 10，可保留一位小数，越相关分越高。"
     '只输出严格 JSON，格式为 {"scores":[{"i":1,"s":8.5}]}，不要输出解释或代码块。'
 )
+
+_PAIR_A = re.compile(r'"i"\s*:\s*(\d+)\s*,\s*"s"\s*:\s*(-?\d+(?:\.\d+)?)')
+_PAIR_B = re.compile(r'"s"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"i"\s*:\s*(\d+)')
 
 
 class LLMReranker:
@@ -36,41 +40,33 @@ class LLMReranker:
         items = [str(doc or "") for doc in docs]
         if not items:
             return []
-        scores = [0.0] * len(items)
-        limit = len(items) if top_n is None or top_n <= 0 else min(len(items), int(top_n))
-        index = 0
-        while index < limit:
-            batch = items[index : index + self.batch_size]
-            batch_scores = await self._score_batch(query, batch)
-            if batch_scores is None:
-                return []
-            for offset, value in enumerate(batch_scores):
-                scores[index + offset] = value
-            index += len(batch)
+        scores = await self._score_all(query, items)
+        if scores is None:
+            return []
         return scores
 
-    async def _score_batch(self, query: str, batch: Sequence[str]) -> list[float] | None:
+    async def _score_all(
+        self, query: str, items: Sequence[str]
+    ) -> list[float] | None:
         lines = []
-        for position, text in enumerate(batch, start=1):
+        for position, text in enumerate(items, start=1):
             body = text.strip().replace("\n", " ")[: self.max_doc_chars]
             lines.append(f"[{position}] {body}")
         prompt = (
             f"{_SYSTEM}\n\n问题：{query}\n\n候选文档：\n"
             + "\n".join(lines)
-            + f'\n\n请只输出 {{"scores":[{{"i":1,"s":0.0}}]}} 形式的 JSON，覆盖 1 到 {len(batch)}。'
+            + f'\n\n请只输出 {{"scores":[{{"i":1,"s":0.0}}]}} 形式的 JSON，覆盖 1 到 {len(items)}。'
         )
+        max_tokens = 12 * len(items) + 64
         try:
             raw = await asyncio.wait_for(
-                self.llm.complete(prompt, temperature=0, max_tokens=512),
+                self.llm.complete(prompt, temperature=0, max_tokens=max_tokens),
                 timeout=self.timeout,
             )
         except Exception as exc:
             print(f"[rerank] llm 打分失败，跳过重排: {exc!r}")
             return None
-        parsed = _parse_scores(raw, len(batch))
-        if parsed is None:
-            return None
-        return parsed
+        return _parse_scores(raw, len(items))
 
     def healthcheck(self) -> bool:
         try:
@@ -79,32 +75,60 @@ class LLMReranker:
             return False
 
 
+def _extract_rows(text: str) -> list[tuple[int, float]]:
+    rows: list[tuple[int, float]] = []
+    data: Any = None
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            data = json.loads(text[start : end + 1])
+        except (TypeError, ValueError):
+            data = None
+    payload = data.get("scores") if isinstance(data, dict) else None
+    if isinstance(payload, list):
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            try:
+                idx = int(row.get("i"))
+                value = float(row.get("s"))
+            except (TypeError, ValueError):
+                continue
+            rows.append((idx, value))
+    if not rows:
+        for match in _PAIR_A.finditer(text):
+            try:
+                rows.append((int(match.group(1)), float(match.group(2))))
+            except (TypeError, ValueError):
+                continue
+        if not rows:
+            for match in _PAIR_B.finditer(text):
+                try:
+                    rows.append((int(match.group(2)), float(match.group(1))))
+                except (TypeError, ValueError):
+                    continue
+    return rows
+
+
 def _parse_scores(raw: Any, expected: int) -> list[float] | None:
-    if not isinstance(raw, str) or not raw.strip():
+    if not isinstance(raw, str) or not raw.strip() or expected <= 0:
         return None
     text = raw.strip()
     text = re.sub(r"^```(?:json)?", "", text).strip()
     text = re.sub(r"```$", "", text).strip()
-    start = text.find("{")
-    end = text.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        data = json.loads(text[start : end + 1])
-    except (TypeError, ValueError):
-        return None
-    rows = data.get("scores") if isinstance(data, dict) else None
-    if not isinstance(rows, list):
-        return None
-    scores = [0.0] * expected
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        try:
-            idx = int(row.get("i"))
-            value = float(row.get("s"))
-        except (TypeError, ValueError):
-            continue
+    rows = _extract_rows(text)
+    collected: dict[int, float] = {}
+    for idx, value in rows:
         if 1 <= idx <= expected:
-            scores[idx - 1] = min(1.0, max(0.0, value / 10.0))
+            collected[idx] = value
+    if not collected:
+        return None
+    if len(collected) / expected < 0.6:
+        return None
+    normalized = [min(1.0, max(0.0, value / 10.0)) for value in collected.values()]
+    middle = float(statistics.median(normalized))
+    scores = [middle] * expected
+    for idx, value in collected.items():
+        scores[idx - 1] = min(1.0, max(0.0, value / 10.0))
     return scores
