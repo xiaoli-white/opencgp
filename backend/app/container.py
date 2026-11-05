@@ -434,6 +434,14 @@ class Container:
         def build() -> WebSearchPort:
             settings = self.settings.websearch
             backend = (settings.backend or "none").strip().lower()
+            if backend == "deepseek":
+                from app.adapters.websearch.deepseek import DeepSeekWebSearch
+
+                return DeepSeekWebSearch(
+                    base_url=settings.url or "https://api.deepseek.com",
+                    api_key=settings.api_key,
+                    timeout=settings.timeout,
+                )
             if backend in ("generic", "http_json", "generic_json"):
                 from app.adapters.websearch.http_json import HttpJsonWebSearch
 
