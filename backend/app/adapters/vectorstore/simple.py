@@ -68,14 +68,16 @@ _SCHEMA = (
     """,
     """
     CREATE TABLE IF NOT EXISTS chunk_embeddings (
-        chunk_id TEXT PRIMARY KEY,
+        chunk_id TEXT NOT NULL,
+        provider_id TEXT NOT NULL DEFAULT 'legacy',
         source_id TEXT NOT NULL DEFAULT '',
         tenant_id TEXT NOT NULL DEFAULT '',
         model TEXT NOT NULL DEFAULT '',
         dim INTEGER NOT NULL DEFAULT 0,
         vec BLOB,
         bucket INTEGER NOT NULL DEFAULT 0,
-        updated_at INTEGER NOT NULL DEFAULT 0
+        updated_at INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (chunk_id, provider_id, model)
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_tenant ON chunk_embeddings(tenant_id)",
@@ -88,7 +90,23 @@ _COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("chunks", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
     ("sources", "object_key", "TEXT NOT NULL DEFAULT ''"),
     ("chunk_embeddings", "bucket", "INTEGER NOT NULL DEFAULT 0"),
+    ("chunk_embeddings", "provider_id", "TEXT NOT NULL DEFAULT 'legacy'"),
 )
+
+_EMBEDDINGS_TABLE_SQL = """
+    CREATE TABLE chunk_embeddings (
+        chunk_id TEXT NOT NULL,
+        provider_id TEXT NOT NULL DEFAULT 'legacy',
+        source_id TEXT NOT NULL DEFAULT '',
+        tenant_id TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        dim INTEGER NOT NULL DEFAULT 0,
+        vec BLOB,
+        bucket INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (chunk_id, provider_id, model)
+    )
+"""
 
 
 class SimpleVectorStore(VectorStore):
@@ -131,12 +149,13 @@ class SimpleVectorStore(VectorStore):
                 for table, column, ddl in _COLUMN_MIGRATIONS:
                     if not _has_column(conn, table, column):
                         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+                _migrate_embeddings(conn)
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_chunks_tenant ON chunks(tenant_id)"
                 )
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_lsh"
-                    " ON chunk_embeddings(tenant_id, model, dim, bucket)"
+                    " ON chunk_embeddings(tenant_id, provider_id, model, dim, bucket)"
                 )
                 conn.commit()
                 self._conn = conn
@@ -162,24 +181,40 @@ class SimpleVectorStore(VectorStore):
         source_ids: Sequence[str] | None = None,
         tenant_id: str = "",
         min_score: float | None = None,
-    ) -> list[Citation]:
+        embedding_provider: EmbeddingProvider | None = None,
+        provider_id: str = "",
+        vector_weight: float | None = None,
+        return_meta: bool = False,
+    ):
         if not query or not query.strip() or top_k <= 0:
-            return []
+            return ([], _empty_meta()) if return_meta else []
         scope = [sid for sid in (source_ids or []) if sid]
+        embedder = (
+            embedding_provider if embedding_provider is not None else self.embedder
+        )
+        active_provider_id = provider_id or (
+            str(getattr(embedder, "provider_id", "legacy") or "legacy")
+            if embedder is not None
+            else ""
+        )
         query_vector = None
-        if self.embedder is not None:
+        warnings: list[str] = []
+        if embedder is not None:
             try:
-                embed_query = getattr(self.embedder, "embed_query", None)
+                embed_query = getattr(embedder, "embed_query", None)
                 if callable(embed_query):
                     vector = await embed_query(query.strip())
                 else:
-                    vectors = await self.embedder.embed([query.strip()])
+                    vectors = await embedder.embed([query.strip()])
                     vector = vectors[0] if vectors else None
                 query_vector = list(vector) if vector else None
             except Exception as exc:
                 print(f"[vectorstore] 查询向量化失败，降级为关键词检索: {exc!r}")
+                warnings.append("embedding_failed")
                 query_vector = None
-        return await asyncio.to_thread(
+        else:
+            warnings.append("no_embedding_provider")
+        result = await asyncio.to_thread(
             self._search_sync,
             query.strip(),
             top_k,
@@ -187,19 +222,33 @@ class SimpleVectorStore(VectorStore):
             query_vector,
             tenant_id,
             min_score,
+            embedder,
+            active_provider_id,
+            vector_weight,
+            warnings,
         )
+        if return_meta:
+            return result
+        return result[0]
 
     async def search_vector(
         self, tenant_id: str, query_vec: Sequence[float], limit: int = 10
     ) -> list[tuple[str, float]]:
         if not query_vec or limit <= 0:
             return []
+        provider_id = (
+            str(getattr(self.embedder, "provider_id", "legacy") or "legacy")
+            if self.embedder is not None
+            else ""
+        )
         return await asyncio.to_thread(
             self._search_vector_sync,
             tenant_id,
             [float(value) for value in query_vec],
             limit,
             None,
+            self.embedder,
+            provider_id,
         )
 
     async def upsert_embeddings(self, rows: Sequence[dict]) -> int:
@@ -211,22 +260,28 @@ class SimpleVectorStore(VectorStore):
         return await asyncio.to_thread(self._list_chunks_sync, tenant_id, source_id)
 
     async def embedded_index(
-        self, tenant_id: str = "", source_id: str = ""
+        self, tenant_id: str = "", source_id: str = "", provider_id: str = ""
     ) -> dict[str, tuple[str, int]]:
-        return await asyncio.to_thread(self._embedded_index_sync, tenant_id, source_id)
+        return await asyncio.to_thread(
+            self._embedded_index_sync, tenant_id, source_id, provider_id
+        )
 
     async def embedding_status(
-        self, tenant_id: str = "", model: str = "", dim: int = 0
+        self,
+        tenant_id: str = "",
+        model: str = "",
+        dim: int = 0,
+        provider_id: str = "",
     ) -> dict:
         return await asyncio.to_thread(
-            self._embedding_status_sync, tenant_id, model, dim
+            self._embedding_status_sync, tenant_id, model, dim, provider_id
         )
 
     async def purge_stale_embeddings(
-        self, tenant_id: str, model: str, dim: int
+        self, tenant_id: str, model: str, dim: int, provider_id: str = ""
     ) -> dict:
         return await asyncio.to_thread(
-            self._purge_stale_embeddings_sync, tenant_id, model, dim
+            self._purge_stale_embeddings_sync, tenant_id, model, dim, provider_id
         )
 
     def _upsert_embeddings_sync(self, rows: list[dict]) -> int:
@@ -249,13 +304,15 @@ class SimpleVectorStore(VectorStore):
                     blob = pack_vector(vec or [])
                 dim = int(row.get("dim") or (len(blob) // 4))
                 model = str(row.get("model") or "")
+                provider_id = str(row.get("provider_id") or "legacy")
                 bucket = project_bucket(model, unpack_vector(blob), self.lsh_bits)
                 conn.execute(
                     "INSERT OR REPLACE INTO chunk_embeddings"
-                    " (chunk_id, source_id, tenant_id, model, dim, vec, bucket, updated_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    " (chunk_id, provider_id, source_id, tenant_id, model, dim, vec, bucket, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         chunk_id,
+                        provider_id,
                         str(row.get("source_id") or ""),
                         _tenant_scope(str(row.get("tenant_id") or "")),
                         model,
@@ -265,7 +322,11 @@ class SimpleVectorStore(VectorStore):
                         int(row.get("updated_at") or now),
                     ),
                 )
-                clear_vector_cache_entry(chunk_id, model, dim)
+                clear_vector_cache_entry(
+                    f"{provider_id}:{chunk_id}",
+                    model,
+                    dim,
+                )
                 written += 1
         return written
 
@@ -275,9 +336,17 @@ class SimpleVectorStore(VectorStore):
         query_vec: Sequence[float],
         limit: int,
         source_ids: Sequence[str] | None,
+        embedder: EmbeddingProvider | None = None,
+        provider_id: str = "",
     ) -> list[tuple[str, float]]:
         return self._search_vector_ranked(
-            tenant_id, query_vec, limit, source_ids, use_lsh=True
+            tenant_id,
+            query_vec,
+            limit,
+            source_ids,
+            use_lsh=True,
+            embedder=embedder,
+            provider_id=provider_id,
         )
 
     def _search_vector_scan_sync(
@@ -286,9 +355,17 @@ class SimpleVectorStore(VectorStore):
         query_vec: Sequence[float],
         limit: int,
         source_ids: Sequence[str] | None,
+        embedder: EmbeddingProvider | None = None,
+        provider_id: str = "",
     ) -> list[tuple[str, float]]:
         return self._search_vector_ranked(
-            tenant_id, query_vec, limit, source_ids, use_lsh=False
+            tenant_id,
+            query_vec,
+            limit,
+            source_ids,
+            use_lsh=False,
+            embedder=embedder,
+            provider_id=provider_id,
         )
 
     def _search_vector_ranked(
@@ -298,18 +375,24 @@ class SimpleVectorStore(VectorStore):
         limit: int,
         source_ids: Sequence[str] | None,
         use_lsh: bool,
+        embedder: EmbeddingProvider | None = None,
+        provider_id: str = "",
     ) -> list[tuple[str, float]]:
         conn = self._connection()
         clause, params = _tenant_filter_plain(tenant_id)
         values: list[object] = [*params]
         model = ""
         dim = 0
+        active = embedder if embedder is not None else self.embedder
         filters = ""
-        if self.embedder is not None:
-            model = self.embedder.model
-            dim = int(self.embedder.dim)
-            filters += " AND model = ? AND dim = ?"
-            values.extend([model, dim])
+        if active is not None:
+            model = str(getattr(active, "model", "") or "")
+            dim = int(getattr(active, "dim", 0) or 0)
+            identity_provider = provider_id or str(
+                getattr(active, "provider_id", "legacy") or "legacy"
+            )
+            filters += " AND provider_id = ? AND model = ? AND dim = ?"
+            values.extend([identity_provider, model, dim])
         if source_ids:
             filters += f" AND source_id IN ({','.join('?' for _ in source_ids)})"
             values.extend(source_ids)
@@ -320,7 +403,7 @@ class SimpleVectorStore(VectorStore):
             )
             placeholders = ",".join("?" for _ in buckets)
             sql = (
-                "SELECT chunk_id, model, dim, vec FROM chunk_embeddings"
+                "SELECT chunk_id, provider_id, model, dim, vec FROM chunk_embeddings"
                 " WHERE vec IS NOT NULL" + clause + filters
                 + f" AND bucket IN ({placeholders}) LIMIT ?"
             )
@@ -333,7 +416,7 @@ class SimpleVectorStore(VectorStore):
             if len(rows) >= cap:
                 return self._rank_vector_rows(rows, query_vec, cap)
         sql = (
-            "SELECT chunk_id, model, dim, vec FROM chunk_embeddings"
+            "SELECT chunk_id, provider_id, model, dim, vec FROM chunk_embeddings"
             " WHERE vec IS NOT NULL" + clause + filters
             + " ORDER BY updated_at DESC LIMIT ?"
         )
@@ -354,7 +437,12 @@ class SimpleVectorStore(VectorStore):
             chunk_id = str(row["chunk_id"])
             if not chunk_id:
                 continue
-            key = cache_key(chunk_id, str(row["model"] or ""), int(row["dim"] or 0))
+            key = _provider_cache_key(
+                str(row["provider_id"] or "legacy"),
+                chunk_id,
+                str(row["model"] or ""),
+                int(row["dim"] or 0),
+            )
             score = cached_cosine(key, query_vec, row["vec"])
             if len(best) < cap:
                 heapq.heappush(best, (score, chunk_id))
@@ -388,15 +476,18 @@ class SimpleVectorStore(VectorStore):
         ]
 
     def _embedded_index_sync(
-        self, tenant_id: str = "", source_id: str = ""
+        self, tenant_id: str = "", source_id: str = "", provider_id: str = ""
     ) -> dict[str, tuple[str, int]]:
         conn = self._connection()
         clause, params = _tenant_filter_plain(tenant_id)
-        sql = "SELECT chunk_id, model, dim FROM chunk_embeddings WHERE 1 = 1" + clause
+        sql = "SELECT chunk_id, provider_id, model, dim FROM chunk_embeddings WHERE 1 = 1" + clause
         values: list[object] = [*params]
         if source_id:
             sql += " AND source_id = ?"
             values.append(source_id)
+        if provider_id:
+            sql += " AND provider_id = ?"
+            values.append(provider_id)
         rows = conn.execute(sql, values).fetchall()
         return {
             str(row["chunk_id"]): (str(row["model"] or ""), int(row["dim"] or 0))
@@ -404,7 +495,11 @@ class SimpleVectorStore(VectorStore):
         }
 
     def _embedding_status_sync(
-        self, tenant_id: str = "", model: str = "", dim: int = 0
+        self,
+        tenant_id: str = "",
+        model: str = "",
+        dim: int = 0,
+        provider_id: str = "",
     ) -> dict:
         conn = self._connection()
         clause, params = _tenant_filter_plain(tenant_id)
@@ -413,29 +508,37 @@ class SimpleVectorStore(VectorStore):
         ).fetchone()
         chunk_clause = clause.replace("tenant_id", "c.tenant_id")
         embedding_clause = clause.replace("tenant_id", "e.tenant_id")
+        identity = " AND e.model = ? AND e.dim = ?"
+        identity_values: list[object] = [model, int(dim)]
+        if provider_id:
+            identity = " AND e.provider_id = ?" + identity
+            identity_values = [provider_id, *identity_values]
         embedded_row = conn.execute(
             "SELECT count(*) FROM chunk_embeddings e JOIN chunks c ON c.id = e.chunk_id"
-            " WHERE 1 = 1" + chunk_clause + " AND e.model = ? AND e.dim = ?",
-            [*params, model, int(dim)],
+            " WHERE 1 = 1" + chunk_clause + identity,
+            [*params, *identity_values],
         ).fetchone()
         groups = conn.execute(
-            "SELECT e.model AS model, e.dim AS dim, count(*) AS chunks"
+            "SELECT e.provider_id AS provider_id, e.model AS model,"
+            " e.dim AS dim, count(*) AS chunks"
             " FROM chunk_embeddings e WHERE 1 = 1" + embedding_clause
-            + " GROUP BY e.model, e.dim ORDER BY chunks DESC, e.model",
+            + " GROUP BY e.provider_id, e.model, e.dim"
+            " ORDER BY chunks DESC, e.model",
             list(params),
         ).fetchall()
         stale_row = conn.execute(
             "SELECT count(*) AS chunks,"
             " COALESCE(SUM(COALESCE(LENGTH(e.vec), 0)), 0) AS bytes"
             " FROM chunk_embeddings e WHERE 1 = 1" + embedding_clause
-            + " AND (e.model != ? OR e.dim != ?)",
-            [*params, model, int(dim)],
+            + " AND NOT (1 = 1" + identity + ")",
+            [*params, *identity_values],
         ).fetchone()
         return {
             "chunks_total": int(total_row[0]) if total_row else 0,
             "chunks_embedded": int(embedded_row[0]) if embedded_row else 0,
             "models": [
                 {
+                    "provider_id": str(row["provider_id"] or "legacy"),
                     "model": str(row["model"] or ""),
                     "dim": int(row["dim"] or 0),
                     "chunks": int(row["chunks"] or 0),
@@ -449,17 +552,21 @@ class SimpleVectorStore(VectorStore):
         }
 
     def _purge_stale_embeddings_sync(
-        self, tenant_id: str, model: str, dim: int
+        self, tenant_id: str, model: str, dim: int, provider_id: str = ""
     ) -> dict:
         conn = self._connection()
         clause, params = _tenant_filter_plain(tenant_id)
         embedding_clause = clause.replace("tenant_id", "e.tenant_id")
-        values = [*params, model, int(dim)]
+        identity = " AND model = ? AND dim = ?"
+        values: list[object] = [*params, model, int(dim)]
+        if provider_id:
+            identity = " AND provider_id = ?" + identity
+            values = [*params, provider_id, model, int(dim)]
         row = conn.execute(
             "SELECT count(*) AS chunks,"
             " COALESCE(SUM(COALESCE(LENGTH(e.vec), 0)), 0) AS bytes"
             " FROM chunk_embeddings e WHERE 1 = 1" + embedding_clause
-            + " AND (e.model != ? OR e.dim != ?)",
+            + " AND NOT (1 = 1" + identity + ")",
             values,
         ).fetchone()
         deleted = int(row["chunks"] or 0) if row else 0
@@ -467,7 +574,7 @@ class SimpleVectorStore(VectorStore):
         with self._lock, conn:
             conn.execute(
                 "DELETE FROM chunk_embeddings WHERE 1 = 1" + clause
-                + " AND (model != ? OR dim != ?)",
+                + " AND NOT (1 = 1" + identity + ")",
                 values,
             )
         clear_vector_cache()
@@ -638,8 +745,26 @@ class SimpleVectorStore(VectorStore):
         query_vector: Sequence[float] | None,
         tenant_id: str = "",
         min_score: float | None = None,
-    ) -> list[Citation]:
+        embedder: EmbeddingProvider | None = None,
+        provider_id: str = "",
+        vector_weight: float | None = None,
+        warnings: list[str] | None = None,
+    ) -> tuple[list[Citation], dict]:
         conn = self._connection()
+        notes = list(warnings or [])
+        active = embedder if embedder is not None else self.embedder
+        model = str(getattr(active, "model", "") or "")
+        dim = int(getattr(active, "dim", 0) or 0)
+        active_provider = provider_id or (
+            str(getattr(active, "provider_id", "legacy") or "legacy")
+            if active is not None
+            else ""
+        )
+        weight = (
+            min(1.0, max(0.0, float(vector_weight)))
+            if vector_weight is not None
+            else self.vector_weight
+        )
         terms = query_terms(query)
         keyword_limit = (
             max(top_k * 4, 20) if query_vector is None else max(top_k * 3, 1)
@@ -647,26 +772,96 @@ class SimpleVectorStore(VectorStore):
         keyword_scores = self._keyword_scores(conn, terms, keyword_limit, source_ids)
         if not keyword_scores:
             keyword_scores = self._like_scores(conn, query, keyword_limit, source_ids)
-        if query_vector is None:
-            return self._finish_keyword(
+        meta: dict = {
+            "provider_id": active_provider,
+            "model": model,
+            "dim": dim,
+            "vector_weight": weight,
+            "vector_rows": 0,
+            "skipped_mismatch": 0,
+            "excluded_other_models": 0,
+            "mode": "keyword",
+            "warnings": notes,
+        }
+        if query_vector is None or weight <= 0:
+            if weight <= 0 and "vector_weight_zero" not in notes:
+                notes.append("vector_weight_zero")
+            citations = self._finish_keyword(
                 conn, query, terms, keyword_scores, top_k, tenant_id, min_score
             )
-        vector_scores = self._search_vector_sync(
-            tenant_id, query_vector, max(top_k * 3, 1), source_ids
+            return citations, meta
+        vector_scores = dict(
+            self._search_vector_sync(
+                tenant_id,
+                query_vector,
+                max(top_k * 3, 1),
+                source_ids,
+                embedder=active,
+                provider_id=active_provider,
+            )
         )
         if not vector_scores:
-            return self._finish_keyword(
+            if "no_vectors_for_model" not in notes:
+                notes.append("no_vectors_for_model")
+            citations = self._finish_keyword(
                 conn, query, terms, keyword_scores, top_k, tenant_id, min_score
             )
-        return self._finish_hybrid(
+            return citations, meta
+        meta["vector_rows"] = len(vector_scores)
+        meta["mode"] = "hybrid"
+        meta["skipped_mismatch"] = self._vector_mismatch_count(
+            conn, tenant_id, active_provider, model, dim
+        )
+        meta["excluded_other_models"] = self._vector_excluded_count(
+            conn, tenant_id, active_provider, model, dim
+        )
+        citations = self._finish_hybrid(
             conn,
             terms,
             keyword_scores,
-            dict(vector_scores),
+            vector_scores,
             top_k,
             tenant_id,
             min_score,
+            weight,
         )
+        return citations, meta
+
+    def _vector_mismatch_count(
+        self,
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        provider_id: str,
+        model: str,
+        dim: int,
+    ) -> int:
+        if not provider_id or not model:
+            return 0
+        clause, params = _tenant_filter_plain(tenant_id)
+        row = conn.execute(
+            "SELECT count(*) FROM chunk_embeddings WHERE vec IS NOT NULL" + clause
+            + " AND provider_id = ? AND model = ? AND dim <> ?",
+            [*params, provider_id, model, int(dim)],
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def _vector_excluded_count(
+        self,
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        provider_id: str,
+        model: str,
+        dim: int,
+    ) -> int:
+        if not provider_id or not model:
+            return 0
+        clause, params = _tenant_filter_plain(tenant_id)
+        row = conn.execute(
+            "SELECT count(*) FROM chunk_embeddings WHERE vec IS NOT NULL" + clause
+            + " AND NOT (provider_id = ? AND model = ? AND dim = ?)",
+            [*params, provider_id, model, int(dim)],
+        ).fetchone()
+        return int(row[0]) if row else 0
 
     def _finish_keyword(
         self,
@@ -699,10 +894,15 @@ class SimpleVectorStore(VectorStore):
         top_k: int,
         tenant_id: str,
         min_score: float | None,
+        vector_weight: float | None = None,
     ) -> list[Citation]:
         keyword_scores = self._scope_scores(conn, keyword_scores, tenant_id)
         best_keyword = max(keyword_scores.values()) if keyword_scores else 0.0
-        weight = self.vector_weight
+        weight = (
+            self.vector_weight
+            if vector_weight is None
+            else min(1.0, max(0.0, float(vector_weight)))
+        )
         merged: dict[str, float] = {}
         for chunk_id in set(keyword_scores) | set(vector_scores):
             keyword = keyword_scores.get(chunk_id, 0.0)
@@ -868,6 +1068,53 @@ class SimpleVectorStore(VectorStore):
                 )
             )
         return citations
+
+
+def _provider_cache_key(
+    provider_id: str, chunk_id: str, model: str, dim: int
+) -> str:
+    return cache_key(f"{provider_id}:{chunk_id}", model, dim)
+
+
+def _empty_meta() -> dict:
+    return {
+        "provider_id": "",
+        "model": "",
+        "dim": 0,
+        "vector_weight": 0.0,
+        "vector_rows": 0,
+        "skipped_mismatch": 0,
+        "excluded_other_models": 0,
+        "mode": "keyword",
+        "warnings": [],
+    }
+
+
+def _migrate_embeddings(conn: sqlite3.Connection) -> None:
+    try:
+        info = conn.execute("PRAGMA table_info(chunk_embeddings)").fetchall()
+    except sqlite3.Error:
+        return
+    if not info:
+        return
+    columns = {str(row["name"]) for row in info}
+    primary = [str(row["name"]) for row in info if int(row["pk"] or 0) > 0]
+    if "provider_id" not in columns:
+        conn.execute(
+            "ALTER TABLE chunk_embeddings ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'legacy'"
+        )
+        columns.add("provider_id")
+    if primary == ["chunk_id", "provider_id", "model"]:
+        return
+    conn.execute("ALTER TABLE chunk_embeddings RENAME TO chunk_embeddings_old")
+    conn.execute(_EMBEDDINGS_TABLE_SQL)
+    conn.execute(
+        "INSERT INTO chunk_embeddings"
+        " (chunk_id, provider_id, source_id, tenant_id, model, dim, vec, bucket, updated_at)"
+        " SELECT chunk_id, COALESCE(provider_id, 'legacy'), source_id, tenant_id,"
+        " model, dim, vec, bucket, updated_at FROM chunk_embeddings_old"
+    )
+    conn.execute("DROP TABLE chunk_embeddings_old")
 
 
 def _tenant_scope(tenant_id: str) -> str:

@@ -30,11 +30,20 @@ async def backfill_embeddings(
     source_id: str = "",
     batch_size: int = 32,
     progress: Callable[[float], None] | None = None,
+    provider_id: str = "",
 ) -> dict[str, int]:
     if embedder is None or store is None:
         return {"embedded": 0, "failed": 0, "skipped": 0}
     chunks = await store.list_chunks(tenant_id, source_id)
-    existing = await store.embedded_index(tenant_id, source_id)
+    active_provider = provider_id or str(
+        getattr(embedder, "provider_id", "legacy") or "legacy"
+    )
+    try:
+        existing = await store.embedded_index(
+            tenant_id, source_id, provider_id=active_provider
+        )
+    except TypeError:
+        existing = await store.embedded_index(tenant_id, source_id)
     todo: list[dict] = []
     skipped = 0
     model = str(getattr(embedder, "model", "") or "")
@@ -65,6 +74,7 @@ async def backfill_embeddings(
                     "chunk_id": chunk_id,
                     "source_id": str(item.get("source_id") or ""),
                     "tenant_id": tenant_id,
+                    "provider_id": active_provider,
                     "model": model,
                     "dim": dim,
                     "vec": vector,

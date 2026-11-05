@@ -46,6 +46,8 @@ class IngestService:
         source_id: str | None = None,
         meta: dict[str, Any] | None = None,
         tenant_id: str = "",
+        embedder: EmbeddingPort | None = None,
+        embedding_provider_id: str = "",
     ) -> IngestResult:
         if not data:
             raise ValueError("上传文件为空")
@@ -72,6 +74,8 @@ class IngestService:
             source_id=resolved_id,
             meta={**merged_meta, "parser": parsed.parser},
             tenant_id=tenant_id,
+            embedder=embedder,
+            embedding_provider_id=embedding_provider_id,
         )
 
     async def ingest_text(
@@ -81,6 +85,8 @@ class IngestService:
         source_id: str | None = None,
         meta: dict[str, Any] | None = None,
         tenant_id: str = "",
+        embedder: EmbeddingPort | None = None,
+        embedding_provider_id: str = "",
     ) -> IngestResult:
         normalized = normalize_text(text)
         if not normalized:
@@ -90,7 +96,13 @@ class IngestService:
         if not chunks:
             raise ValueError("文档分块结果为空")
         await self.vectorstore.add_chunks(resolved_id, chunks, tenant_id=tenant_id)
-        await self._embed_chunks(resolved_id, chunks, tenant_id)
+        await self._embed_chunks(
+            resolved_id,
+            chunks,
+            tenant_id,
+            embedder=embedder,
+            provider_id=embedding_provider_id,
+        )
         parser_name = str((meta or {}).get("parser", "unknown"))
         return IngestResult(
             source_id=resolved_id,
@@ -107,12 +119,18 @@ class IngestService:
         )
 
     async def _embed_chunks(
-        self, source_id: str, chunks: Sequence[Chunk], tenant_id: str
+        self,
+        source_id: str,
+        chunks: Sequence[Chunk],
+        tenant_id: str,
+        embedder: EmbeddingPort | None = None,
+        provider_id: str = "",
     ) -> None:
-        if self.embedder is None or not chunks:
+        active = embedder if embedder is not None else self.embedder
+        if active is None or not chunks:
             return
         try:
-            vectors = await self.embedder.embed([chunk.text for chunk in chunks])
+            vectors = await active.embed([chunk.text for chunk in chunks])
         except Exception as exc:
             print(f"[ingest] 向量化失败，跳过 embedding: {exc!r}")
             return
@@ -121,13 +139,17 @@ class IngestService:
                 f"[ingest] 向量数量不匹配，跳过 embedding: {len(vectors)} != {len(chunks)}"
             )
             return
+        active_provider = provider_id or str(
+            getattr(active, "provider_id", "legacy") or "legacy"
+        )
         rows = [
             {
                 "chunk_id": chunk.chunk_id,
                 "source_id": source_id,
                 "tenant_id": tenant_id,
-                "model": self.embedder.model,
-                "dim": self.embedder.dim,
+                "provider_id": active_provider,
+                "model": active.model,
+                "dim": active.dim,
                 "vec": vector,
             }
             for chunk, vector in zip(chunks, vectors)

@@ -20,7 +20,11 @@ class VectorStore(Protocol):
         source_ids: Sequence[str] | None = None,
         tenant_id: str = "",
         min_score: float | None = None,
-    ) -> list[Citation]:
+        embedding_provider: object | None = None,
+        provider_id: str = "",
+        vector_weight: float | None = None,
+        return_meta: bool = False,
+    ):
         ...
 
     async def search_vector(
@@ -37,17 +41,21 @@ class VectorStore(Protocol):
         ...
 
     async def embedded_index(
-        self, tenant_id: str = "", source_id: str = ""
+        self, tenant_id: str = "", source_id: str = "", provider_id: str = ""
     ) -> dict[str, tuple[str, int]]:
         ...
 
     async def embedding_status(
-        self, tenant_id: str = "", model: str = "", dim: int = 0
+        self,
+        tenant_id: str = "",
+        model: str = "",
+        dim: int = 0,
+        provider_id: str = "",
     ) -> dict:
         ...
 
     async def purge_stale_embeddings(
-        self, tenant_id: str, model: str, dim: int
+        self, tenant_id: str, model: str, dim: int, provider_id: str = ""
     ) -> dict:
         ...
 

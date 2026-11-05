@@ -705,12 +705,17 @@ async def kb_upload(
     filename = file.filename or "upload.bin"
     _charge(ctx, "upload", 1, ref_id=filename)
     _charge(ctx, "storage", len(data), ref_id=filename)
+    embedding = container.retrieval_providers().resolve_embedding(
+        _tenant_of(ctx), ctx.user.id
+    )
     try:
         result = await container.ingest().ingest_bytes(
             data,
             filename,
             source_name=source_name,
             tenant_id=_tenant_of(ctx),
+            embedder=embedding.adapter,
+            embedding_provider_id=embedding.provider_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -730,41 +735,293 @@ async def kb_search(
     req: SearchRequest, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    rerank_cfg = settings.rerank
-    rerank_enabled = (rerank_cfg.backend or "none").strip().lower() != "none"
-    candidate_k = req.top_k * 3 if rerank_enabled else req.top_k
-    citations: list[Citation] = await container.ingest().search(
+    tenant_id = _tenant_of(ctx)
+    user_id = ctx.user.id
+    service = container.retrieval_providers()
+    embedding = service.resolve_embedding(tenant_id, user_id)
+    rerank = service.resolve_rerank(tenant_id, user_id)
+    weights = service.resolve_weights(tenant_id, user_id)
+    store = container.vectorstore()
+    rerank_enabled = rerank.enabled
+    candidate_k = (
+        min(50, max(req.top_k, int(weights.top_n)))
+        if rerank_enabled
+        else req.top_k
+    )
+    citations, search_meta = await store.search(
         req.query,
         top_k=candidate_k,
         source_ids=req.source_ids,
-        tenant_id=_tenant_of(ctx),
+        tenant_id=tenant_id,
+        embedding_provider=embedding.adapter,
+        provider_id=embedding.provider_id,
+        vector_weight=weights.vector,
+        return_meta=True,
     )
+    warnings = list(search_meta.get("warnings") or [])
+    if embedding.error and "embedding_provider_failed" not in warnings:
+        warnings.append("embedding_provider_failed")
+    stats = await store.embedding_status(
+        tenant_id, embedding.model, embedding.dim, provider_id=embedding.provider_id
+    )
+    total = int(stats.get("chunks_total") or 0)
+    embedded = int(stats.get("chunks_embedded") or 0)
+    coverage = round(embedded / total, 6) if total > 0 else 0.0
+    if embedding.adapter is not None and embedded <= 0:
+        if "no_vectors_for_model" not in warnings:
+            warnings.append("no_vectors_for_model")
     if rerank_enabled and citations:
         try:
-            reranker = container.reranker(ctx.user.id)
             docs = [citation.text for citation in citations]
-            scores = await reranker.rerank(req.query, docs, rerank_cfg.top_n)
+            scores = await rerank.adapter.rerank(req.query, docs, int(weights.top_n))
         except Exception as exc:  # noqa: BLE001
             print(f"[search] rerank 失败，跳过重排: {exc!r}")
             scores = []
+            if "rerank_failed" not in warnings:
+                warnings.append("rerank_failed")
         if len(scores) == len(citations):
-            weight = min(1.0, max(0.0, float(rerank_cfg.weight)))
+            weight = min(1.0, max(0.0, float(weights.rerank)))
             for citation, score in zip(citations, scores):
-                final_score = (1.0 - weight) * citation.score + weight * float(score)
+                final_score = (
+                    (1.0 - weight) * citation.score + weight * float(score)
+                )
                 citation.rerank_score = round(float(score), 6)
                 citation.score = round(float(final_score), 6)
             citations.sort(key=lambda item: item.score, reverse=True)
     citations = citations[: req.top_k]
+    retrieval = {
+        "embedding": {
+            "provider_id": embedding.provider_id,
+            "model": embedding.model,
+            "dim": embedding.dim,
+            "backend": embedding.backend,
+            "source": embedding.source,
+            "coverage": coverage,
+            "chunks_total": total,
+            "chunks_embedded": embedded,
+            "vector_rows": int(search_meta.get("vector_rows") or 0),
+            "skipped_mismatch": int(search_meta.get("skipped_mismatch") or 0),
+            "excluded_other_models": int(
+                search_meta.get("excluded_other_models") or 0
+            ),
+            "mode": search_meta.get("mode") or "keyword",
+        },
+        "rerank": {
+            "provider_id": rerank.provider_id,
+            "model": rerank.model,
+            "backend": rerank.backend,
+            "source": rerank.source,
+            "enabled": rerank_enabled,
+        },
+        "weights": {
+            "vector": weights.vector,
+            "rerank": weights.rerank,
+            "top_n": weights.top_n,
+        },
+        "skipped_mismatch": int(search_meta.get("skipped_mismatch") or 0),
+        "source": service.effective_settings(tenant_id, user_id).get("source", "env"),
+        "sources": {
+            "embedding": embedding.source,
+            "rerank": rerank.source,
+            "vector_weight": weights.sources.get("vector", "env"),
+            "rerank_weight": weights.sources.get("rerank", "env"),
+            "rerank_top_n": weights.sources.get("top_n", "env"),
+        },
+        "warnings": warnings,
+    }
     return {
         "query": req.query,
         "top_k": req.top_k,
         "count": len(citations),
         "citations": [citation.model_dump() for citation in citations],
+        "retrieval": retrieval,
+        "warnings": warnings,
     }
+
+
+class RetrievalProviderCreateRequest(BaseModel):
+    kind: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    backend: str = Field(min_length=1)
+    base_url: str = ""
+    model: str = ""
+    dim: int = 0
+    api_key: str | None = None
+    is_default: bool = False
+    enabled: bool = True
+    scope: str = "user"
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class RetrievalProviderPatchRequest(BaseModel):
+    name: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    dim: int | None = None
+    api_key: str | None = None
+    enabled: bool | None = None
+    is_default: bool | None = None
+    meta: dict[str, Any] | None = None
+
+
+class RetrievalSettingsRequest(BaseModel):
+    scope: str = "user"
+    embedding_provider_id: str | None = None
+    rerank_provider_id: str | None = None
+    vector_weight: float | None = None
+    rerank_weight: float | None = None
+    rerank_top_n: int | None = None
+
+
+def _can_manage_server(ctx: AuthContext) -> bool:
+    try:
+        return bool(container.auth_service().can(ctx, "manage_server"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+@app.get("/api/v1/settings/retrieval/providers")
+async def retrieval_providers_list(
+    kind: str = Query(default=""),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    resolved_kind = (kind or "").strip().lower()
+    if resolved_kind and resolved_kind not in ("embedding", "rerank"):
+        raise HTTPException(status_code=400, detail="kind 仅支持 embedding / rerank")
+    return container.retrieval_providers().list_payload(
+        _tenant_of(ctx), ctx.user.id, resolved_kind
+    )
+
+
+@app.post("/api/v1/settings/retrieval/providers", status_code=201)
+async def retrieval_providers_create(
+    req: RetrievalProviderCreateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    service = container.retrieval_providers()
+    try:
+        record = service.create(
+            tenant_id=_tenant_of(ctx),
+            user_id=ctx.user.id,
+            kind=req.kind,
+            name=req.name,
+            backend=req.backend,
+            base_url=req.base_url,
+            model=req.model,
+            dim=req.dim,
+            api_key=req.api_key or "",
+            is_default=req.is_default,
+            enabled=req.enabled,
+            scope=req.scope,
+            meta=req.meta,
+            can_manage_server=_can_manage_server(ctx),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return service.payload(record)
+
+
+@app.patch("/api/v1/settings/retrieval/providers/{provider_id}")
+async def retrieval_providers_patch(
+    provider_id: str,
+    req: RetrievalProviderPatchRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    service = container.retrieval_providers()
+    changes = req.model_dump(exclude_unset=True)
+    try:
+        record = service.update(
+            tenant_id=_tenant_of(ctx),
+            user_id=ctx.user.id,
+            provider_id=provider_id,
+            changes=changes,
+            can_manage_server=_can_manage_server(ctx),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        detail = str(exc)
+        status = 404 if "不存在" in detail else 400
+        raise HTTPException(status_code=status, detail=detail) from exc
+    return service.payload(record)
+
+
+@app.delete("/api/v1/settings/retrieval/providers/{provider_id}")
+async def retrieval_providers_delete(
+    provider_id: str,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    service = container.retrieval_providers()
+    try:
+        deleted = service.delete(
+            _tenant_of(ctx),
+            ctx.user.id,
+            provider_id,
+            can_manage_server=_can_manage_server(ctx),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"id": provider_id, "deleted": bool(deleted)}
+
+
+@app.post("/api/v1/settings/retrieval/providers/{provider_id}/test")
+async def retrieval_providers_test(
+    provider_id: str,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    service = container.retrieval_providers()
+    try:
+        return await service.test_provider(
+            _tenant_of(ctx), ctx.user.id, provider_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/settings/retrieval/settings")
+async def retrieval_settings_get(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    return container.retrieval_providers().effective_settings(
+        _tenant_of(ctx), ctx.user.id
+    )
+
+
+@app.put("/api/v1/settings/retrieval/settings")
+async def retrieval_settings_put(
+    req: RetrievalSettingsRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    changes = req.model_dump(exclude_unset=True)
+    changes.pop("scope", None)
+    try:
+        return container.retrieval_providers().update_settings(
+            tenant_id=_tenant_of(ctx),
+            user_id=ctx.user.id,
+            scope=req.scope,
+            changes=changes,
+            can_manage_server=_can_manage_server(ctx),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 class EmbeddingBackfillRequest(BaseModel):
     source_id: str | None = None
+    provider_id: str | None = None
 
 
 def _embedding_identity() -> tuple[str, int]:
@@ -783,22 +1040,43 @@ async def kb_embeddings_backfill(
 ) -> Any:
     _enforce(ctx, "write")
     cfg = settings.embedding
-    embedder = container.embedder()
     store = container.vectorstore()
     tenant_id = _tenant_of(ctx)
     source_id = (req.source_id if req else None) or ""
-    model, dim = _embedding_identity()
-    stats = await store.embedding_status(tenant_id, model, dim)
+    requested_provider = (req.provider_id if req else None) or ""
+    embedding = container.retrieval_providers().resolve_embedding(
+        tenant_id, ctx.user.id, requested_provider
+    )
+    if requested_provider and embedding.adapter is None:
+        raise HTTPException(
+            status_code=404, detail=embedding.error or "provider 不存在"
+        )
+    embedder = embedding.adapter
+    model = embedding.model
+    dim = embedding.dim
+    provider_id = embedding.provider_id
+    stats = await store.embedding_status(
+        tenant_id, model, dim, provider_id=provider_id
+    )
     stale = stats.get("stale") or {"chunks": 0, "bytes": 0}
     if not sync:
         job = container.job_service().submit(
             KIND_KB_EMBED_BACKFILL,
-            {"source_id": source_id, "batch": max(1, int(cfg.batch))},
+            {
+                "source_id": source_id,
+                "batch": max(1, int(cfg.batch)),
+                "provider_id": provider_id,
+            },
             JobContext(tenant_id=tenant_id, user_id=ctx.user.id),
         )
         return JSONResponse(
             status_code=201,
-            content={"job_id": job.id, "queued": True, "stale": stale},
+            content={
+                "job_id": job.id,
+                "queued": True,
+                "provider_id": provider_id,
+                "stale": stale,
+            },
         )
     chunks = await store.list_chunks(tenant_id, source_id)
     if len(chunks) > 2000:
@@ -811,8 +1089,9 @@ async def kb_embeddings_backfill(
             "embedded": 0,
             "skipped": 0,
             "failed": 0,
-            "model": "",
-            "dim": 0,
+            "provider_id": provider_id,
+            "model": model,
+            "dim": dim,
             "elapsed_ms": 0,
             "stale": stale,
         }
@@ -825,12 +1104,14 @@ async def kb_embeddings_backfill(
         tenant_id=tenant_id,
         source_id=source_id,
         batch_size=max(1, int(cfg.batch)),
+        provider_id=provider_id,
     )
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     return {
         "embedded": int(result.get("embedded") or 0),
         "skipped": int(result.get("skipped") or 0),
         "failed": int(result.get("failed") or 0),
+        "provider_id": provider_id,
         "model": model,
         "dim": dim,
         "elapsed_ms": elapsed_ms,
@@ -840,19 +1121,35 @@ async def kb_embeddings_backfill(
 
 @app.get("/api/v1/kb/embeddings/status")
 async def kb_embeddings_status(
+    provider_id: str = Query(default=""),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    cfg = settings.embedding
     store = container.vectorstore()
-    model, dim = _embedding_identity()
-    counts = await store.embedding_status(_tenant_of(ctx), model, dim)
+    embedding = container.retrieval_providers().resolve_embedding(
+        _tenant_of(ctx), ctx.user.id, (provider_id or "").strip()
+    )
+    if provider_id and embedding.adapter is None:
+        raise HTTPException(
+            status_code=404, detail=embedding.error or "provider 不存在"
+        )
+    model = embedding.model
+    dim = embedding.dim
+    target_provider = embedding.provider_id
+    counts = await store.embedding_status(
+        _tenant_of(ctx), model, dim, provider_id=target_provider
+    )
     total = int(counts.get("chunks_total") or 0)
     embedded = int(counts.get("chunks_embedded") or 0)
     coverage = round(embedded / total, 6) if total > 0 else 0.0
     return {
-        "backend": (cfg.backend or "none").strip().lower(),
-        "current_backend": (cfg.backend or "none").strip().lower(),
+        "provider_id": target_provider,
+        "provider_name": (
+            embedding.provider.name if embedding.provider is not None else ""
+        ),
+        "backend": embedding.backend,
+        "current_backend": embedding.backend,
+        "source": embedding.source,
         "model": model,
         "dim": dim,
         "chunks_total": total,
@@ -861,20 +1158,32 @@ async def kb_embeddings_status(
         "models": list(counts.get("models") or []),
         "stale": dict(counts.get("stale") or {"chunks": 0, "bytes": 0}),
         "note": (
-            "stale 统计的是与当前 backend/model/dim 不匹配的历史向量；"
-            "当前 backend=none 时，存量 hash 向量会被计入 stale，属于预期。"
+            "stale 统计的是与当前 provider/model/dim 不匹配的向量；"
+            "coverage 只在完全匹配的向量上累计。"
         ),
     }
 
 
 @app.post("/api/v1/kb/embeddings/purge")
 async def kb_embeddings_purge(
+    provider_id: str = Query(default=""),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
     store = container.vectorstore()
-    model, dim = _embedding_identity()
-    return await store.purge_stale_embeddings(_tenant_of(ctx), model, dim)
+    embedding = container.retrieval_providers().resolve_embedding(
+        _tenant_of(ctx), ctx.user.id, (provider_id or "").strip()
+    )
+    if provider_id and embedding.adapter is None:
+        raise HTTPException(
+            status_code=404, detail=embedding.error or "provider 不存在"
+        )
+    return await store.purge_stale_embeddings(
+        _tenant_of(ctx),
+        embedding.model,
+        embedding.dim,
+        provider_id=embedding.provider_id,
+    )
 
 
 @app.get("/api/v1/kb/sources")

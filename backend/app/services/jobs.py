@@ -74,6 +74,7 @@ class JobService:
     blueprint: Any = None
     quota: Any = None
     llm_for: Callable[[str], Any] | None = None
+    embedding_for: Callable[[str, str, str], Any] | None = None
     events: Any = None
     vectorstore: Any = None
     embedder: Any = None
@@ -279,7 +280,20 @@ class JobService:
         from app.services.embedding_backfill import backfill_embeddings
 
         ctx.ensure_active()
-        if self.embedder is None or self.vectorstore is None:
+        provider_id = str(payload.get("provider_id") or "")
+        embedder = self.embedder
+        if self.embedding_for is not None:
+            try:
+                resolved = self.embedding_for(
+                    ctx.tenant_id, ctx.user_id, provider_id
+                )
+                embedder = getattr(resolved, "adapter", None)
+                provider_id = str(
+                    getattr(resolved, "provider_id", "") or provider_id
+                )
+            except Exception:
+                embedder = self.embedder
+        if embedder is None or self.vectorstore is None:
             return {"embedded": 0, "failed": 0, "skipped": 0}
         batch = max(1, int(payload.get("batch") or self.embedding_batch or 32))
 
@@ -289,17 +303,19 @@ class JobService:
 
         result = await backfill_embeddings(
             store=self.vectorstore,
-            embedder=self.embedder,
+            embedder=embedder,
             tenant_id=ctx.tenant_id,
             source_id=str(payload.get("source_id") or ""),
             batch_size=batch,
             progress=report,
+            provider_id=provider_id,
         )
         ctx.ensure_active()
         return {
             "embedded": int(result.get("embedded") or 0),
             "failed": int(result.get("failed") or 0),
             "skipped": int(result.get("skipped") or 0),
+            "provider_id": provider_id,
         }
 
     async def _run_research(

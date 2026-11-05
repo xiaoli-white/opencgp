@@ -438,6 +438,38 @@ class Container:
 
         return self._get_or_build("provider_settings_repository", build)
 
+    def retrieval_repository(self):
+        def build():
+            from app.adapters.database.retrieval_repository import (
+                DatabaseRetrievalRepository,
+            )
+
+            return DatabaseRetrievalRepository(database=self.database())
+
+        return self._get_or_build("retrieval_repository", build)
+
+    def retrieval_providers(self):
+        def build():
+            from app.services.retrieval_providers import RetrievalProviderService
+
+            return RetrievalProviderService(
+                repository=self.retrieval_repository(),
+                settings=self.settings,
+                secret=self.settings.auth.secret,
+                env_embedder=self.embedder,
+                env_reranker=self.reranker,
+                llm_for=self.llm_for,
+            )
+
+        return self._get_or_build("retrieval_providers", build)
+
+    def retrieval_embedding_for(
+        self, tenant_id: str, user_id: str, provider_id: str = ""
+    ):
+        return self.retrieval_providers().resolve_embedding(
+            tenant_id, user_id, provider_id
+        )
+
     def provider_catalog_repository(self) -> ProviderCatalogRepository:
         def build() -> ProviderCatalogRepository:
             from app.adapters.database.provider_catalog_repository import (
@@ -679,6 +711,7 @@ class Container:
                 blueprint=self.blueprint(),
                 quota=self.quota_service(),
                 llm_for=self.llm_for,
+                embedding_for=self.retrieval_embedding_for,
                 events=self.job_events(),
                 vectorstore=self.vectorstore(),
                 embedder=self.embedder(),
