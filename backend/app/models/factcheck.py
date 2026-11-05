@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.models.citation import Citation
@@ -36,12 +38,20 @@ class FactCheckReport(BaseModel):
     unsure: int = 0
     unsupported: int = 0
     results: list[CheckResult] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    retrieval: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
-    def build(cls, results: list[CheckResult], lesson_id: str = "") -> "FactCheckReport":
+    def build(
+        cls,
+        results: list[CheckResult],
+        lesson_id: str = "",
+        retrieval: dict[str, Any] | None = None,
+    ) -> "FactCheckReport":
         supported = sum(1 for item in results if item.verdict == VERDICT_SUPPORTED)
         unsure = sum(1 for item in results if item.verdict == VERDICT_UNSURE)
         unsupported = sum(1 for item in results if item.verdict == VERDICT_UNSUPPORTED)
+        payload = dict(retrieval or {})
         return cls(
             lesson_id=lesson_id,
             count=len(results),
@@ -49,4 +59,6 @@ class FactCheckReport(BaseModel):
             unsure=unsure,
             unsupported=unsupported,
             results=results,
+            warnings=list(payload.get("warnings") or []),
+            retrieval=payload,
         )

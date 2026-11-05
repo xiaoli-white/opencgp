@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.models.citation import Citation
@@ -41,6 +43,8 @@ class ResearchRun(BaseModel):
     questions: list[str] = Field(default_factory=list)
     provider: str = ""
     warning: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    retrieval: dict[str, Any] = Field(default_factory=dict)
     web_used: int = 0
     created_at: float = 0.0
     updated_at: float = 0.0

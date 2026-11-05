@@ -20,3 +20,5 @@ class Citation(BaseModel):
     keyword_score: float | None = None
     vector_score: float | None = None
     rerank_score: float | None = None
+    embedding_model: str | None = None
+    rerank_model: str | None = None

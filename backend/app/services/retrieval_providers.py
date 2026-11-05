@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from app.config import Settings
 from app.models.retrieval import (
@@ -106,6 +108,97 @@ class ResolvedWeights:
     top_n: int = 12
     source: str = SOURCE_ENV
     sources: dict[str, str] = field(default_factory=dict)
+
+
+_REQUEST_CACHE: ContextVar[dict[str, Any] | None] = ContextVar(
+    "retrieval_provider_request_cache", default=None
+)
+
+
+@contextmanager
+def retrieval_request_cache():
+    token = _REQUEST_CACHE.set({})
+    try:
+        yield
+    finally:
+        _REQUEST_CACHE.reset(token)
+
+
+@dataclass
+class RetrievalContext:
+    tenant_id: str = ""
+    user_id: str = ""
+    embedding: ResolvedEmbedding = field(default_factory=ResolvedEmbedding)
+    rerank: ResolvedRerank = field(default_factory=ResolvedRerank)
+    weights: ResolvedWeights = field(default_factory=ResolvedWeights)
+    mode: str = "keyword"
+    warnings: list[str] = field(default_factory=list)
+    vector_rows: int = 0
+    skipped_mismatch: int = 0
+    excluded_other_models: int = 0
+    searches: int = 0
+    hybrid_searches: int = 0
+
+    def record(self, meta: Mapping[str, Any] | None) -> None:
+        payload = dict(meta or {})
+        self.searches += 1
+        mode = str(payload.get("mode") or "keyword")
+        if mode == "hybrid":
+            self.hybrid_searches += 1
+        self.mode = "hybrid" if self.hybrid_searches else "keyword"
+        self.vector_rows += int(payload.get("vector_rows") or 0)
+        self.skipped_mismatch += int(payload.get("skipped_mismatch") or 0)
+        self.excluded_other_models += int(
+            payload.get("excluded_other_models") or 0
+        )
+        for item in payload.get("warnings") or []:
+            text = str(item)
+            if text and text not in self.warnings:
+                self.warnings.append(text)
+        if self.embedding.error and "embedding_provider_failed" not in self.warnings:
+            self.warnings.append("embedding_provider_failed")
+
+    async def search(self, store: Any, query: str, **kwargs: Any):
+        params = dict(kwargs)
+        if self.embedding.adapter is not None:
+            params["embedding_provider"] = self.embedding.adapter
+        if self.embedding.provider_id:
+            params["provider_id"] = self.embedding.provider_id
+        params["vector_weight"] = self.weights.vector
+        params["return_meta"] = True
+        citations, meta = await store.search(query, **params)
+        self.record(meta)
+        provider_id = str(meta.get("provider_id") or self.embedding.provider_id)
+        mode = str(meta.get("mode") or "keyword")
+        model = self.embedding.model if self.embedding.adapter is not None else None
+        for citation in citations:
+            citation.meta["retrieval_provider"] = provider_id
+            citation.meta["mode"] = mode
+            citation.embedding_model = model or None
+        return citations, meta
+
+    def summary(self) -> dict[str, Any]:
+        rerank_enabled = self.rerank.enabled
+        return {
+            "provider_id": self.embedding.provider_id,
+            "model": self.embedding.model,
+            "dim": self.embedding.dim,
+            "mode": self.mode,
+            "weights_source": self.weights.source,
+            "source": self.embedding.source,
+            "backend": self.embedding.backend,
+            "embedding_model": self.embedding.model,
+            "rerank_provider_id": self.rerank.provider_id,
+            "rerank_model": self.rerank.model if rerank_enabled else "",
+            "vector_weight": self.weights.vector,
+            "rerank_weight": self.weights.rerank,
+            "rerank_top_n": self.weights.top_n,
+            "searches": self.searches,
+            "vector_rows": self.vector_rows,
+            "skipped_mismatch": self.skipped_mismatch,
+            "excluded_other_models": self.excluded_other_models,
+            "warnings": list(self.warnings),
+        }
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -472,7 +565,28 @@ class RetrievalProviderService:
         setattr(adapter, "model", record.model)
         return adapter
 
+    def _cached(self, key: tuple[Any, ...], factory: Callable[[], Any]) -> Any:
+        cache = _REQUEST_CACHE.get()
+        if cache is None:
+            return factory()
+        if key in cache:
+            return cache[key]
+        value = factory()
+        cache[key] = value
+        return value
+
     def resolve_embedding(
+        self,
+        tenant_id: str,
+        user_id: str,
+        provider_id: str = "",
+    ) -> ResolvedEmbedding:
+        return self._cached(
+            ("embedding", tenant_id, user_id, provider_id),
+            lambda: self._resolve_embedding(tenant_id, user_id, provider_id),
+        )
+
+    def _resolve_embedding(
         self,
         tenant_id: str,
         user_id: str,
@@ -528,6 +642,17 @@ class RetrievalProviderService:
         user_id: str,
         provider_id: str = "",
     ) -> ResolvedRerank:
+        return self._cached(
+            ("rerank", tenant_id, user_id, provider_id),
+            lambda: self._resolve_rerank(tenant_id, user_id, provider_id),
+        )
+
+    def _resolve_rerank(
+        self,
+        tenant_id: str,
+        user_id: str,
+        provider_id: str = "",
+    ) -> ResolvedRerank:
         try:
             record, source, _ = self._select_provider(
                 tenant_id, user_id, PROVIDER_KIND_RERANK, provider_id
@@ -577,6 +702,24 @@ class RetrievalProviderService:
         )
 
     def resolve_weights(self, tenant_id: str, user_id: str) -> ResolvedWeights:
+        return self._cached(
+            ("weights", tenant_id, user_id),
+            lambda: self._resolve_weights(tenant_id, user_id),
+        )
+
+    def resolve_context(self, tenant_id: str, user_id: str) -> RetrievalContext:
+        return self._cached(
+            ("context", tenant_id, user_id),
+            lambda: RetrievalContext(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                embedding=self.resolve_embedding(tenant_id, user_id),
+                rerank=self.resolve_rerank(tenant_id, user_id),
+                weights=self.resolve_weights(tenant_id, user_id),
+            ),
+        )
+
+    def _resolve_weights(self, tenant_id: str, user_id: str) -> ResolvedWeights:
         user_setting = self.repository.get_setting(
             tenant_id, user_id, SETTING_SCOPE_USER
         )

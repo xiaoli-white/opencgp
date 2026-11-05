@@ -34,6 +34,7 @@ from app.services.prompting import (
     system_prefix,
     unit_name,
 )
+from app.services.retrieval_providers import RetrievalContext
 
 NO_EVIDENCE_MESSAGE = (
     "知识库中未检索到与课程主题相关的证据，严格模式无法生成蓝图；请先上传资料或改用 loose 模式"
@@ -130,6 +131,7 @@ class BlueprintService:
         tenant_id: str = "",
         llm: LLMProvider | None = None,
         spec: ProfileSpec | None = None,
+        retrieval: RetrievalContext | None = None,
     ) -> CourseBlueprint:
         course = self.course_repository.get_course(course_id)
         if course is None:
@@ -137,13 +139,26 @@ class BlueprintService:
         resolved_mode = GenerationMode.normalize(mode or self.default_mode)
         resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
         lessons = self.course_repository.list_lessons(course_id)
-        citations = await self.vectorstore.search(
-            self._build_query(course, focus, lessons),
-            top_k=resolved_top_k,
-            source_ids=source_ids,
-            tenant_id=tenant_id,
-            min_score=self.min_score if resolved_mode is GenerationMode.strict else None,
+        min_score = (
+            self.min_score if resolved_mode is GenerationMode.strict else None
         )
+        if retrieval is not None:
+            citations, _ = await retrieval.search(
+                self.vectorstore,
+                self._build_query(course, focus, lessons),
+                top_k=resolved_top_k,
+                source_ids=source_ids,
+                tenant_id=tenant_id,
+                min_score=min_score,
+            )
+        else:
+            citations = await self.vectorstore.search(
+                self._build_query(course, focus, lessons),
+                top_k=resolved_top_k,
+                source_ids=source_ids,
+                tenant_id=tenant_id,
+                min_score=min_score,
+            )
         citations = citations[: self.max_evidence]
         evidence = [
             Evidence(marker=f"E{index}", citation=citation)
@@ -165,6 +180,9 @@ class BlueprintService:
             blueprint = self._blueprint_from_payload(
                 course, payload, evidence, resolved_mode, provider_name
             )
+        if retrieval is not None:
+            blueprint.warnings = list(retrieval.warnings)
+            blueprint.retrieval = retrieval.summary()
         return self.repository.save_blueprint(blueprint)
 
     def get_blueprint(self, course_id: str) -> CourseBlueprint | None:

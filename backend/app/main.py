@@ -61,6 +61,7 @@ from app.models.research import ResearchRun
 from app.models.job import JOB_KINDS, JOB_STATUSES, KIND_KB_EMBED_BACKFILL, Job
 from app.models.factcheck import FactCheckReport
 from app.services.jobs import JobContext
+from app.services.retrieval_providers import retrieval_request_cache
 from app.services.codecheck import CodeCheckService
 from app.services.media import detect_image_type
 from app.services.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
@@ -188,6 +189,12 @@ def _route_label(request: Request) -> str:
     route = request.scope.get("route")
     path = getattr(route, "path", None)
     return str(path) if path else "unmatched"
+
+
+@app.middleware("http")
+async def retrieval_cache_middleware(request: Request, call_next):
+    with retrieval_request_cache():
+        return await call_next(request)
 
 
 @app.middleware("http")
@@ -738,9 +745,10 @@ async def kb_search(
     tenant_id = _tenant_of(ctx)
     user_id = ctx.user.id
     service = container.retrieval_providers()
-    embedding = service.resolve_embedding(tenant_id, user_id)
-    rerank = service.resolve_rerank(tenant_id, user_id)
-    weights = service.resolve_weights(tenant_id, user_id)
+    retrieval_ctx = service.resolve_context(tenant_id, user_id)
+    embedding = retrieval_ctx.embedding
+    rerank = retrieval_ctx.rerank
+    weights = retrieval_ctx.weights
     store = container.vectorstore()
     rerank_enabled = rerank.enabled
     candidate_k = (
@@ -748,15 +756,12 @@ async def kb_search(
         if rerank_enabled
         else req.top_k
     )
-    citations, search_meta = await store.search(
+    citations, search_meta = await retrieval_ctx.search(
+        store,
         req.query,
         top_k=candidate_k,
         source_ids=req.source_ids,
         tenant_id=tenant_id,
-        embedding_provider=embedding.adapter,
-        provider_id=embedding.provider_id,
-        vector_weight=weights.vector,
-        return_meta=True,
     )
     warnings = list(search_meta.get("warnings") or [])
     if embedding.error and "embedding_provider_failed" not in warnings:
@@ -786,6 +791,7 @@ async def kb_search(
                     (1.0 - weight) * citation.score + weight * float(score)
                 )
                 citation.rerank_score = round(float(score), 6)
+                citation.rerank_model = rerank.model or None
                 citation.score = round(float(final_score), 6)
             citations.sort(key=lambda item: item.score, reverse=True)
     citations = citations[: req.top_k]
@@ -1480,6 +1486,7 @@ async def generate_lesson(
             tenant_id=_tenant_of(ctx),
             llm=container.llm_for(ctx.user.id),
             spec=_course_spec(container.course_repository().get_course(lesson.course_id)),
+            retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
         )
     except LessonNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
@@ -1545,13 +1552,17 @@ async def factcheck_lesson(
     service = container.factcheck()
     explicit = [item.strip() for item in (payload.claims or []) if item and item.strip()]
     claims = explicit or service.extract_claims(lesson.content or "")
+    retrieval_ctx = container.retrieval_context(_tenant_of(ctx), ctx.user.id)
     results = await service.check(
         claims,
         top_k=payload.top_k,
         tenant_id=_tenant_of(ctx),
         llm=container.llm_for(ctx.user.id),
+        retrieval=retrieval_ctx,
     )
-    return FactCheckReport.build(results, lesson_id).model_dump()
+    return FactCheckReport.build(
+        results, lesson_id, retrieval=retrieval_ctx.summary()
+    ).model_dump()
 
 
 @app.get("/api/v1/lessons/{lesson_id}/versions/diff")
@@ -1908,6 +1919,7 @@ async def generate_course_blueprint(
             tenant_id=_tenant_of(ctx),
             llm=container.llm_for(ctx.user.id),
             spec=_course_spec(course),
+            retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
         )
     except NoEvidenceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -3310,6 +3322,7 @@ async def create_research(
             tenant_id=_tenant_of(ctx),
             user_id=ctx.user.id,
             llm=container.llm_for(ctx.user.id),
+            retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
         )
     except ResearchParseError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -3399,6 +3412,7 @@ async def research_to_blueprint(
             focus=focus,
             tenant_id=_tenant_of(ctx),
             llm=container.llm_for(ctx.user.id),
+            retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
         )
     except NoEvidenceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -3499,6 +3513,7 @@ async def create_longform(
         llm=container.llm_for(ctx.user.id),
         profile_id=req.profile_id,
         spec=work_spec,
+        retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
     )
     return longform.model_dump()
 
@@ -3543,6 +3558,7 @@ async def generate_longform_section(
             top_k=payload.top_k,
             tenant_id=_tenant_of(ctx),
             llm=container.llm_for(ctx.user.id),
+            retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
         )
     except LongformSectionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
@@ -3579,6 +3595,7 @@ async def generate_longform(
         top_k=payload.top_k,
         tenant_id=_tenant_of(ctx),
         llm=container.llm_for(ctx.user.id),
+        retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
     )
     report = await _validation_report(
         _longform_spec(updated),

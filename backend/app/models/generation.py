@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.models.citation import Citation
@@ -26,3 +28,5 @@ class GenerationResult(BaseModel):
     grounded: bool = False
     provider: str = ""
     prompt: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    retrieval: dict[str, Any] = Field(default_factory=dict)

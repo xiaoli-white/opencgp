@@ -41,6 +41,7 @@ class JobContext:
     user_id: str = ""
     job_id: str = ""
     llm: Any = None
+    retrieval: Any = None
     progress_reporter: Callable[[float], None] | None = None
     cancel_checker: Callable[[], bool] | None = None
 
@@ -75,6 +76,7 @@ class JobService:
     quota: Any = None
     llm_for: Callable[[str], Any] | None = None
     embedding_for: Callable[[str, str, str], Any] | None = None
+    retrieval_for: Callable[[str, str], Any] | None = None
     events: Any = None
     vectorstore: Any = None
     embedder: Any = None
@@ -235,11 +237,18 @@ class JobService:
             self._set_status(job_id, STATUS_CANCELED, None, "已取消")
             return
         self._set_status(job_id, STATUS_RUNNING)
+        retrieval = None
+        if self.retrieval_for is not None:
+            try:
+                retrieval = self.retrieval_for(job.tenant_id, job.user_id)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[jobs] 检索配置解析失败，回落环境默认: {exc!r}")
         context = JobContext(
             tenant_id=job.tenant_id,
             user_id=job.user_id,
             job_id=job_id,
             llm=self._llm(job.user_id),
+            retrieval=retrieval,
             progress_reporter=lambda value: self._set_progress(job_id, value),
             cancel_checker=lambda: self.repository.has_cancel_request(job_id),
         )
@@ -331,6 +340,7 @@ class JobService:
             tenant_id=ctx.tenant_id,
             user_id=ctx.user_id,
             llm=ctx.llm,
+            retrieval=ctx.retrieval,
         )
         ctx.report(0.9)
         ctx.ensure_active()
@@ -341,6 +351,8 @@ class JobService:
             "summary": run.brief.summary[:400],
             "findings": len(run.brief.findings),
             "citations": len(run.citations),
+            "warnings": list(run.warnings),
+            "retrieval": dict(run.retrieval),
         }
 
     async def _run_longform_create(
@@ -364,6 +376,7 @@ class JobService:
             tenant_id=ctx.tenant_id,
             user_id=ctx.user_id,
             llm=ctx.llm,
+            retrieval=ctx.retrieval,
         )
         ctx.report(0.9)
         return {
@@ -371,6 +384,8 @@ class JobService:
             "title": longform.title,
             "sections": len(longform.outline),
             "current_version": longform.current_version,
+            "warnings": list(longform.warnings),
+            "retrieval": dict(longform.retrieval),
         }
 
     async def _run_longform_generate(
@@ -393,6 +408,7 @@ class JobService:
             tenant_id=ctx.tenant_id,
             llm=ctx.llm,
             on_progress=on_progress,
+            retrieval=ctx.retrieval,
         )
         ctx.report(0.9)
         ctx.ensure_active()
@@ -402,6 +418,8 @@ class JobService:
             "current_version": longform.current_version,
             "words": len(longform.content),
             "sections": len(longform.outline),
+            "warnings": list(longform.warnings),
+            "retrieval": dict(longform.retrieval),
         }
 
     async def _run_longform_rewrite(
@@ -442,6 +460,7 @@ class JobService:
             expected_version=payload.get("expected_version"),
             tenant_id=ctx.tenant_id,
             llm=ctx.llm,
+            retrieval=ctx.retrieval,
         )
         ctx.report(0.9)
         return {
@@ -451,6 +470,8 @@ class JobService:
             "grounded": result.grounded,
             "citations": len(result.citations),
             "words": len(result.content),
+            "warnings": list(result.warnings),
+            "retrieval": dict(result.retrieval),
         }
 
     async def _run_blueprint_generate(
@@ -469,6 +490,7 @@ class JobService:
             focus=str(payload.get("focus") or ""),
             tenant_id=ctx.tenant_id,
             llm=ctx.llm,
+            retrieval=ctx.retrieval,
         )
         ctx.report(0.9)
         return {
@@ -478,6 +500,8 @@ class JobService:
             "nodes": len(blueprint.outline),
             "glossary": len(blueprint.glossary),
             "grounded": blueprint.grounded,
+            "warnings": list(blueprint.warnings),
+            "retrieval": dict(blueprint.retrieval),
         }
 
 

@@ -49,6 +49,8 @@ class Longform(BaseModel):
     last_mode: str = ""
     profile_id: str = ""
     citations: list[Citation] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    retrieval: dict[str, Any] = Field(default_factory=dict)
     created_at: float = 0.0
     updated_at: float = 0.0
 

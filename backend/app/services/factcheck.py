@@ -16,6 +16,7 @@ from app.models.factcheck import (
 )
 from app.ports.llm import LLMProvider
 from app.ports.vectorstore import VectorStore
+from app.services.retrieval_providers import RetrievalContext
 
 CLAIM_PATTERN = re.compile(r"\d+\s*%?|最好|最强|一定|必然|绝对|所有|从不|唯一|最新|最高|最低")
 HEADING_PATTERN = re.compile(r"^(#{1,6}\s|>|\||```|~~~)")
@@ -87,6 +88,7 @@ class FactCheckService:
         top_k: int | None = None,
         tenant_id: str = "",
         llm: LLMProvider | None = None,
+        retrieval: RetrievalContext | None = None,
     ) -> list[CheckResult]:
         resolved_top_k = max(1, min(int(top_k or self.default_top_k), 10))
         results: list[CheckResult] = []
@@ -95,9 +97,17 @@ class FactCheckService:
             if not text:
                 continue
             try:
-                found = await self.vectorstore.search(
-                    text, top_k=resolved_top_k, tenant_id=tenant_id
-                )
+                if retrieval is not None:
+                    found, _ = await retrieval.search(
+                        self.vectorstore,
+                        text,
+                        top_k=resolved_top_k,
+                        tenant_id=tenant_id,
+                    )
+                else:
+                    found = await self.vectorstore.search(
+                        text, top_k=resolved_top_k, tenant_id=tenant_id
+                    )
             except Exception:
                 found = []
             best = max((float(item.score or 0.0) for item in found), default=0.0)

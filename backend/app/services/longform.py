@@ -30,6 +30,7 @@ from app.services.errors import (
     VersionConflictError,
 )
 from app.services.prompting import extra_requirement, prompt_values, unit_name
+from app.services.retrieval_providers import RetrievalContext
 
 DEFAULT_SECTIONS = (
     ("introduction", "引子", "用一段场景或问题引出主题，说明读者为什么要读下去。"),
@@ -83,6 +84,7 @@ class LongformService:
         llm: LLMProvider | None = None,
         profile_id: str = "",
         spec: ProfileSpec | None = None,
+        retrieval: RetrievalContext | None = None,
     ) -> Longform:
         resolved_title = (title or "").strip()
         if not resolved_title:
@@ -105,6 +107,8 @@ class LongformService:
             target_words=resolved_words,
             last_mode=GenerationMode.normalize(mode or self.default_mode).value,
             profile_id=profile_id or "",
+            warnings=list(retrieval.warnings) if retrieval is not None else [],
+            retrieval=retrieval.summary() if retrieval is not None else {},
             created_at=time.time(),
             updated_at=time.time(),
         )
@@ -302,6 +306,7 @@ class LongformService:
         top_k: int | None = None,
         tenant_id: str = "",
         llm: LLMProvider | None = None,
+        retrieval: RetrievalContext | None = None,
     ) -> tuple[OutlineSection, Longform]:
         longform = self._require(longform_id)
         section = next(
@@ -312,18 +317,28 @@ class LongformService:
         resolved_mode = GenerationMode.normalize(mode or longform.last_mode or self.default_mode)
         provider = llm or self.llm
         citations, evidence = await self._evidence(
-            longform, section, top_k, tenant_id
+            longform, section, top_k, tenant_id, retrieval
         )
         content = await self._write_section(
             provider, longform, section, evidence, resolved_mode, citations
         )
         merged_citations = list(longform.citations)
-        known = {(item.source_id, item.chunk_index) for item in merged_citations}
+        by_key = {
+            (item.source_id, item.chunk_index): item for item in merged_citations
+        }
         for citation in citations:
             key = (citation.source_id, citation.chunk_index)
-            if key not in known:
-                known.add(key)
-                merged_citations.append(citation)
+            existing = by_key.get(key)
+            if existing is not None:
+                existing.keyword_score = citation.keyword_score
+                existing.vector_score = citation.vector_score
+                existing.rerank_score = citation.rerank_score
+                existing.embedding_model = citation.embedding_model
+                existing.rerank_model = citation.rerank_model
+                existing.meta.update(citation.meta)
+                continue
+            by_key[key] = citation
+            merged_citations.append(citation)
         updated_outline = [
             item.model_copy(
                 update={"content": content, "status": SECTION_GENERATED}
@@ -343,6 +358,9 @@ class LongformService:
         if applied is None:
             raise LongformNotFoundError(longform_id)
         updated, _ = applied
+        if retrieval is not None:
+            updated.warnings = list(retrieval.warnings)
+            updated.retrieval = retrieval.summary()
         refreshed = next(
             (item for item in updated.outline if item.id == section.id), section
         )
@@ -356,21 +374,32 @@ class LongformService:
         tenant_id: str = "",
         llm: LLMProvider | None = None,
         on_progress: Callable[[int, int], None] | None = None,
+        retrieval: RetrievalContext | None = None,
     ) -> Longform:
         longform = self._require(longform_id)
         resolved_mode = GenerationMode.normalize(mode or longform.last_mode or self.default_mode)
         provider = llm or self.llm
         sections: list[OutlineSection] = []
         citations: list[Citation] = []
-        known: set[tuple[str, int]] = set()
+        by_key: dict[tuple[str, int], Citation] = {}
         total = max(1, len(longform.outline))
         for index, section in enumerate(longform.outline, start=1):
-            found, evidence = await self._evidence(longform, section, top_k, tenant_id)
+            found, evidence = await self._evidence(
+                longform, section, top_k, tenant_id, retrieval
+            )
             for citation in found:
                 key = (citation.source_id, citation.chunk_index)
-                if key not in known:
-                    known.add(key)
-                    citations.append(citation)
+                existing = by_key.get(key)
+                if existing is not None:
+                    existing.keyword_score = citation.keyword_score
+                    existing.vector_score = citation.vector_score
+                    existing.rerank_score = citation.rerank_score
+                    existing.embedding_model = citation.embedding_model
+                    existing.rerank_model = citation.rerank_model
+                    existing.meta.update(citation.meta)
+                    continue
+                by_key[key] = citation
+                citations.append(citation)
             content = await self._write_section(
                 provider, longform, section, evidence, resolved_mode, found
             )
@@ -391,7 +420,11 @@ class LongformService:
         )
         if applied is None:
             raise LongformNotFoundError(longform_id)
-        return applied[0]
+        updated = applied[0]
+        if retrieval is not None:
+            updated.warnings = list(retrieval.warnings)
+            updated.retrieval = retrieval.summary()
+        return updated
 
     async def rewrite(
         self,
@@ -572,17 +605,27 @@ class LongformService:
         section: OutlineSection,
         top_k: int | None,
         tenant_id: str,
+        retrieval: RetrievalContext | None = None,
     ) -> tuple[list[Citation], list[Evidence]]:
         query = " ".join(
             part
             for part in (longform.title, section.title, section.summary)
             if part
         ).strip()
-        citations = await self.vectorstore.search(
-            query,
-            top_k=max(1, min(int(top_k or self.default_top_k), 20)),
-            tenant_id=tenant_id,
-        )
+        resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
+        if retrieval is not None:
+            citations, _ = await retrieval.search(
+                self.vectorstore,
+                query,
+                top_k=resolved_top_k,
+                tenant_id=tenant_id,
+            )
+        else:
+            citations = await self.vectorstore.search(
+                query,
+                top_k=resolved_top_k,
+                tenant_id=tenant_id,
+            )
         citations = citations[: self.max_evidence]
         evidence = [
             Evidence(marker=f"E{index}", citation=citation)

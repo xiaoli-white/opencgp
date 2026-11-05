@@ -32,6 +32,7 @@ from app.ports.llm import LLMProvider
 from app.ports.vectorstore import VectorStore
 from app.services.errors import LessonNotFoundError, VersionConflictError
 from app.services.factcheck import FactCheckService
+from app.services.retrieval_providers import RetrievalContext
 from app.services.prompting import (
     DEFAULT_LOOSE_WORDS,
     DEFAULT_STRICT_WORDS,
@@ -104,6 +105,7 @@ class GenerationService:
         tenant_id: str = "",
         llm: LLMProvider | None = None,
         spec: ProfileSpec | None = None,
+        retrieval: RetrievalContext | None = None,
     ) -> GenerationResult:
         lesson = self.repository.get_lesson(lesson_id)
         if lesson is None:
@@ -116,17 +118,30 @@ class GenerationService:
 
         resolved_topic = (topic or lesson.title).strip()
         resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
+        min_score = (
+            self.min_score
+            if (policy == "required" and resolved_mode is GenerationMode.strict)
+            else None
+        )
         if policy == "forbidden":
             citations: list[Citation] = []
+        elif retrieval is not None:
+            citations, _ = await retrieval.search(
+                self.vectorstore,
+                self._build_query(resolved_topic, lesson),
+                top_k=resolved_top_k,
+                source_ids=source_ids,
+                tenant_id=tenant_id,
+                min_score=min_score,
+            )
+            citations = _diversify(citations, self.max_evidence, per_source=3)
         else:
             citations = await self.vectorstore.search(
                 self._build_query(resolved_topic, lesson),
                 top_k=resolved_top_k,
                 source_ids=source_ids,
                 tenant_id=tenant_id,
-                min_score=self.min_score
-                if (policy == "required" and resolved_mode is GenerationMode.strict)
-                else None,
+                min_score=min_score,
             )
             citations = _diversify(citations, self.max_evidence, per_source=3)
         evidence = [
@@ -157,6 +172,7 @@ class GenerationService:
             tenant_id,
             provider,
             resolved_mode is GenerationMode.strict and policy != "forbidden",
+            retrieval,
         )
         report = await self._run_validators(spec, content, lesson)
         note_value = note or self._default_note(resolved_mode, evidence)
@@ -195,6 +211,8 @@ class GenerationService:
             prompt=prompt,
             factcheck=checks,
             validation=report,
+            warnings=list(retrieval.warnings) if retrieval is not None else [],
+            retrieval=retrieval.summary() if retrieval is not None else {},
         )
 
     async def _run_validators(
@@ -222,6 +240,7 @@ class GenerationService:
         tenant_id: str,
         provider: LLMProvider,
         is_strict: bool,
+        retrieval: RetrievalContext | None = None,
     ) -> list[CheckResult]:
         if not is_strict or self.factcheck is None or not content:
             return []
@@ -229,7 +248,9 @@ class GenerationService:
         if not claims:
             return []
         try:
-            return await self.factcheck.check(claims, tenant_id=tenant_id)
+            return await self.factcheck.check(
+                claims, tenant_id=tenant_id, retrieval=retrieval
+            )
         except Exception:
             return []
 

@@ -470,6 +470,9 @@ class Container:
             tenant_id, user_id, provider_id
         )
 
+    def retrieval_context(self, tenant_id: str, user_id: str):
+        return self.retrieval_providers().resolve_context(tenant_id, user_id)
+
     def provider_catalog_repository(self) -> ProviderCatalogRepository:
         def build() -> ProviderCatalogRepository:
             from app.adapters.database.provider_catalog_repository import (
@@ -712,6 +715,7 @@ class Container:
                 quota=self.quota_service(),
                 llm_for=self.llm_for,
                 embedding_for=self.retrieval_embedding_for,
+                retrieval_for=self.retrieval_context,
                 events=self.job_events(),
                 vectorstore=self.vectorstore(),
                 embedder=self.embedder(),

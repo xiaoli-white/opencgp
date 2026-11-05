@@ -20,6 +20,7 @@ from app.ports.research_repository import ResearchRepository
 from app.ports.vectorstore import VectorStore
 from app.ports.web_search import WebSearchPort
 from app.services.errors import ResearchNotFoundError, ResearchParseError
+from app.services.retrieval_providers import RetrievalContext
 
 QUESTION_PATTERNS = (
     "{topic} 的定义与边界",
@@ -77,6 +78,7 @@ class ResearchService:
         tenant_id: str = "",
         user_id: str = "",
         llm: LLMProvider | None = None,
+        retrieval: RetrievalContext | None = None,
     ) -> ResearchRun:
         resolved_topic = (topic or "").strip()
         if not resolved_topic:
@@ -99,10 +101,10 @@ class ResearchService:
             questions = await self._plan(provider, resolved_topic, resolved_depth)
             run.questions = questions
             citations, web_used, web_available = await self._gather(
-                questions, resolved_top_k, source_ids, tenant_id
+                questions, resolved_top_k, source_ids, tenant_id, retrieval
             )
             citations = await self._apply_rerank(
-                resolved_topic, citations, user_id
+                resolved_topic, citations, user_id, retrieval
             )
             run.citations = citations
             run.web_used = web_used
@@ -111,6 +113,9 @@ class ResearchService:
             )
             run.brief = brief
             run.warning = self._warning(provider, citations, web_available, warning)
+            if retrieval is not None:
+                run.retrieval = retrieval.summary()
+                run.warnings = list(retrieval.warnings)
         except ResearchParseError:
             run.status = STATUS_FAILED
             run.warning = "研究综合失败：模型输出无法解析为结构化 JSON"
@@ -162,6 +167,7 @@ class ResearchService:
         top_k: int,
         source_ids: Sequence[str] | None,
         tenant_id: str,
+        retrieval: RetrievalContext | None = None,
     ) -> tuple[list[Citation], int, bool]:
         citations: list[Citation] = []
         seen: set[str] = set()
@@ -169,13 +175,23 @@ class ResearchService:
         web_search = self.web_search
         web_available = bool(web_search is not None and web_search.healthcheck())
         for question in questions:
-            found = await self.vectorstore.search(
-                question,
-                top_k=top_k,
-                source_ids=source_ids,
-                tenant_id=tenant_id,
-                min_score=self.min_score,
-            )
+            if retrieval is not None:
+                found, _ = await retrieval.search(
+                    self.vectorstore,
+                    question,
+                    top_k=top_k,
+                    source_ids=source_ids,
+                    tenant_id=tenant_id,
+                    min_score=self.min_score,
+                )
+            else:
+                found = await self.vectorstore.search(
+                    question,
+                    top_k=top_k,
+                    source_ids=source_ids,
+                    tenant_id=tenant_id,
+                    min_score=self.min_score,
+                )
             for citation in found:
                 key = f"kb:{citation.source_id}:{citation.chunk_index}"
                 if key in seen:
@@ -212,25 +228,44 @@ class ResearchService:
         return citations[: self.max_evidence], web_used, web_available
 
     async def _apply_rerank(
-        self, query: str, citations: list[Citation], user_id: str
+        self,
+        query: str,
+        citations: list[Citation],
+        user_id: str,
+        retrieval: RetrievalContext | None = None,
     ) -> list[Citation]:
-        if not citations or self.reranker_factory is None:
+        if not citations:
             return citations
-        try:
+        if retrieval is not None:
+            if not retrieval.rerank.enabled:
+                return citations
+            reranker = retrieval.rerank.adapter
+            weight = retrieval.weights.rerank
+            top_n = retrieval.weights.top_n
+            rerank_model = retrieval.rerank.model
+        else:
+            if self.reranker_factory is None:
+                return citations
             reranker = self.reranker_factory(user_id or "")
+            weight = self.rerank_weight
+            top_n = self.rerank_top_n
+            rerank_model = str(getattr(reranker, "model", "") or "") or None
+        try:
             scores = await reranker.rerank(
-                query, [citation.text for citation in citations], self.rerank_top_n
+                query, [citation.text for citation in citations], top_n
             )
         except Exception as exc:  # noqa: BLE001
             print(f"[research] rerank 失败，跳过重排: {exc!r}")
+            if retrieval is not None and "rerank_failed" not in retrieval.warnings:
+                retrieval.warnings.append("rerank_failed")
             return citations
         if len(scores) != len(citations):
             return citations
-        weight = self.rerank_weight
         for citation, score in zip(citations, scores):
             final_score = (1.0 - weight) * citation.score + weight * float(score)
             citation.rerank_score = round(float(score), 6)
             citation.score = round(float(final_score), 6)
+            citation.rerank_model = rerank_model
         citations.sort(key=lambda item: item.score, reverse=True)
         return citations
 

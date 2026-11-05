@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -41,6 +43,8 @@ class CourseBlueprint(BaseModel):
     glossary: list[GlossaryTerm] = Field(default_factory=list)
     provider: str = ""
     warning: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    retrieval: dict[str, Any] = Field(default_factory=dict)
     updated_at: float = 0.0
 
 
