@@ -9,6 +9,7 @@ import ProviderCard from "@/components/settings/ProviderCard";
 import MyProvidersCard from "@/components/settings/MyProvidersCard";
 import SpacesCard from "@/components/settings/SpacesCard";
 import ProfilesCard from "@/components/settings/ProfilesCard";
+import RetrievalCard from "@/components/settings/RetrievalCard";
 import RolesCard from "@/components/settings/RolesCard";
 import MembersCard from "@/components/settings/MembersCard";
 import QuotaCard from "@/components/settings/QuotaCard";
@@ -86,6 +87,13 @@ export default function ProfileSettingsPage() {
 
       <ProfilesCard
         canWrite={canWrite}
+        onNotice={handleNotice}
+        onError={handleError}
+      />
+
+      <RetrievalCard
+        canWrite={canWrite}
+        canManageServer={canServer}
         onNotice={handleNotice}
         onError={handleError}
       />

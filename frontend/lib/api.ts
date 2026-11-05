@@ -367,6 +367,117 @@ export type ProviderTestResult = {
   detail: string;
 };
 
+export type RetrievalKind = "embedding" | "rerank";
+
+export type RetrievalProvider = {
+  id: string;
+  tenant_id?: string;
+  user_id?: string;
+  scope?: string;
+  kind: RetrievalKind | string;
+  name: string;
+  backend: string;
+  base_url: string;
+  model: string;
+  dim: number;
+  enabled: boolean;
+  is_default: boolean;
+  has_key: boolean;
+  meta?: Record<string, unknown>;
+  version?: number;
+  created_at?: number;
+  updated_at?: number;
+};
+
+export type RetrievalProviderList = {
+  count: number;
+  providers: RetrievalProvider[];
+};
+
+export type RetrievalProviderPayload = {
+  kind?: string;
+  name?: string;
+  backend?: string;
+  base_url?: string;
+  model?: string;
+  dim?: number;
+  api_key?: string;
+  is_default?: boolean;
+  enabled?: boolean;
+  scope?: string;
+  meta?: Record<string, unknown>;
+};
+
+export type RetrievalTestResult = {
+  ok: boolean;
+  latency_ms: number;
+  dim?: number;
+  expected_dim?: number;
+  sample_score?: number;
+  error?: string;
+};
+
+export type RetrievalEffectiveProvider = {
+  provider_id: string;
+  model: string;
+  dim?: number;
+  backend: string;
+  source: string;
+  enabled: boolean;
+  has_key: boolean;
+  error?: string;
+};
+
+export type RetrievalSettings = {
+  embedding: RetrievalEffectiveProvider;
+  rerank: RetrievalEffectiveProvider;
+  weights: {
+    vector: number;
+    rerank: number;
+    top_n: number;
+    sources: Record<string, string>;
+  };
+  source: string;
+  sources: Record<string, string>;
+  embedding_provider_id: string;
+  rerank_provider_id: string;
+  vector_weight: number;
+  rerank_weight: number;
+  rerank_top_n: number;
+};
+
+export type RetrievalSettingsPayload = {
+  scope: "user" | "tenant";
+  embedding_provider_id?: string;
+  rerank_provider_id?: string;
+  vector_weight?: number;
+  rerank_weight?: number;
+  rerank_top_n?: number;
+};
+
+export type EmbeddingStatus = {
+  provider_id: string;
+  provider_name: string;
+  backend: string;
+  current_backend: string;
+  source: string;
+  model: string;
+  dim: number;
+  chunks_total: number;
+  chunks_embedded: number;
+  coverage: number;
+  models: { provider_id: string; model: string; dim: number; chunks: number }[];
+  stale: { chunks: number; bytes: number };
+  note?: string;
+};
+
+export type EmbeddingBackfillResult = {
+  job_id: string;
+  queued: boolean;
+  provider_id: string;
+  stale: { chunks: number; bytes: number };
+};
+
 export type Citation = {
   source_id: string;
   source_name: string;
@@ -1578,6 +1689,59 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload ?? {}),
     }),
+
+  listRetrievalProviders: (kind: RetrievalKind) =>
+    request<RetrievalProviderList>(`/api/v1/settings/retrieval/providers?kind=${kind}`),
+
+  createRetrievalProvider: (payload: RetrievalProviderPayload) =>
+    request<RetrievalProvider>("/api/v1/settings/retrieval/providers", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateRetrievalProvider: (providerId: string, payload: RetrievalProviderPayload) =>
+    request<RetrievalProvider>(`/api/v1/settings/retrieval/providers/${providerId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteRetrievalProvider: (providerId: string) =>
+    request<{ id: string; deleted: boolean }>(
+      `/api/v1/settings/retrieval/providers/${providerId}`,
+      { method: "DELETE" },
+    ),
+
+  testRetrievalProvider: (providerId: string) =>
+    request<RetrievalTestResult>(
+      `/api/v1/settings/retrieval/providers/${providerId}/test`,
+      { method: "POST" },
+    ),
+
+  getRetrievalSettings: () =>
+    request<RetrievalSettings>("/api/v1/settings/retrieval/settings"),
+
+  updateRetrievalSettings: (payload: RetrievalSettingsPayload) =>
+    request<RetrievalSettings>("/api/v1/settings/retrieval/settings", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  getEmbeddingStatus: (providerId?: string) =>
+    request<EmbeddingStatus>(
+      `/api/v1/kb/embeddings/status${providerId ? `?provider_id=${encodeURIComponent(providerId)}` : ""}`,
+    ),
+
+  backfillEmbeddings: (providerId?: string) =>
+    request<EmbeddingBackfillResult>("/api/v1/kb/embeddings/backfill", {
+      method: "POST",
+      body: JSON.stringify(providerId ? { provider_id: providerId } : {}),
+    }),
+
+  purgeEmbeddings: (providerId?: string) =>
+    request<Record<string, unknown>>(
+      `/api/v1/kb/embeddings/purge${providerId ? `?provider_id=${encodeURIComponent(providerId)}` : ""}`,
+      { method: "POST" },
+    ),
 
   runResearch: (payload: {
     topic: string;
