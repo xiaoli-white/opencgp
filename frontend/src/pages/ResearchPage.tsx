@@ -75,14 +75,16 @@ function CollapsibleBlock({
   count,
   children,
   tone = "neutral",
+  defaultOpen = false,
 }: {
   title: string;
   icon: React.ReactNode;
   count: number;
   children: React.ReactNode;
   tone?: "neutral" | "amber" | "rose" | "indigo";
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const border =
     tone === "amber"
       ? "border-amber-300/40 dark:border-amber-300/20"
@@ -476,7 +478,7 @@ export default function ResearchPage() {
       </motion.section>
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {run ? (
             <motion.section
               key={run.id}
@@ -662,14 +664,15 @@ export default function ResearchPage() {
               ) : null}
 
               <div className="space-y-2">
-                {brief?.contradictions?.length ? (
-                  <CollapsibleBlock
-                    title={t("research.contradictions")}
-                    icon={<AlertTriangle size={13} />}
-                    count={brief.contradictions.length}
-                    tone="rose"
-                  >
-                    {brief.contradictions.map((item, index) => (
+                <CollapsibleBlock
+                  title={t("research.contradictions")}
+                  icon={<AlertTriangle size={13} />}
+                  count={brief?.contradictions?.length ?? 0}
+                  tone="rose"
+                  defaultOpen={!brief?.contradictions?.length}
+                >
+                  {brief?.contradictions?.length ? (
+                    brief.contradictions.map((item, index) => (
                       <div
                         key={`${item.claim}-${index}`}
                         className="rounded-xl bg-white/60 p-2.5 dark:bg-white/[0.05]"
@@ -683,9 +686,13 @@ export default function ResearchPage() {
                           })}
                         </p>
                       </div>
-                    ))}
-                  </CollapsibleBlock>
-                ) : null}
+                    ))
+                  ) : (
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {t("research.contradictionsEmpty")}
+                    </p>
+                  )}
+                </CollapsibleBlock>
 
                 {brief?.gaps?.length ? (
                   <CollapsibleBlock

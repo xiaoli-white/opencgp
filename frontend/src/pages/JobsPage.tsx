@@ -20,7 +20,9 @@ import {
   cancelJob,
   isTerminal,
   listJobs,
+  streamJob,
   type Job,
+  type JobEvent,
 } from "@/lib/jobs";
 import { formatDateTime } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
@@ -114,6 +116,9 @@ export default function JobsPage() {
   const [filter, setFilter] = useState<FilterKey>("all");
   const [canceling, setCanceling] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [pageVisible, setPageVisible] = useState(
+    () => typeof document === "undefined" || !document.hidden,
+  );
   const timerRef = useRef<number | null>(null);
 
   const load = useCallback(async (silent = false) => {
@@ -134,6 +139,58 @@ export default function JobsPage() {
   }, [load]);
 
   const hasActive = useMemo(() => jobs.some((job) => !isTerminal(job.status)), [jobs]);
+  const activeIds = useMemo(
+    () => jobs.filter((job) => !isTerminal(job.status)).map((job) => job.id),
+    [jobs],
+  );
+  const activeKey = activeIds.join(",");
+
+  useEffect(() => {
+    const handleVisibility = () => setPageVisible(!document.hidden);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
+
+  const applyJobEvent = useCallback((event: JobEvent) => {
+    setJobs((prev) =>
+      prev.map((job) =>
+        job.id === event.id
+          ? {
+              ...job,
+              status: event.status,
+              progress:
+                typeof event.progress === "number" ? event.progress : job.progress,
+              error: event.error ?? job.error,
+              result: event.result ?? job.result,
+            }
+          : job,
+      ),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!pageVisible || !activeIds.length) return;
+    const controllers = activeIds.map((jobId) => {
+      const controller = new AbortController();
+      void streamJob(jobId, {
+        onEvent: applyJobEvent,
+        signal: controller.signal,
+      })
+        .then((job) => {
+          if (isTerminal(job.status)) {
+            setJobs((prev) =>
+              prev.map((item) => (item.id === job.id ? { ...item, ...job } : item)),
+            );
+            void load(true);
+          }
+        })
+        .catch(() => {});
+      return controller;
+    });
+    return () => {
+      controllers.forEach((controller) => controller.abort());
+    };
+  }, [activeKey, pageVisible, applyJobEvent, load]);
 
   useEffect(() => {
     if (!hasActive) {
@@ -145,7 +202,7 @@ export default function JobsPage() {
     }
     timerRef.current = window.setInterval(() => {
       void load(true);
-    }, 2000);
+    }, 5000);
     return () => {
       if (timerRef.current) {
         window.clearInterval(timerRef.current);
@@ -404,7 +461,15 @@ export default function JobsPage() {
                     <span>
                       {job.status === "queued" ? t("jobs.queuedHint") : t("jobs.executing")}
                     </span>
-                    <span className="tabular-nums">{percent}%</span>
+                    <span className="flex items-center gap-2">
+                      {pageVisible ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-600 dark:text-emerald-300">
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                          SSE
+                        </span>
+                      ) : null}
+                      <span className="tabular-nums">{percent}%</span>
+                    </span>
                   </div>
                 </div>
               ) : null}

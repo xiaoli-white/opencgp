@@ -27,6 +27,14 @@ import { useI18n } from "@/i18n/I18nProvider";
 
 const SUGGESTIONS = ["kb.suggestVector", "kb.suggestEval", "kb.suggestFlow"];
 
+function scoreText(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(3) : "–";
+}
+
+function scoreFull(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "–";
+}
+
 export default function KbPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -433,6 +441,16 @@ export default function KbPage() {
                       </div>
                       <p className="mt-1.5 line-clamp-3 font-reading text-[12.5px] leading-relaxed text-slate-600 dark:text-slate-300">
                         {citation.snippet || citation.text}
+                      </p>
+                      <p
+                        className="mt-1.5 flex flex-wrap items-center gap-x-1.5 font-mono text-[10px] tabular-nums text-slate-400 dark:text-slate-500"
+                        title={`kw=${scoreFull(citation.keyword_score)} · vec=${scoreFull(citation.vector_score)} · rr=${scoreFull(citation.rerank_score)}`}
+                      >
+                        <span>kw {scoreText(citation.keyword_score)}</span>
+                        <span>·</span>
+                        <span>vec {scoreText(citation.vector_score)}</span>
+                        <span>·</span>
+                        <span>rr {scoreText(citation.rerank_score)}</span>
                       </p>
                       <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-slate-200/70 dark:bg-white/10">
                         <div

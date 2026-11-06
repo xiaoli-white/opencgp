@@ -520,6 +520,9 @@ export type Citation = {
   start: number;
   end: number;
   meta: Record<string, unknown>;
+  keyword_score?: number | null;
+  vector_score?: number | null;
+  rerank_score?: number | null;
 };
 
 export type Evidence = {

@@ -654,7 +654,6 @@ export const zh = {
     noAccessMessage:
       "服务器设置对所有空间生效，仅拥有「服务器管理」权限的角色可以查看与修改。请联系空间管理员申请权限。",
     backToProfile: "返回个人设置",
-    breadcrumbRoot: "设置",
   },
   labels: {
     role: {
@@ -1236,6 +1235,7 @@ export const zh = {
     noSource: "· 未找到原文",
     noCitationText: "该标记没有匹配到引用原文。",
     contradictions: "矛盾点",
+    contradictionsEmpty: "未发现明显矛盾",
     evidenceList: "证据：{list}",
     none: "无",
     gaps: "资料缺口",
@@ -1547,10 +1547,10 @@ export const zh = {
     effectiveHint: "实际检索时会使用的值",
     nothingToSave: "没有需要保存的改动",
     defaultEmbeddingNeeded: "建议先设为默认再回填",
-    myEmbeddingTitle: "个人向量化",
-    myRerankTitle: "个人重排",
-    serverEmbeddingTitle: "服务器级向量化",
-    serverRerankTitle: "服务器级重排",
+    myEmbeddingTitle: "向量化模型",
+    myRerankTitle: "重排模型",
+    serverEmbeddingTitle: "向量化模型",
+    serverRerankTitle: "重排模型",
     userProvidersDesc: "仅对当前账号生效，可绑定个人 API Key。",
     serverProvidersDesc: "对空间全体成员生效，需要服务器管理权限。",
     scopeBadgeUser: "个人",
@@ -2241,7 +2241,6 @@ export const en: Dict = {
     noAccessMessage:
       "Server settings apply to every space and can only be viewed or changed by roles with the Server permission. Ask a space admin for access.",
     backToProfile: "Back to profile settings",
-    breadcrumbRoot: "Settings",
   },
   labels: {
     role: {
@@ -2836,6 +2835,7 @@ export const en: Dict = {
     noSource: "· source not found",
     noCitationText: "No cited text matches this marker.",
     contradictions: "Contradictions",
+    contradictionsEmpty: "No obvious contradictions found",
     evidenceList: "Evidence: {list}",
     none: "None",
     gaps: "Evidence gaps",
@@ -3160,10 +3160,10 @@ export const en: Dict = {
     effectiveHint: "Values actually used for retrieval",
     nothingToSave: "Nothing to save",
     defaultEmbeddingNeeded: "Set it as default before backfilling",
-    myEmbeddingTitle: "Personal embeddings",
-    myRerankTitle: "Personal rerank",
-    serverEmbeddingTitle: "Server embeddings",
-    serverRerankTitle: "Server rerank",
+    myEmbeddingTitle: "Embedding model",
+    myRerankTitle: "Rerank model",
+    serverEmbeddingTitle: "Embedding model",
+    serverRerankTitle: "Rerank model",
     userProvidersDesc: "Applies only to your account; you can attach a personal API key.",
     serverProvidersDesc: "Applies to every member in the space; requires server management permission.",
     scopeBadgeUser: "Personal",
