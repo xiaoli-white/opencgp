@@ -381,6 +381,18 @@ function SamplePanel({
           </div>
 
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {(sample.skipped ?? []).map((name) => (
+              <span
+                key={`skipped-${name}`}
+                className="inline-flex items-center gap-1 rounded-full border border-slate-300/60 bg-slate-500/5 px-2 py-0.5 font-mono text-[10px] text-slate-500 dark:border-white/10 dark:text-slate-400"
+                data-sample-chip={name}
+                data-verdict="skipped"
+                title={t("profiles.sampleSkipped")}
+              >
+                {name}
+                <span>{t("profiles.sampleSkippedChip")}</span>
+              </span>
+            ))}
             {(sample.validation?.results ?? []).map((item) => {
               const verdict = !item.passed
                 ? "fail"

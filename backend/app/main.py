@@ -4660,13 +4660,25 @@ async def sample_work_profile(
     text = container.profiles().finalize_sample(profile, raw, target)
     if not text:
         raise HTTPException(status_code=502, detail="试写生成失败：模型返回空内容")
-    report = await container.validators().run(profile.spec, text)
+    sample_spec = profile.spec.model_copy(deep=True)
+    skipped: list[str] = []
+    remaining = []
+    for name in sample_spec.validation.validators:
+        if str(name).strip().lower() == "length":
+            skipped.append("length")
+            continue
+        remaining.append(name)
+    sample_spec.validation.validators = remaining
+    report = await container.validators().run(sample_spec, text)
     elapsed_ms = int((time.perf_counter() - started) * 1000)
+    char_count = len(re.sub(r"\s+", "", text))
     return {
         "text": text,
-        "chars": len(re.sub(r"\s+", "", text)),
+        "chars": char_count,
+        "target_chars": target,
         "model": model,
         "elapsed_ms": elapsed_ms,
+        "skipped": skipped,
         "validation": report.model_dump(),
     }
 

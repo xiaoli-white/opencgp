@@ -1214,8 +1214,10 @@ export type ProfileSampleReport = {
 export type ProfileSample = {
   text: string;
   chars: number;
+  target_chars?: number;
   model: string;
   elapsed_ms: number;
+  skipped?: string[];
   validation: ProfileSampleReport;
 };
 
