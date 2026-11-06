@@ -66,6 +66,18 @@ from app.services.media import MediaService
 PROVIDER_CACHE_SIZE = 64
 
 RERANK_PRESETS = {
+    "dashscope": {
+        "format": "dashscope",
+        "base_url": "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
+        "model": "gte-rerank-v2",
+        "batch": 100,
+    },
+    "qwen": {
+        "format": "dashscope",
+        "base_url": "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
+        "model": "qwen3-rerank",
+        "batch": 100,
+    },
     "cohere": {
         "format": "cohere",
         "base_url": "https://api.cohere.com/v1/rerank",
@@ -279,6 +291,9 @@ class Container:
                     vector_weight=settings.vector_weight,
                     max_vector_rows=settings.max_vector_rows,
                     lsh_bits=settings.lsh_bits,
+                    fusion=settings.fusion,
+                    rrf_k=settings.rrf_k,
+                    max_per_source=settings.max_per_source,
                 )
             if backend in ("postgres", "postgresql", "pg"):
                 from app.adapters.database.postgres import PostgresDatabase
@@ -293,6 +308,9 @@ class Container:
                     vector_weight=settings.vector_weight,
                     max_vector_rows=settings.max_vector_rows,
                     lsh_bits=settings.lsh_bits,
+                    fusion=settings.fusion,
+                    rrf_k=settings.rrf_k,
+                    max_per_source=settings.max_per_source,
                 )
             raise ValueError(f"不支持的 vectorstore backend: {backend!r}")
 

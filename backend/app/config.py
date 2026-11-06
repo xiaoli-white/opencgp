@@ -31,6 +31,8 @@ PARSER_BACKENDS = ("builtin",)
 EMBEDDING_BACKENDS = ("none", "openai", "openai_compat", "hash")
 RERANK_BACKENDS = (
     "none",
+    "dashscope",
+    "qwen",
     "llm",
     "http",
     "cohere",
@@ -151,6 +153,9 @@ class VectorStoreConfig:
     dsn: str = ""
     pool_size: int = 8
     vector_weight: float = 0.55
+    fusion: str = "rrf"
+    rrf_k: int = 60
+    max_per_source: int = 3
     max_vector_rows: int = 200000
     lsh_bits: int = 12
 
@@ -163,6 +168,9 @@ class VectorStoreConfig:
             dsn=_env("VECTORSTORE_DSN", "") or _env("DATABASE_DSN", ""),
             pool_size=int(_env("VECTORSTORE_POOL_SIZE", "8") or 8),
             vector_weight=float(_env("HYBRID_VECTOR_WEIGHT", "0.55") or 0.55),
+            fusion=_env("HYBRID_FUSION", "rrf"),
+            rrf_k=int(_env("HYBRID_RRF_K", "60") or 60),
+            max_per_source=int(_env("HYBRID_MAX_PER_SOURCE", "3") or 3),
             max_vector_rows=int(_env("HYBRID_MAX_VECTOR_ROWS", "200000") or 200000),
             lsh_bits=max(1, min(32, int(_env("HYBRID_LSH_BITS", "12") or 12))),
         )

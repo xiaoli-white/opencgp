@@ -106,6 +106,9 @@ class PostgresVectorStore(VectorStore):
         vector_weight: float = 0.55,
         max_vector_rows: int = 200000,
         lsh_bits: int = 12,
+        fusion: str = "rrf",
+        rrf_k: int = 60,
+        max_per_source: int = 3,
     ) -> None:
         self.db = database
         self.keyword_weight = keyword_weight
@@ -116,6 +119,9 @@ class PostgresVectorStore(VectorStore):
         self.vector_weight = min(1.0, max(0.0, float(vector_weight)))
         self.max_vector_rows = max(1, int(max_vector_rows))
         self.lsh_bits = max(1, min(32, int(lsh_bits)))
+        self.fusion = (fusion or "rrf").strip().lower()
+        self.rrf_k = max(1, int(rrf_k))
+        self.max_per_source = max(0, int(max_per_source))
         self.last_warning = ""
         self.trigram_index = False
         self._schema_lock = threading.Lock()
@@ -522,7 +528,43 @@ class PostgresVectorStore(VectorStore):
                 max(-1.0, min(1.0, vector_scores.get(chunk_id, 0.0))) + 1.0
             ) / 2.0
             merged[chunk_id] = (1.0 - weight) * keyword_norm + weight * vector_norm
-        ranked = sorted(merged.items(), key=lambda item: item[1], reverse=True)[:top_k]
+        if self.fusion == "rrf" and vector_scores and 0.0 < weight < 1.0:
+            kb_order = sorted(
+                keyword_scores, key=lambda key: keyword_scores[key], reverse=True
+            )
+            vec_order = sorted(
+                vector_scores, key=lambda key: vector_scores[key], reverse=True
+            )
+            kb_rank = {cid: index + 1 for index, cid in enumerate(kb_order)}
+            vec_rank = {cid: index + 1 for index, cid in enumerate(vec_order)}
+            fused: dict[str, float] = {}
+            for chunk_id in set(keyword_scores) | set(vector_scores):
+                value = 0.0
+                rank = kb_rank.get(chunk_id)
+                if rank is not None:
+                    value += (1.0 - weight) / (self.rrf_k + rank)
+                rank = vec_rank.get(chunk_id)
+                if rank is not None:
+                    value += weight / (self.rrf_k + rank)
+                fused[chunk_id] = value
+            peak = max(fused.values()) if fused else 0.0
+            if peak > 0:
+                merged = {key: value / peak for key, value in fused.items()}
+            else:
+                merged = fused
+        ordered = sorted(merged.items(), key=lambda item: item[1], reverse=True)
+        if self.max_per_source > 0:
+            per_source: dict[str, int] = {}
+            capped: list[tuple[str, float]] = []
+            for chunk_id, score in ordered:
+                source_key = chunk_id.split(":", 1)[0] if ":" in chunk_id else chunk_id
+                if per_source.get(source_key, 0) >= self.max_per_source:
+                    continue
+                per_source[source_key] = per_source.get(source_key, 0) + 1
+                capped.append((chunk_id, score))
+            ranked = capped[:top_k]
+        else:
+            ranked = ordered[:top_k]
         citations: list[Citation] = []
         for chunk_id, score in ranked:
             row = by_id.get(chunk_id)

@@ -34,6 +34,8 @@ from app.services.vector_math import cosine
 EMBEDDING_BACKENDS = ("openai", "openai_compat", "hash")
 RERANK_BACKENDS = (
     "llm",
+    "dashscope",
+    "qwen",
     "cohere",
     "jina",
     "siliconflow",
@@ -44,6 +46,16 @@ RERANK_BACKENDS = (
 )
 
 RERANK_PRESETS: dict[str, dict[str, str]] = {
+    "dashscope": {
+        "format": "dashscope",
+        "base_url": "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
+        "model": "gte-rerank-v2",
+    },
+    "qwen": {
+        "format": "dashscope",
+        "base_url": "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
+        "model": "qwen3-rerank",
+    },
     "cohere": {
         "format": "cohere",
         "base_url": "https://api.cohere.com/v1/rerank",

@@ -30,7 +30,7 @@ class RemoteRerank:
         raw_scores: bool = False,
     ) -> None:
         self.format = (format or "cohere").strip().lower()
-        if self.format not in ("cohere", "tei", "generic"):
+        if self.format not in ("cohere", "tei", "generic", "dashscope"):
             self.format = "cohere"
         self.base_url = (base_url or "").strip()
         self.model = (model or "").strip()
@@ -50,6 +50,12 @@ class RemoteRerank:
         return [str(doc or "")[: self.chars] for doc in docs]
 
     def _payload(self, query: str, documents: Sequence[str]) -> dict[str, Any]:
+        if self.format == "dashscope":
+            return {
+                "model": self.model,
+                "input": {"query": query, "documents": list(documents)},
+                "parameters": {"top_n": len(documents), "return_documents": False},
+            }
         if self.format == "tei":
             return {
                 "query": query,
@@ -175,7 +181,12 @@ def _parse_response(data: Any, expected: int, fmt: str) -> dict[int, float] | No
     if isinstance(data, list):
         rows = data
     elif isinstance(data, dict):
-        rows = data.get("results")
+        if fmt == "dashscope":
+            output = data.get("output")
+            if isinstance(output, dict):
+                rows = output.get("results")
+        if not isinstance(rows, list):
+            rows = data.get("results")
         if not isinstance(rows, list):
             rows = data.get("data")
         if not isinstance(rows, list) and isinstance(data.get("scores"), list):
