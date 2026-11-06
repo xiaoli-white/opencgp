@@ -13,7 +13,9 @@ import clsx from "clsx";
 import { api, type Health } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
-import ProvidersEntryCard from "@/components/settings/ProvidersEntryCard";
+import ProvidersSection from "@/components/settings/ProvidersSection";
+import RetrievalWeightsSection from "@/components/settings/RetrievalWeightsSection";
+import ServerProvidersCard from "@/components/settings/ServerProvidersCard";
 import UserReviewCard from "@/components/settings/UserReviewCard";
 import SettingsBreadcrumb from "@/components/settings/SettingsBreadcrumb";
 import NoAccessCard from "@/components/common/NoAccessCard";
@@ -106,7 +108,58 @@ export default function ServerSettingsPage() {
         }}
       />
 
-      <ProvidersEntryCard canManageServer={canServer} server />
+      <ServerProvidersCard
+        canManage={canServer}
+        onNotice={(message) => {
+          setError("");
+          setNotice(message);
+        }}
+        onError={(message) => {
+          setNotice("");
+          setError(message);
+        }}
+      />
+
+      <ProvidersSection
+        kind="embedding"
+        scopeFilter="server"
+        canManage={canServer && can("write")}
+        onNotice={(message) => {
+          setError("");
+          setNotice(message);
+        }}
+        onError={(message) => {
+          setNotice("");
+          setError(message);
+        }}
+      />
+
+      <ProvidersSection
+        kind="rerank"
+        scopeFilter="server"
+        canManage={canServer && can("write")}
+        onNotice={(message) => {
+          setError("");
+          setNotice(message);
+        }}
+        onError={(message) => {
+          setNotice("");
+          setError(message);
+        }}
+      />
+
+      <RetrievalWeightsSection
+        scope="tenant"
+        canManage={canServer && can("write")}
+        onNotice={(message) => {
+          setError("");
+          setNotice(message);
+        }}
+        onError={(message) => {
+          setNotice("");
+          setError(message);
+        }}
+      />
 
       <motion.section
         initial={{ opacity: 0, y: 10 }}

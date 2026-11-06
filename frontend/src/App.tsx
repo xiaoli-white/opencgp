@@ -9,7 +9,6 @@ const CoursePage = lazy(() => import("./pages/CoursePage"));
 const KbPage = lazy(() => import("./pages/KbPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const ProfileSettingsPage = lazy(() => import("./pages/settings/ProfileSettingsPage"));
-const ProvidersSettingsPage = lazy(() => import("./pages/settings/ProvidersSettingsPage"));
 const ServerSettingsPage = lazy(() => import("./pages/settings/ServerSettingsPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const ResearchPage = lazy(() => import("./pages/ResearchPage"));
@@ -73,7 +72,6 @@ function AppRoutes() {
             <Route path="/media" element={<MediaPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/settings" element={<ProfileSettingsPage />} />
-            <Route path="/settings/providers" element={<ProvidersSettingsPage />} />
             <Route path="/settings/server" element={<ServerSettingsPage />} />
             <Route path="/settings/*" element={<NotFoundPage />} />
             <Route path="*" element={<NotFoundPage />} />

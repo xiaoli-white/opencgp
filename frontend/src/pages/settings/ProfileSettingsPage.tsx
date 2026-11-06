@@ -5,7 +5,10 @@ import { AlertCircle, ArrowRight, IdCard, Server, X } from "lucide-react";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
 import AccountCard from "@/components/settings/AccountCard";
-import ProvidersEntryCard from "@/components/settings/ProvidersEntryCard";
+import ProviderCard from "@/components/settings/ProviderCard";
+import MyProvidersCard from "@/components/settings/MyProvidersCard";
+import ProvidersSection from "@/components/settings/ProvidersSection";
+import RetrievalWeightsSection from "@/components/settings/RetrievalWeightsSection";
 import SpacesCard from "@/components/settings/SpacesCard";
 import ProfilesCard from "@/components/settings/ProfilesCard";
 import RolesCard from "@/components/settings/RolesCard";
@@ -68,7 +71,37 @@ export default function ProfileSettingsPage() {
 
       <AccountCard canWrite={canWrite} onNotice={handleNotice} onError={handleError} />
 
-      <ProvidersEntryCard canManageServer={canServer} />
+      <ProviderCard
+        canWrite={canWrite}
+        canManageServer={canServer}
+        onNotice={handleNotice}
+        onError={handleError}
+      />
+
+      <MyProvidersCard canWrite={canWrite} onNotice={handleNotice} onError={handleError} />
+
+      <ProvidersSection
+        kind="embedding"
+        scopeFilter="user"
+        canManage={canWrite}
+        onNotice={handleNotice}
+        onError={handleError}
+      />
+
+      <ProvidersSection
+        kind="rerank"
+        scopeFilter="user"
+        canManage={canWrite}
+        onNotice={handleNotice}
+        onError={handleError}
+      />
+
+      <RetrievalWeightsSection
+        scope="user"
+        canManage={canWrite}
+        onNotice={handleNotice}
+        onError={handleError}
+      />
 
       <SpacesCard onNotice={handleNotice} onError={handleError} />
 

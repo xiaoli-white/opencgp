@@ -377,13 +377,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               ? t("nav.jobs")
               : pathname === "/media"
                 ? t("nav.media")
-              : pathname === "/settings"
-              ? t("nav.settings")
-              : pathname.startsWith("/settings/providers")
-                ? t("providersHub.title")
-                : pathname === "/settings/server"
-                ? t("nav.server")
-                : activeCourse?.title ?? t("nav.course");
+                : pathname === "/settings"
+                  ? t("nav.settings")
+                  : pathname === "/settings/server"
+                    ? t("nav.server")
+                    : activeCourse?.title ?? t("nav.course");
 
   if (pathname === "/login") {
     return <main className="min-h-screen px-4 py-6">{children}</main>;
