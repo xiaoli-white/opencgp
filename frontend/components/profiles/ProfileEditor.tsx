@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
@@ -296,6 +296,22 @@ function SamplePanel({
   canRun: boolean;
 }) {
   const [openChip, setOpenChip] = useState<string | null>(null);
+  const totalIssues = (sample?.validation?.results ?? []).reduce(
+    (total, item) => total + item.issues.length,
+    0,
+  );
+  const chipRowRef = useRef<HTMLDivElement | null>(null);
+  const [summaryOffset, setSummaryOffset] = useState(0);
+  useLayoutEffect(() => {
+    const row = chipRowRef.current;
+    if (!row) return;
+    const chips = row.querySelectorAll("[data-sample-chip]");
+    if (chips.length < 2) {
+      setSummaryOffset(0);
+      return;
+    }
+    setSummaryOffset(Math.round(chips[1].getBoundingClientRect().x - row.getBoundingClientRect().x));
+  }, [sample, sample?.validation?.results?.length]);
   const openDetail = openChip
     ? (sample?.validation?.results ?? []).find((item) => item.name === openChip) ?? null
     : null;
@@ -383,7 +399,7 @@ function SamplePanel({
             </div>
           </div>
 
-          <div className="flex min-w-0 flex-wrap items-start gap-1.5">
+          <div className="flex min-w-0 flex-wrap items-start gap-1.5" ref={chipRowRef}>
             {(sample.skipped ?? []).map((name) => (
               <span
                 key={`skipped-${name}`}
@@ -444,14 +460,12 @@ function SamplePanel({
 
           <div
             className="mt-1 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400"
+            style={{ paddingLeft: summaryOffset }}
             data-sample-summary="true"
           >
-            {t("profiles.sampleIssues", {
-              count: (sample.validation?.results ?? []).reduce(
-                (total, item) => total + item.issues.length,
-                0,
-              ),
-            })}
+            {totalIssues === 0
+              ? t("profiles.sampleNoIssues")
+              : t("profiles.sampleIssues", { count: totalIssues })}
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">

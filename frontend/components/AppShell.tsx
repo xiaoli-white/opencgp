@@ -416,7 +416,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="app-main min-w-0 flex-1 px-4 pb-14 pt-4 sm:px-6">{children}</main>
+        <main className="app-main min-w-0 flex-1 px-4 pb-14 pt-6">{children}</main>
       </div>
 
       <AnimatePresence>
