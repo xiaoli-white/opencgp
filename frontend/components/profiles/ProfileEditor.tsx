@@ -1143,6 +1143,22 @@ export default function ProfileEditor({
                       </div>
                     ) : null}
                   </section>
+
+                      {sampleOpen ? (
+                        <SamplePanel
+                          t={t}
+                          topic={sampleTopic}
+                          onTopic={setSampleTopic}
+                          onStart={() => void runSample()}
+                          onCopy={() => void copySample()}
+                          onRegenerate={() => void runSample()}
+                          running={sampling}
+                          copied={sampleCopied}
+                          error={sampleError}
+                          sample={sample}
+                          canRun={sampleReady}
+                        />
+                      ) : null}
                 </div>
 
                 <aside className="min-w-0 space-y-3 lg:sticky lg:top-4 lg:self-start">
@@ -1194,21 +1210,6 @@ export default function ProfileEditor({
             </div>
 
             <footer className="shrink-0 border-t border-white/60 bg-white/75 px-3 py-2.5 backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/75 sm:px-5">
-              {sampleOpen ? (
-                <SamplePanel
-                  t={t}
-                  topic={sampleTopic}
-                  onTopic={setSampleTopic}
-                  onStart={() => void runSample()}
-                  onCopy={() => void copySample()}
-                  onRegenerate={() => void runSample()}
-                  running={sampling}
-                  copied={sampleCopied}
-                  error={sampleError}
-                  sample={sample}
-                  canRun={sampleReady}
-                />
-              ) : null}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0 flex-1 text-[10.5px]">
                   {formError ? (
