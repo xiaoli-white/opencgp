@@ -314,7 +314,7 @@ export default function BlueprintBoard({
                 </span>
                 <div>
                   <p className="text-[15px] font-semibold tracking-tight text-slate-800 dark:text-slate-100">
-                    还没有课程蓝图
+                    还没有系列蓝图
                   </p>
                   <p className="text-[11px] text-slate-400 dark:text-slate-500">
                     先生成一份学习路径蓝图，再逐讲审核与阅读
@@ -322,7 +322,7 @@ export default function BlueprintBoard({
                 </div>
               </div>
               <p className="mt-3 max-w-xl text-[12.5px] leading-relaxed text-slate-500 dark:text-slate-400">
-                蓝图会基于知识库证据规划学习阶段、大纲节点与术语表；生成后可以逐节点审阅、应用到课程，再回到阅读视图逐讲生成正文。
+                蓝图会基于知识库证据规划学习阶段、大纲节点与术语表；生成后可以逐节点审阅、应用到系列，再回到阅读视图逐讲生成正文。
               </p>
             </div>
             <span className="chip-muted">{lessons.length} 个现有讲次</span>
@@ -347,7 +347,7 @@ export default function BlueprintBoard({
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="chip">
                 <Network size={11} />
-                课程蓝图
+                系列蓝图
               </span>
               <span
                 className={clsx(
@@ -443,7 +443,7 @@ export default function BlueprintBoard({
             ) : (
               <Check size={14} />
             )}
-            应用到课程
+            应用到系列
           </button>
           <button
             type="button"

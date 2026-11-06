@@ -13,7 +13,7 @@ export default function NoAccessCard({
   title = "需要访问权限",
   message = "当前角色没有访问该页面的权限，请联系空间管理员申请。",
   backTo = "/",
-  backLabel = "返回课程工作台",
+  backLabel = "返回创作工作台",
 }: NoAccessCardProps) {
   return (
     <div className="mx-auto w-full max-w-2xl">
