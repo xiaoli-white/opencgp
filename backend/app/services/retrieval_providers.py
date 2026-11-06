@@ -327,6 +327,7 @@ class RetrievalProviderService:
         resolved_model = (model or "").strip()
         resolved_dim = int(dim or 0)
         resolved_url = (base_url or "").strip()
+        final_meta = dict(meta or {})
         if resolved_kind == PROVIDER_KIND_EMBEDDING:
             if resolved_backend in ("openai", "openai_compat"):
                 if not resolved_url:
@@ -334,11 +335,13 @@ class RetrievalProviderService:
                 if not resolved_model:
                     raise ValueError("embedding 需要 model")
                 if resolved_dim <= 0:
-                    raise ValueError("embedding 需要 dim")
+                    final_meta["needs_probe"] = True
+                    final_meta["dim_source"] = "unknown"
             else:
                 resolved_model = resolved_model or "hash"
                 if resolved_dim <= 0:
                     raise ValueError("embedding 需要 dim")
+                final_meta["dim_source"] = "configured"
         else:
             if not resolved_model:
                 preset = RERANK_PRESETS.get(resolved_backend) or {}
@@ -366,7 +369,7 @@ class RetrievalProviderService:
             ),
             enabled=bool(enabled),
             is_default=bool(is_default),
-            meta=dict(meta or {}),
+            meta=final_meta,
             version=1,
             created_at=now,
             updated_at=now,
@@ -385,6 +388,12 @@ class RetrievalProviderService:
         scope = record.scope()
         if scope in (PROVIDER_SCOPE_TENANT, PROVIDER_SCOPE_GLOBAL) and not can_manage_server:
             raise PermissionError("scope 需要 manage_server")
+        if "kind" in changes and changes.get("kind") is not None:
+            if str(changes.get("kind")).strip().lower() != record.kind:
+                raise ValueError("供应商类型（embedding / rerank）创建后不可修改")
+        if "backend" in changes and changes.get("backend") is not None:
+            if str(changes.get("backend")).strip().lower() != record.backend:
+                raise ValueError("后端类型创建后不可修改")
         if "name" in changes and changes.get("name") is not None:
             label = str(changes.get("name") or "").strip()
             if not label:
@@ -407,7 +416,21 @@ class RetrievalProviderService:
             meta = changes.get("meta")
             record.meta = dict(meta) if isinstance(meta, dict) else {}
         if record.kind == PROVIDER_KIND_EMBEDDING and record.dim <= 0:
-            raise ValueError("embedding 需要 dim")
+            if record.backend not in ("openai", "openai_compat"):
+                raise ValueError("embedding 需要 dim")
+            meta = record.meta if isinstance(record.meta, dict) else {}
+            if meta.get("dim_source") != "unknown" or not meta.get("needs_probe"):
+                meta = dict(meta)
+                meta["needs_probe"] = True
+                meta["dim_source"] = "unknown"
+                record.meta = meta
+        if record.kind == PROVIDER_KIND_EMBEDDING and record.dim > 0:
+            meta = record.meta if isinstance(record.meta, dict) else {}
+            if meta.get("needs_probe"):
+                meta = dict(meta)
+                meta.pop("needs_probe", None)
+                meta["dim_source"] = "configured"
+                record.meta = meta
         record.version = int(record.version or 1) + 1
         record.updated_at = int(time.time())
         return self.repository.save_provider(record)
@@ -821,7 +844,44 @@ class RetrievalProviderService:
         }
         if rerank.error:
             rerank_payload["error"] = rerank.error
+        user_row = self.repository.get_setting(
+            tenant_id, user_id, SETTING_SCOPE_USER
+        )
+        tenant_row = self.repository.get_setting(
+            tenant_id, "", SETTING_SCOPE_TENANT
+        )
+
+        def _raw(row: Any, fields: tuple[str, ...]) -> dict[str, Any]:
+            payload = {field: getattr(row, field, None) for field in fields}
+            payload["configured"] = row is not None
+            return payload
+
+        _fields = (
+            "embedding_provider_id",
+            "rerank_provider_id",
+            "vector_weight",
+            "rerank_weight",
+            "rerank_top_n",
+        )
         return {
+            "effective": {
+                "embedding": embedding_payload,
+                "rerank": rerank_payload,
+                "weights": {
+                    "vector": weights.vector,
+                    "rerank": weights.rerank,
+                    "top_n": weights.top_n,
+                },
+            },
+            "scopes": {
+                "user": _raw(user_row, _fields),
+                "tenant": _raw(tenant_row, _fields),
+            },
+            "defaults": {
+                "vector_weight": self.settings.vectorstore.vector_weight,
+                "rerank_weight": self.settings.rerank.weight,
+                "rerank_top_n": self.settings.rerank.top_n,
+            },
             "embedding": embedding_payload,
             "rerank": rerank_payload,
             "weights": {
@@ -905,6 +965,17 @@ class RetrievalProviderService:
         self.repository.save_setting(setting)
         return self.effective_settings(tenant_id, user_id)
 
+    async def probe_dim(self, record: RetrievalProvider) -> int:
+        try:
+            adapter = self._build_embedding(record)
+            timeout = max(3.0, min(30.0, float(self.settings.embedding.timeout)))
+            vectors = await asyncio.wait_for(adapter.embed(["ping"]), timeout=timeout)
+            if not vectors or not vectors[0]:
+                return 0
+            return len(vectors[0])
+        except Exception:
+            return 0
+
     async def test_provider(
         self, tenant_id: str, user_id: str, provider_id: str
     ) -> dict[str, Any]:
@@ -925,16 +996,25 @@ class RetrievalProviderService:
                 dim = len(vectors[0])
                 score = cosine(vectors[0], vectors[0])
                 result = {
-                    "ok": dim == record.dim,
+                    "ok": True,
                     "latency_ms": latency_ms,
                     "dim": dim,
                     "expected_dim": record.dim,
                     "sample_score": round(float(score), 6),
+                    "dim_updated": False,
                 }
-                if dim != record.dim:
-                    result["error"] = (
-                        f"维度不匹配: 期望 {record.dim}，实际 {dim}"
-                    )
+                if record.kind == PROVIDER_KIND_EMBEDDING and dim != record.dim:
+                    record.dim = dim
+                    record.version = int(record.version or 1) + 1
+                    record.updated_at = int(time.time())
+                    meta = record.meta if isinstance(record.meta, dict) else {}
+                    meta = dict(meta)
+                    meta.pop("needs_probe", None)
+                    meta["dim_source"] = "probe"
+                    record.meta = meta
+                    self.repository.save_provider(record)
+                    result["expected_dim"] = dim
+                    result["dim_updated"] = True
                 return result
             except Exception as exc:
                 return {
@@ -966,6 +1046,22 @@ class RetrievalProviderService:
                 "latency_ms": int((time.perf_counter() - started) * 1000),
                 "error": str(exc)[:300] or exc.__class__.__name__,
             }
+
+    def clear_settings(
+        self,
+        tenant_id: str,
+        user_id: str,
+        scope: str,
+        can_manage_server: bool = False,
+    ) -> dict[str, Any]:
+        resolved_scope = (scope or SETTING_SCOPE_USER).strip().lower()
+        if resolved_scope not in SETTING_SCOPES:
+            raise ValueError("scope 仅支持 user / tenant")
+        if resolved_scope == SETTING_SCOPE_TENANT and not can_manage_server:
+            raise PermissionError("scope=tenant 需要 manage_server")
+        row_user = user_id if resolved_scope == SETTING_SCOPE_USER else ""
+        self.repository.delete_setting(tenant_id, row_user, resolved_scope)
+        return self.effective_settings(tenant_id, user_id)
 
 
 __all__ = [

@@ -766,6 +766,12 @@ async def kb_search(
     warnings = list(search_meta.get("warnings") or [])
     if embedding.error and "embedding_provider_failed" not in warnings:
         warnings.append("embedding_provider_failed")
+    if (
+        embedding.adapter is not None
+        and int(embedding.dim or 0) <= 0
+        and "embedding_dim_unknown" not in warnings
+    ):
+        warnings.append("embedding_dim_unknown")
     stats = await store.embedding_status(
         tenant_id, embedding.model, embedding.dim, provider_id=embedding.provider_id
     )
@@ -860,6 +866,8 @@ class RetrievalProviderCreateRequest(BaseModel):
 
 
 class RetrievalProviderPatchRequest(BaseModel):
+    kind: str | None = None
+    backend: str | None = None
     name: str | None = None
     base_url: str | None = None
     model: str | None = None
@@ -928,7 +936,25 @@ async def retrieval_providers_create(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return service.payload(record)
+    dim_source = "configured"
+    if record.kind == "embedding" and record.dim <= 0:
+        probed = await service.probe_dim(record)
+        if probed:
+            record.dim = probed
+            record.version = int(record.version or 1) + 1
+            meta = dict(record.meta or {})
+            meta.pop("needs_probe", None)
+            meta["dim_source"] = "probe"
+            record.meta = meta
+            service.repository.save_provider(record)
+            dim_source = "probe"
+        else:
+            record.enabled = False
+            service.repository.save_provider(record)
+            dim_source = "unknown"
+    payload = service.payload(record)
+    payload["dim_source"] = dim_source
+    return payload
 
 
 @app.patch("/api/v1/settings/retrieval/providers/{provider_id}")
@@ -1018,6 +1044,22 @@ async def retrieval_settings_put(
             scope=req.scope,
             changes=changes,
             can_manage_server=_can_manage_server(ctx),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/v1/settings/retrieval/settings")
+async def retrieval_settings_delete(
+    scope: str = Query(default="user"),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    try:
+        return container.retrieval_providers().clear_settings(
+            _tenant_of(ctx), ctx.user.id, scope, _can_manage_server(ctx)
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

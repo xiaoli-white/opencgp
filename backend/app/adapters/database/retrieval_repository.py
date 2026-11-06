@@ -284,6 +284,15 @@ class DatabaseRetrievalRepository(RetrievalRepository):
         )
         return _to_setting(row) if row is not None else None
 
+    def delete_setting(self, tenant_id: str, user_id: str, scope: str) -> bool:
+        self.ensure_schema()
+        cur = self.database.execute(
+            "DELETE FROM retrieval_settings"
+            " WHERE tenant_id = ? AND scope = ? AND user_id = ?",
+            (tenant_id, scope, user_id or ""),
+        )
+        return bool(getattr(cur, "rowcount", 0))
+
     def save_setting(self, setting: RetrievalSetting) -> RetrievalSetting:
         self.ensure_schema()
         now = int(setting.updated_at or time.time())

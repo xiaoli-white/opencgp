@@ -7,6 +7,7 @@ import {
   ChevronUp,
   Database,
   Gauge,
+  Info,
   KeyRound,
   Loader2,
   Pencil,
@@ -27,12 +28,16 @@ import {
   type RetrievalProvider,
   type RetrievalProviderPayload,
   type RetrievalSettings,
+  type RetrievalSettingsPayload,
 } from "@/lib/api";
 import { getJob, isTerminal, type Job } from "@/lib/jobs";
 import { useI18n } from "@/i18n/I18nProvider";
 import { ConfirmDialog, Modal } from "@/components/common/Dialogs";
 
+type Section = "embedding" | "rerank" | "weights";
+
 type Props = {
+  section: Section;
   canWrite: boolean;
   canManageServer: boolean;
   onNotice: (message: string) => void;
@@ -51,6 +56,12 @@ type FormState = {
   dim: string;
   api_key: string;
   is_default: boolean;
+};
+
+type WeightForm = {
+  vector: string;
+  rerank: string;
+  topN: string;
 };
 
 type BackfillState = {
@@ -100,14 +111,14 @@ function errorText(err: unknown, fallback: string): string {
 }
 
 export default function RetrievalCard({
+  section,
   canWrite,
   canManageServer,
   onNotice,
   onError,
 }: Props) {
   const { t } = useI18n();
-  const [embeddingItems, setEmbeddingItems] = useState<RetrievalProvider[]>([]);
-  const [rerankItems, setRerankItems] = useState<RetrievalProvider[]>([]);
+  const [items, setItems] = useState<RetrievalProvider[]>([]);
   const [settings, setSettings] = useState<RetrievalSettings | null>(null);
   const [statuses, setStatuses] = useState<Record<string, EmbeddingStatus>>({});
   const [loading, setLoading] = useState(true);
@@ -122,11 +133,16 @@ export default function RetrievalCard({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [scope, setScope] = useState<Scope>("user");
-  const [vectorWeight, setVectorWeight] = useState(0.55);
-  const [rerankWeight, setRerankWeight] = useState(0.5);
-  const [topN, setTopN] = useState(12);
+  const [weightForm, setWeightForm] = useState<WeightForm>({
+    vector: "",
+    rerank: "",
+    topN: "",
+  });
   const [diagnostics, setDiagnostics] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [clearScopeOpen, setClearScopeOpen] = useState(false);
+  const [clearScopeBusy, setClearScopeBusy] = useState(false);
+  const [clearScopeError, setClearScopeError] = useState("");
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -145,9 +161,19 @@ export default function RetrievalCard({
     [t],
   );
 
-  const loadStatuses = useCallback(async (items: RetrievalProvider[]) => {
+  const sourceBadgeClass = (value: string) =>
+    value === "user"
+      ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-300"
+      : value === "tenant"
+        ? "bg-violet-500/10 text-violet-600 dark:text-violet-300"
+        : "chip-muted";
+
+  const loadStatuses = useCallback(async (list: RetrievalProvider[]) => {
+    const eligible = list.filter(
+      (item) => item.dim > 0 && item.enabled !== false,
+    );
     const pairs = await Promise.all(
-      items.map(async (item) => {
+      eligible.map(async (item) => {
         try {
           const status = await api.getEmbeddingStatus(item.id);
           return { id: item.id, status };
@@ -166,52 +192,95 @@ export default function RetrievalCard({
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [embeddings, reranks, effective] = await Promise.all([
-        api.listRetrievalProviders("embedding"),
-        api.listRetrievalProviders("rerank"),
-        api.getRetrievalSettings(),
-      ]);
-      if (!mounted.current) return;
-      setEmbeddingItems(embeddings.providers ?? []);
-      setRerankItems(reranks.providers ?? []);
-      setSettings(effective);
-      setVectorWeight(effective.vector_weight);
-      setRerankWeight(effective.rerank_weight);
-      setTopN(effective.rerank_top_n);
-      await loadStatuses(embeddings.providers ?? []);
+      if (section === "weights") {
+        const next = await api.getRetrievalSettings();
+        if (!mounted.current) return;
+        setSettings(next);
+      } else {
+        const [list, next] = await Promise.all([
+          api.listRetrievalProviders(section),
+          api.getRetrievalSettings(),
+        ]);
+        if (!mounted.current) return;
+        setItems(list.providers ?? []);
+        setSettings(next);
+        if (section === "embedding") {
+          await loadStatuses(list.providers ?? []);
+        }
+      }
     } catch (err) {
       onError(errorText(err, t("retrieval.loadFailed")));
     } finally {
       if (mounted.current) setLoading(false);
     }
-  }, [loadStatuses, onError, t]);
+  }, [loadStatuses, onError, section, t]);
 
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
 
+  useEffect(() => {
+    if (section !== "weights" || !settings) return;
+    const values = settings.scopes?.[scope];
+    setWeightForm({
+      vector:
+        values?.vector_weight === null || values?.vector_weight === undefined
+          ? ""
+          : String(values.vector_weight),
+      rerank:
+        values?.rerank_weight === null || values?.rerank_weight === undefined
+          ? ""
+          : String(values.rerank_weight),
+      topN:
+        values?.rerank_top_n === null || values?.rerank_top_n === undefined
+          ? ""
+          : String(values.rerank_top_n),
+    });
+  }, [scope, section, settings]);
+
   const patchForm = useCallback((patch: Partial<FormState>) => {
     setForm((prev) => (prev ? { ...prev, ...patch } : prev));
   }, []);
 
-  const openCreate = useCallback(
+  const switchKind = useCallback(
     (kind: RetrievalKind) => {
-      setFormError("");
       setShowKey(false);
-      if (kind === "embedding") {
-        setForm({
-          id: "",
-          kind,
-          name: "",
-          backend: "openai",
-          base_url: "",
-          model: "",
-          dim: "",
-          api_key: "",
-          is_default: false,
-        });
+      if (kind === "rerank") {
+        const preset = RERANK_PRESETS.cohere;
+        setForm((prev) =>
+          prev
+            ? {
+                ...prev,
+                kind,
+                backend: "cohere",
+                base_url: preset.base_url,
+                model: preset.model,
+                dim: "",
+              }
+            : prev,
+        );
         return;
       }
+      setForm((prev) =>
+        prev
+          ? {
+              ...prev,
+              kind,
+              backend: "openai",
+              base_url: "",
+              model: "",
+              dim: "",
+            }
+          : prev,
+      );
+    },
+    [],
+  );
+
+  const openCreate = useCallback((kind: RetrievalKind) => {
+    setFormError("");
+    setShowKey(false);
+    if (kind === "rerank") {
       const preset = RERANK_PRESETS.cohere;
       setForm({
         id: "",
@@ -224,9 +293,20 @@ export default function RetrievalCard({
         api_key: "",
         is_default: false,
       });
-    },
-    [],
-  );
+      return;
+    }
+    setForm({
+      id: "",
+      kind,
+      name: "",
+      backend: "openai",
+      base_url: "",
+      model: "",
+      dim: "",
+      api_key: "",
+      is_default: false,
+    });
+  }, []);
 
   const openEdit = useCallback((item: RetrievalProvider) => {
     setFormError("");
@@ -252,7 +332,7 @@ export default function RetrievalCard({
     }
     if (form.kind === "embedding" && form.backend === "hash") {
       const dim = Number(form.dim);
-      if (!Number.isFinite(dim) || dim <= 0) {
+      if (!form.dim.trim() || !Number.isFinite(dim) || dim <= 0) {
         setFormError(t("retrieval.dimRequired"));
         return;
       }
@@ -267,6 +347,10 @@ export default function RetrievalCard({
         return;
       }
     }
+    if (form.kind === "rerank" && form.backend !== "llm" && !form.base_url.trim()) {
+      setFormError(t("retrieval.baseUrlRequired"));
+      return;
+    }
     setBusy(true);
     setFormError("");
     try {
@@ -275,7 +359,7 @@ export default function RetrievalCard({
         name: form.name.trim(),
         base_url: form.base_url.trim(),
         model: form.model.trim(),
-        dim: Number.isFinite(dim) && dim > 0 ? Math.trunc(dim) : 0,
+        dim: form.dim.trim() && Number.isFinite(dim) && dim > 0 ? Math.trunc(dim) : 0,
         is_default: form.is_default,
       };
       if (form.api_key.trim()) payload.api_key = form.api_key.trim();
@@ -317,38 +401,43 @@ export default function RetrievalCard({
             })
           : result.error || t("retrieval.testFailed");
         setRowTest((prev) => ({ ...prev, [item.id]: { ok: result.ok, text } }));
+        if (result.ok && result.dim_updated) {
+          await loadAll();
+          onNotice(t("retrieval.dimUpdated", { dim: result.dim ?? 0 }));
+        }
       } catch (err) {
         setRowTest((prev) => ({
           ...prev,
           [item.id]: { ok: false, text: errorText(err, t("retrieval.testFailed")) },
         }));
       } finally {
-        setRowBusy("");
+        if (mounted.current) setRowBusy("");
       }
     },
-    [t],
+    [loadAll, onNotice, t],
   );
 
   const setDefault = useCallback(
     async (item: RetrievalProvider) => {
       setRowBusy(item.id);
       setRowError(null);
+      const targetScope: Scope = item.scope === "tenant" ? "tenant" : "user";
       try {
         await api.updateRetrievalProvider(item.id, { is_default: true });
-        const payload =
+        const payload: RetrievalSettingsPayload =
           item.kind === "rerank"
-            ? { scope, rerank_provider_id: item.id }
-            : { scope, embedding_provider_id: item.id };
+            ? { scope: targetScope, rerank_provider_id: item.id }
+            : { scope: targetScope, embedding_provider_id: item.id };
         await api.updateRetrievalSettings(payload);
         onNotice(t("retrieval.defaultSaved"));
         await loadAll();
       } catch (err) {
         setRowError({ id: item.id, text: errorText(err, t("retrieval.saveFailed")) });
       } finally {
-        setRowBusy("");
+        if (mounted.current) setRowBusy("");
       }
     },
-    [loadAll, onNotice, scope, t],
+    [loadAll, onNotice, t],
   );
 
   const removeProvider = useCallback(async () => {
@@ -413,7 +502,7 @@ export default function RetrievalCard({
               [item.id]: { progress: 1, text, done: true, ok: true },
             }));
             onNotice(text);
-            await loadStatuses(embeddingItems);
+            await loadStatuses(items);
           } else {
             const text = job.error || t("retrieval.backfillFailed");
             setBackfills((prev) => ({
@@ -435,36 +524,131 @@ export default function RetrievalCard({
         if (mounted.current) setRowBusy("");
       }
     },
-    [embeddingItems, loadStatuses, onNotice, t],
+    [items, loadStatuses, onNotice, t],
   );
 
   const saveSettings = useCallback(async () => {
+    const payload: RetrievalSettingsPayload = { scope };
+    let count = 0;
+    const vector = weightForm.vector.trim();
+    if (vector) {
+      const value = Number(vector);
+      if (Number.isFinite(value)) {
+        payload.vector_weight = Math.max(0, Math.min(1, value));
+        count += 1;
+      }
+    }
+    const rerank = weightForm.rerank.trim();
+    if (rerank) {
+      const value = Number(rerank);
+      if (Number.isFinite(value)) {
+        payload.rerank_weight = Math.max(0, Math.min(1, value));
+        count += 1;
+      }
+    }
+    const topN = weightForm.topN.trim();
+    if (topN) {
+      const value = Math.trunc(Number(topN));
+      if (Number.isFinite(value)) {
+        payload.rerank_top_n = Math.max(1, Math.min(50, value));
+        count += 1;
+      }
+    }
+    if (count === 0) {
+      onNotice(t("retrieval.nothingToSave"));
+      return;
+    }
     setBusy(true);
     try {
-      await api.updateRetrievalSettings({
-        scope,
-        vector_weight: vectorWeight,
-        rerank_weight: rerankWeight,
-        rerank_top_n: topN,
-      });
+      const next = await api.updateRetrievalSettings(payload);
+      setSettings(next);
       onNotice(t("retrieval.settingsSaved"));
-      await loadAll();
     } catch (err) {
       onError(errorText(err, t("retrieval.saveFailed")));
     } finally {
       setBusy(false);
     }
-  }, [loadAll, onError, rerankWeight, scope, t, topN, vectorWeight]);
+  }, [onError, onNotice, scope, t, weightForm]);
 
-  const defaultSource = useMemo(
-    () => sourceText(settings?.source || "env"),
-    [settings?.source, sourceText],
+  const clearField = useCallback(
+    async (field: "vector_weight" | "rerank_weight" | "rerank_top_n") => {
+      setBusy(true);
+      try {
+        const payload: RetrievalSettingsPayload = { scope };
+        payload[field] = null;
+        const next = await api.updateRetrievalSettings(payload);
+        setSettings(next);
+        onNotice(t("retrieval.fieldCleared"));
+      } catch (err) {
+        onError(errorText(err, t("retrieval.saveFailed")));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [onError, onNotice, scope, t],
   );
+
+  const clearScopeSettings = useCallback(async () => {
+    setClearScopeBusy(true);
+    setClearScopeError("");
+    try {
+      const next = await api.clearRetrievalSettings(scope);
+      setSettings(next);
+      setClearScopeOpen(false);
+      onNotice(t("retrieval.clearScopeDone", { scope: sourceText(scope) }));
+    } catch (err) {
+      setClearScopeError(errorText(err, t("retrieval.saveFailed")));
+    } finally {
+      setClearScopeBusy(false);
+    }
+  }, [onNotice, scope, sourceText, t]);
+
+  const defaults = settings?.defaults ?? {
+    vector_weight: 0.55,
+    rerank_weight: 0.5,
+    rerank_top_n: 12,
+  };
+  const activeScope = settings?.scopes?.[scope];
+  const sources = settings?.sources ?? {};
+  const effectiveWeights = settings?.effective?.weights ?? settings?.weights;
+  const effectiveSources = settings?.effective?.weights?.sources ?? sources;
+
+  const renderDimBadge = (item: RetrievalProvider) => {
+    if (item.kind !== "embedding") return null;
+    const dimSource = typeof item.meta?.dim_source === "string" ? item.meta.dim_source : "";
+    if (item.dim <= 0 || dimSource === "unknown") {
+      return (
+        <span
+          data-dim-state="unknown"
+          className="chip bg-amber-400/15 text-amber-700 dark:text-amber-300"
+        >
+          {t("retrieval.dimUnknown")}
+        </span>
+      );
+    }
+    if (dimSource === "probe") {
+      return (
+        <span
+          data-dim-state="probe"
+          className="chip bg-sky-500/10 text-sky-600 dark:text-sky-300"
+        >
+          {item.dim} · {t("retrieval.dimAuto")}
+        </span>
+      );
+    }
+    return (
+      <span data-dim-state="normal" className="chip-muted">
+        {item.dim}
+      </span>
+    );
+  };
 
   const renderProviderRow = (item: RetrievalProvider) => {
     const status = statuses[item.id];
     const test = rowTest[item.id];
     const backfill = backfills[item.id];
+    const dimSource = typeof item.meta?.dim_source === "string" ? item.meta.dim_source : "";
+    const dimUnknown = item.kind === "embedding" && (item.dim <= 0 || dimSource === "unknown");
     const coveragePercent = status
       ? Math.round(Math.max(0, Math.min(1, status.coverage)) * 100)
       : 0;
@@ -495,15 +679,22 @@ export default function RetrievalCard({
               >
                 {item.has_key ? t("retrieval.hasKeyBadge") : t("retrieval.noKeyBadge")}
               </span>
+              <span className="chip-muted">
+                {item.scope === "tenant" ? t("retrieval.sourceTenant") : t("retrieval.sourceUser")}
+              </span>
+              {renderDimBadge(item)}
             </div>
             <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-[10.5px] text-slate-500 dark:text-slate-400">
               <span className="break-all">{item.backend}</span>
               <span className="break-all">{item.model || t("common.notConfigured")}</span>
-              {item.kind === "embedding" ? (
-                <span>dim {item.dim}</span>
-              ) : null}
               <span className="break-all">{item.base_url || ""}</span>
             </div>
+            {dimUnknown ? (
+              <p className="flex items-start gap-1 text-[10px] text-amber-700 dark:text-amber-300">
+                <Info size={11} className="mt-0.5 shrink-0" />
+                <span>{t("retrieval.dimUnknownHint")}</span>
+              </p>
+            ) : null}
             {item.kind === "embedding" ? (
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2 text-[10.5px]">
@@ -587,7 +778,8 @@ export default function RetrievalCard({
             <button
               type="button"
               onClick={() => void testProvider(item)}
-              disabled={rowBusy === item.id}
+              disabled={rowBusy === item.id || !canWrite}
+              title={canWrite ? "" : t("retrieval.readOnly")}
               className="btn btn-ghost px-2 py-1 text-[10.5px]"
             >
               {rowBusy === item.id ? (
@@ -637,250 +829,270 @@ export default function RetrievalCard({
     );
   };
 
-  const renderSection = (kind: RetrievalKind) => {
-    const items = kind === "embedding" ? embeddingItems : rerankItems;
-    return (
-      <div id={`retrieval-${kind}`} className="mt-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="flex items-center gap-1.5 text-[12px] font-semibold text-slate-800 dark:text-slate-100">
-            {kind === "embedding" ? (
-              <Database size={13} className="text-indigo-500 dark:text-indigo-300" />
-            ) : (
-              <Gauge size={13} className="text-indigo-500 dark:text-indigo-300" />
-            )}
-            {kind === "embedding"
-              ? t("retrieval.embeddingTitle")
-              : t("retrieval.rerankTitle")}
-          </h3>
-          <span className="chip-muted">{t("common.count", { count: items.length })}</span>
-          <span className="flex-1" />
-          {canWrite ? (
-            <button
-              type="button"
-              onClick={() => openCreate(kind)}
-              className="btn btn-primary px-2.5 py-1.5 text-[10.5px]"
-            >
-              <Plus size={11} />
-              {t("retrieval.newProvider")}
-            </button>
-          ) : null}
-        </div>
-        <div className="mt-2 space-y-1.5">
-          {loading ? (
-            <p className="text-[11px] text-slate-400">{t("common.loading")}</p>
-          ) : items.length === 0 ? (
-            <p className="rounded-2xl border border-dashed border-white/60 bg-white/35 px-3 py-3 text-[10.5px] text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-slate-400">
-              {kind === "embedding"
-                ? t("retrieval.emptyEmbedding")
-                : t("retrieval.emptyRerank")}
-            </p>
+  const renderProviderSection = (kind: RetrievalKind) => (
+    <div className="mt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="flex items-center gap-1.5 text-[12px] font-semibold text-slate-800 dark:text-slate-100">
+          {kind === "embedding" ? (
+            <Database size={13} className="text-indigo-500 dark:text-indigo-300" />
           ) : (
-            items.map(renderProviderRow)
+            <Gauge size={13} className="text-indigo-500 dark:text-indigo-300" />
           )}
+          {kind === "embedding"
+            ? t("retrieval.embeddingTitle")
+            : t("retrieval.rerankTitle")}
+        </h3>
+        <span className="chip-muted">{t("common.count", { count: items.length })}</span>
+        <span className="flex-1" />
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setScope("user")}
+            className={clsx(
+              "rounded-lg px-2 py-1 text-[10.5px] transition",
+              scope === "user"
+                ? "bg-indigo-500 text-white"
+                : "bg-white/60 text-slate-600 hover:text-indigo-600 dark:bg-white/[0.06] dark:text-slate-300",
+            )}
+          >
+            {t("retrieval.sourceUser")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setScope("tenant")}
+            disabled={!canManageServer}
+            title={canManageServer ? "" : t("retrieval.scopeNeedServer")}
+            className={clsx(
+              "rounded-lg px-2 py-1 text-[10.5px] transition",
+              scope === "tenant"
+                ? "bg-indigo-500 text-white"
+                : "bg-white/60 text-slate-600 hover:text-indigo-600 dark:bg-white/[0.06] dark:text-slate-300",
+              !canManageServer && "cursor-not-allowed opacity-50",
+            )}
+          >
+            {t("retrieval.sourceTenant")}
+          </button>
         </div>
-        {kind === "embedding" ? (
-          <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
-            {t("retrieval.defaultHint")}
+        <button
+          type="button"
+          onClick={() => openCreate(kind)}
+          disabled={!canWrite}
+          title={canWrite ? "" : t("common.readOnlyRole")}
+          className="btn btn-primary px-2.5 py-1.5 text-[10.5px]"
+        >
+          <Plus size={11} />
+          {t("retrieval.newProvider")}
+        </button>
+      </div>
+      <p className="mt-1.5 text-[10px] text-slate-400">
+        {kind === "embedding" ? t("retrieval.defaultHint") : t("retrieval.presetHint")}
+      </p>
+      <div className="mt-2 space-y-2">
+        {loading ? (
+          <p className="flex items-center gap-2 text-[11px] text-slate-400">
+            <Loader2 size={12} className="animate-spin" />
+            {t("common.loading")}
           </p>
-        ) : null}
+        ) : items.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-slate-300/60 px-3 py-3 text-[10.5px] text-slate-400 dark:border-white/10">
+            {kind === "embedding" ? t("retrieval.emptyEmbedding") : t("retrieval.emptyRerank")}
+          </p>
+        ) : (
+          items.map((item) => renderProviderRow(item))
+        )}
+      </div>
+    </div>
+  );
+
+  const renderWeightField = (
+    key: "vector_weight" | "rerank_weight" | "rerank_top_n",
+    label: string,
+    value: string,
+    placeholder: string,
+    onChange: (next: string) => void,
+  ) => {
+    const source = sources[key] || "env";
+    return (
+      <div className="rounded-2xl border border-white/60 bg-white/40 px-3 py-2.5 dark:border-white/10 dark:bg-white/[0.03]">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] text-slate-600 dark:text-slate-300">{label}</span>
+          <span className={clsx("chip", sourceBadgeClass(source))}>{sourceText(source)}</span>
+          <span className="flex-1" />
+          <span className="block w-36 shrink-0">
+            <input
+              data-weight-field={key}
+              inputMode="decimal"
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              placeholder={placeholder}
+              disabled={!canWrite}
+              className="input px-2 py-1 text-[11px]"
+            />
+          </span>
+          <button
+            type="button"
+            data-clear-field={key}
+            onClick={() => void clearField(key)}
+            disabled={!canWrite || busy}
+            className="btn btn-ghost shrink-0 px-2 py-1 text-[10px]"
+          >
+            <X size={10} />
+            {t("retrieval.clearField")}
+          </button>
+        </div>
       </div>
     );
   };
 
-  return (
-    <motion.section
-      id="retrieval-settings"
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.05 }}
-      className="glass scroll-mt-24 rounded-3xl p-5 shadow-glass"
-    >
-      <div className="flex flex-wrap items-start gap-2">
-        <div className="flex min-w-0 flex-1 items-start gap-2">
-          <Settings2 size={15} className="mt-0.5 shrink-0 text-indigo-500 dark:text-indigo-300" />
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
-              {t("retrieval.title")}
-            </h2>
-            <p className="mt-1 text-[10.5px] leading-relaxed text-slate-500 dark:text-slate-400">
-              {t("retrieval.description")}
-            </p>
-          </div>
-        </div>
-        <span className="chip bg-indigo-500/10 text-indigo-600 dark:text-indigo-300">
-          {t("retrieval.sourceLabel")}: {defaultSource}
+  const renderWeights = () => (
+    <div className="mt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="flex items-center gap-1.5 text-[12px] font-semibold text-slate-800 dark:text-slate-100">
+          <Settings2 size={13} className="text-indigo-500 dark:text-indigo-300" />
+          {t("retrieval.weightsTitle")}
+        </h3>
+        <span className="chip-muted">
+          {activeScope?.configured
+            ? t("retrieval.scopeConfigured")
+            : t("retrieval.scopeNotConfigured")}
         </span>
-      </div>
-
-      {!canWrite ? (
-        <p className="mt-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[10.5px] text-amber-700 dark:text-amber-300">
-          {t("retrieval.readOnly")}
-        </p>
-      ) : null}
-
-      {renderSection("embedding")}
-      {renderSection("rerank")}
-
-      <div className="mt-5 rounded-2xl border border-white/60 bg-white/40 p-3 dark:border-white/10 dark:bg-white/[0.03]">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">
-            {t("retrieval.weightsTitle")}
-          </h3>
-          <span className="flex-1" />
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setScope("user")}
-              className={clsx(
-                "rounded-lg px-2 py-1 text-[10.5px] transition",
-                scope === "user"
-                  ? "bg-indigo-500 text-white"
-                  : "bg-white/60 text-slate-600 hover:text-indigo-600 dark:bg-white/[0.06] dark:text-slate-300",
-              )}
-            >
-              {t("retrieval.scopeUser")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setScope("tenant")}
-              disabled={!canManageServer}
-              title={canManageServer ? "" : t("retrieval.scopeNeedServer")}
-              className={clsx(
-                "rounded-lg px-2 py-1 text-[10.5px] transition",
-                scope === "tenant"
-                  ? "bg-indigo-500 text-white"
-                  : "bg-white/60 text-slate-600 hover:text-indigo-600 dark:bg-white/[0.06] dark:text-slate-300",
-                !canManageServer && "cursor-not-allowed opacity-50",
-              )}
-            >
-              {t("retrieval.scopeTenant")}
-            </button>
-          </div>
-        </div>
-        <p className="mt-1 text-[10px] text-slate-400">{t("retrieval.scopeHint")}</p>
-
-        <div className="mt-3 space-y-3">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[11px] text-slate-600 dark:text-slate-300">
-                {t("retrieval.vectorWeight")}
-              </span>
-              <span className="flex-1" />
-              <span className="font-mono text-[10.5px] text-indigo-600 dark:text-indigo-300">
-                {t("retrieval.weightCurrent", { value: vectorWeight.toFixed(2) })}
-              </span>
-              <input
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={vectorWeight}
-                data-field="vector-weight"
-                onChange={(event) =>
-                  setVectorWeight(Math.max(0, Math.min(1, Number(event.target.value) || 0)))
-                }
-                disabled={!canWrite}
-                className="input w-20 px-2 py-1 text-[11px]"
-              />
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={vectorWeight}
-              onChange={(event) => setVectorWeight(Number(event.target.value))}
-              disabled={!canWrite}
-              className="mt-1 w-full accent-indigo-500"
-            />
-            {vectorWeight === 0 ? (
-              <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-300">
-                {t("retrieval.vectorZero")}
-              </p>
-            ) : null}
-          </div>
-
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[11px] text-slate-600 dark:text-slate-300">
-                {t("retrieval.rerankWeight")}
-              </span>
-              <span className="flex-1" />
-              <span className="font-mono text-[10.5px] text-indigo-600 dark:text-indigo-300">
-                {t("retrieval.weightCurrent", { value: rerankWeight.toFixed(2) })}
-              </span>
-              <input
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={rerankWeight}
-                data-field="rerank-weight"
-                onChange={(event) =>
-                  setRerankWeight(Math.max(0, Math.min(1, Number(event.target.value) || 0)))
-                }
-                disabled={!canWrite}
-                className="input w-20 px-2 py-1 text-[11px]"
-              />
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={rerankWeight}
-              onChange={(event) => setRerankWeight(Number(event.target.value))}
-              disabled={!canWrite}
-              className="mt-1 w-full accent-indigo-500"
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] text-slate-600 dark:text-slate-300">
-              {t("retrieval.topN")}
-            </span>
-            <span className="flex-1" />
-            <input
-              type="number"
-              min={1}
-              max={50}
-              value={topN}
-              data-field="top-n"
-              onChange={(event) =>
-                setTopN(Math.max(1, Math.min(50, Math.trunc(Number(event.target.value) || 1))))
-              }
-              disabled={!canWrite}
-              className="input w-20 px-2 py-1 text-[11px]"
-            />
-          </div>
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="flex-1" />
+        <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => {
-              setVectorWeight(0.55);
-              setRerankWeight(0.5);
-              setTopN(12);
-            }}
-            disabled={!canWrite}
-            className="btn btn-ghost px-2.5 py-1.5 text-[10.5px]"
+            data-scope="user"
+            onClick={() => setScope("user")}
+            className={clsx(
+              "rounded-lg px-2 py-1 text-[10.5px] transition",
+              scope === "user"
+                ? "bg-indigo-500 text-white"
+                : "bg-white/60 text-slate-600 hover:text-indigo-600 dark:bg-white/[0.06] dark:text-slate-300",
+            )}
           >
-            {t("retrieval.restoreDefaults")}
+            {t("retrieval.sourceUser")}
           </button>
-          <span className="flex-1" />
-          {canWrite ? (
+          <button
+            type="button"
+            data-scope="tenant"
+            onClick={() => setScope("tenant")}
+            disabled={!canManageServer}
+            title={canManageServer ? "" : t("retrieval.scopeNeedServer")}
+            className={clsx(
+              "rounded-lg px-2 py-1 text-[10.5px] transition",
+              scope === "tenant"
+                ? "bg-indigo-500 text-white"
+                : "bg-white/60 text-slate-600 hover:text-indigo-600 dark:bg-white/[0.06] dark:text-slate-300",
+              !canManageServer && "cursor-not-allowed opacity-50",
+            )}
+          >
+            {t("retrieval.sourceTenant")}
+          </button>
+        </div>
+      </div>
+      <p className="mt-1 text-[10px] text-slate-400">{t("retrieval.scopeHint")}</p>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_260px]">
+        <div className="min-w-0 space-y-2">
+          {renderWeightField(
+            "vector_weight",
+            t("retrieval.vectorWeight"),
+            weightForm.vector,
+            t("retrieval.inheritDefault", { value: defaults.vector_weight }),
+            (next) => setWeightForm((prev) => ({ ...prev, vector: next })),
+          )}
+          {renderWeightField(
+            "rerank_weight",
+            t("retrieval.rerankWeight"),
+            weightForm.rerank,
+            t("retrieval.inheritDefault", { value: defaults.rerank_weight }),
+            (next) => setWeightForm((prev) => ({ ...prev, rerank: next })),
+          )}
+          {renderWeightField(
+            "rerank_top_n",
+            t("retrieval.topN"),
+            weightForm.topN,
+            t("retrieval.inheritDefault", { value: defaults.rerank_top_n }),
+            (next) => setWeightForm((prev) => ({ ...prev, topN: next })),
+          )}
+          {weightForm.vector.trim() === "0" ? (
+            <p className="text-[10px] text-amber-600 dark:text-amber-300">
+              {t("retrieval.vectorZero")}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
             <button
               type="button"
-              onClick={() => void saveSettings()}
-              disabled={busy}
-              className="btn btn-primary px-3 py-1.5 text-[10.5px]"
+              onClick={() => {
+                setClearScopeError("");
+                setClearScopeOpen(true);
+              }}
+              disabled={!canWrite || busy}
+              className="btn btn-ghost px-2.5 py-1.5 text-[10.5px] text-rose-600 dark:text-rose-300"
             >
-              {busy ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
-              {busy ? t("retrieval.saving") : t("retrieval.saveSettings")}
+              <Trash2 size={11} />
+              {t("retrieval.clearScope")}
             </button>
-          ) : null}
+            <span className="flex-1" />
+            {canWrite ? (
+              <button
+                type="button"
+                onClick={() => void saveSettings()}
+                disabled={busy}
+                className="btn btn-primary px-3 py-1.5 text-[10.5px]"
+              >
+                {busy ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+                {busy ? t("retrieval.saving") : t("retrieval.saveSettings")}
+              </button>
+            ) : null}
+          </div>
         </div>
+
+        <aside className="min-w-0 self-start rounded-2xl border border-indigo-400/20 bg-indigo-500/[0.05] px-3 py-3 lg:sticky lg:top-4">
+          <div className="flex items-center gap-1.5">
+            <Gauge size={12} className="text-indigo-500 dark:text-indigo-300" />
+            <span className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">
+              {t("retrieval.effectiveTitle")}
+            </span>
+          </div>
+          <p className="mt-0.5 text-[9.5px] text-slate-400">{t("retrieval.effectiveHint")}</p>
+          <div className="mt-2 space-y-1.5 font-mono text-[10.5px] text-slate-600 dark:text-slate-300">
+            {[
+              {
+                key: "vector_weight",
+                label: t("retrieval.vectorShort"),
+                value: effectiveWeights?.vector,
+              },
+              {
+                key: "rerank_weight",
+                label: t("retrieval.rerankShort"),
+                value: effectiveWeights?.rerank,
+              },
+              {
+                key: "rerank_top_n",
+                label: t("retrieval.topNShort"),
+                value: effectiveWeights?.top_n,
+              },
+            ].map((row) => (
+              <div key={row.key} className="flex flex-wrap items-center gap-1.5">
+                <span className="text-slate-400">{row.label}</span>
+                <span className="font-semibold">{row.value ?? "-"}</span>
+                <span
+                  className={clsx("chip", sourceBadgeClass(effectiveSources[row.key] || "env"))}
+                >
+                  {sourceText(effectiveSources[row.key] || "env")}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 space-y-1 border-t border-white/60 pt-2 text-[9.5px] text-slate-400 dark:border-white/10">
+            <p className="break-all">
+              {t("retrieval.diagEmbedding")}: {settings?.effective?.embedding?.model || "-"}
+            </p>
+            <p className="break-all">
+              {t("retrieval.diagRerank")}: {settings?.effective?.rerank?.model || "-"}
+            </p>
+          </div>
+        </aside>
       </div>
 
       <div className="mt-3 rounded-2xl border border-white/60 bg-white/30 dark:border-white/10 dark:bg-white/[0.02]">
@@ -899,37 +1111,91 @@ export default function RetrievalCard({
             <div className="min-w-0 space-y-1 font-mono text-[10px] leading-relaxed text-slate-600 dark:text-slate-300">
               <div className="break-all">
                 {t("retrieval.diagEmbedding")}: {t("retrieval.provider")}=
-                {settings.embedding.provider_id || "-"} {t("retrieval.modelShort")}=
-                {settings.embedding.model || "-"} {t("retrieval.dimShort")}=
-                {settings.embedding.dim ?? "-"} {t("retrieval.source")}=
-                {sourceText(settings.sources.embedding || settings.embedding.source)}
+                {settings.effective?.embedding?.provider_id || "-"}{" "}
+                {t("retrieval.modelShort")}={settings.effective?.embedding?.model || "-"}{" "}
+                {t("retrieval.dimShort")}={settings.effective?.embedding?.dim ?? "-"}{" "}
+                {t("retrieval.source")}=
+                {sourceText(sources.embedding || settings.effective?.embedding?.source || "env")}
               </div>
               <div className="break-all">
                 {t("retrieval.diagRerank")}: {t("retrieval.provider")}=
-                {settings.rerank.provider_id || "-"} {t("retrieval.modelShort")}=
-                {settings.rerank.model || "-"} {t("retrieval.source")}=
-                {sourceText(settings.sources.rerank || settings.rerank.source)}
+                {settings.effective?.rerank?.provider_id || "-"}{" "}
+                {t("retrieval.modelShort")}={settings.effective?.rerank?.model || "-"}{" "}
+                {t("retrieval.source")}=
+                {sourceText(sources.rerank || settings.effective?.rerank?.source || "env")}
               </div>
               <div className="break-all">
                 {t("retrieval.diagWeights")}: {t("retrieval.vectorShort")}=
-                {settings.weights.vector} ({sourceText(settings.sources.vector_weight)}){" "}
-                {t("retrieval.rerankShort")}={settings.weights.rerank} (
-                {sourceText(settings.sources.rerank_weight)}) {t("retrieval.topNShort")}=
-                {settings.weights.top_n} ({sourceText(settings.sources.rerank_top_n)})
+                {effectiveWeights?.vector} ({sourceText(sources.vector_weight || "env")}){" "}
+                {t("retrieval.rerankShort")}={effectiveWeights?.rerank} (
+                {sourceText(sources.rerank_weight || "env")}) {t("retrieval.topNShort")}=
+                {effectiveWeights?.top_n} ({sourceText(sources.rerank_top_n || "env")})
               </div>
             </div>
           </div>
         ) : null}
       </div>
 
+      <ConfirmDialog
+        open={clearScopeOpen}
+        title={t("retrieval.clearScopeTitle")}
+        description={t("retrieval.clearScopeDesc", { scope: sourceText(scope) })}
+        confirmLabel={t("retrieval.clearScope")}
+        busy={clearScopeBusy}
+        error={clearScopeError}
+        onConfirm={() => void clearScopeSettings()}
+        onClose={() => {
+          if (clearScopeBusy) return;
+          setClearScopeOpen(false);
+          setClearScopeError("");
+        }}
+      />
+    </div>
+  );
+
+  const title =
+    section === "embedding"
+      ? t("retrieval.embeddingTitle")
+      : section === "rerank"
+        ? t("retrieval.rerankTitle")
+        : t("retrieval.weightsTitle");
+
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="glass rounded-3xl p-4 shadow-glass sm:p-5"
+    >
+      <div className="flex flex-wrap items-start gap-2">
+        <Settings2 size={15} className="mt-0.5 shrink-0 text-indigo-500 dark:text-indigo-300" />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">
+            {title}
+          </h2>
+          <p className="mt-1 text-[10.5px] leading-relaxed text-slate-500 dark:text-slate-400">
+            {t("retrieval.description")}
+          </p>
+        </div>
+        {section !== "weights" ? (
+          <span className="chip bg-indigo-500/10 text-indigo-600 dark:text-indigo-300">
+            {t("retrieval.sourceLabel")}:{" "}
+            {sourceText(scope === "tenant" ? "tenant" : "user")}
+          </span>
+        ) : null}
+      </div>
+
+      {!canWrite ? (
+        <p className="mt-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[10.5px] text-amber-700 dark:text-amber-300">
+          {t("retrieval.readOnly")}
+        </p>
+      ) : null}
+
+      {section === "weights" ? renderWeights() : renderProviderSection(section)}
+
       <Modal
         open={Boolean(form)}
         title={form?.id ? t("retrieval.editTitle") : t("retrieval.createTitle")}
-        subtitle={
-          form?.kind === "rerank"
-            ? t("retrieval.presetHint")
-            : t("retrieval.defaultHint")
-        }
+        subtitle={form?.kind === "rerank" ? t("retrieval.presetHint") : t("retrieval.defaultHint")}
         onClose={() => {
           if (busy) return;
           setForm(null);
@@ -945,6 +1211,7 @@ export default function RetrievalCard({
                   {t("retrieval.name")}
                 </span>
                 <input
+                  data-field="provider-name"
                   value={form.name}
                   onChange={(event) => patchForm({ name: event.target.value })}
                   placeholder={t("retrieval.namePlaceholder")}
@@ -953,9 +1220,26 @@ export default function RetrievalCard({
               </label>
               <label className="block min-w-0">
                 <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
+                  {t("retrieval.kind")}
+                </span>
+                <select
+                  data-field="provider-kind"
+                  value={form.kind}
+                  onChange={(event) => switchKind(event.target.value as RetrievalKind)}
+                  disabled={Boolean(form.id)}
+                  title={form.id ? t("retrieval.kindImmutable") : ""}
+                  className="select disabled:opacity-60"
+                >
+                  <option value="embedding">embedding</option>
+                  <option value="rerank">rerank</option>
+                </select>
+              </label>
+              <label className="block min-w-0">
+                <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
                   {t("retrieval.backend")}
                 </span>
                 <select
+                  data-field="provider-backend"
                   value={form.backend}
                   onChange={(event) => {
                     const value = event.target.value;
@@ -972,57 +1256,66 @@ export default function RetrievalCard({
                   }}
                   disabled={Boolean(form.id)}
                   title={form.id ? t("retrieval.backendLocked") : ""}
-                  className="select"
+                  className="select disabled:opacity-60"
                 >
-                  {(form.kind === "embedding"
-                    ? ["openai", "hash"]
-                    : RERANK_BACKENDS
-                  ).map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
+                  {(form.kind === "embedding" ? ["openai", "hash"] : RERANK_BACKENDS).map(
+                    (value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ),
+                  )}
                 </select>
-              </label>
-              <label className="block min-w-0 sm:col-span-2">
-                <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
-                  {t("retrieval.baseUrl")}
-                </span>
-                <input
-                  value={form.base_url}
-                  onChange={(event) => patchForm({ base_url: event.target.value })}
-                  placeholder="https://api.example.com/v1"
-                  className="input"
-                />
               </label>
               <label className="block min-w-0">
                 <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
                   {t("retrieval.model")}
                 </span>
                 <input
+                  data-field="provider-model"
                   value={form.model}
                   onChange={(event) => patchForm({ model: event.target.value })}
                   placeholder={t("retrieval.modelPlaceholder")}
                   className="input"
                 />
               </label>
+              {form.id ? (
+                <p className="text-[10px] text-slate-400 sm:col-span-2">
+                  {t("retrieval.kindImmutable")}
+                </p>
+              ) : null}
+              <label className="block min-w-0 sm:col-span-2">
+                <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
+                  {t("retrieval.baseUrl")}
+                </span>
+                <input
+                  data-field="provider-base-url"
+                  value={form.base_url}
+                  onChange={(event) => patchForm({ base_url: event.target.value })}
+                  placeholder="https://api.example.com/v1"
+                  className="input"
+                />
+              </label>
               {form.kind === "embedding" ? (
                 <label className="block min-w-0">
                   <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
-                    {t("retrieval.dim")}
-                    {form.backend === "hash" ? " *" : ""}
-                    {form.backend === "openai" ? (
-                      <span className="ml-1 text-[9.5px] text-slate-400">
-                        {t("retrieval.optional")}
-                      </span>
-                    ) : null}
+                    {t("retrieval.dim")}{" "}
+                    {form.backend === "hash" ? (
+                      <span className="text-rose-500">*</span>
+                    ) : (
+                      <span className="text-slate-400">（{t("retrieval.optional")}）</span>
+                    )}
                   </span>
                   <input
-                    type="number"
-                    min={1}
+                    data-field="provider-dim"
+                    inputMode="numeric"
                     value={form.dim}
                     onChange={(event) => patchForm({ dim: event.target.value })}
-                    placeholder={t("retrieval.dimPlaceholder")}
+                    placeholder={
+                      form.backend === "openai"
+                        ? t("retrieval.dimPlaceholderAuto")
+                        : t("retrieval.dimPlaceholder")
+                    }
                     className="input"
                   />
                 </label>
@@ -1033,13 +1326,13 @@ export default function RetrievalCard({
                 </span>
                 <span className="relative block">
                   <input
+                    data-field="provider-api-key"
                     type={showKey ? "text" : "password"}
                     value={form.api_key}
                     onChange={(event) => patchForm({ api_key: event.target.value })}
                     placeholder={
                       form.id &&
-                      [...embeddingItems, ...rerankItems].find((item) => item.id === form.id)
-                        ?.has_key
+                      items.find((item) => item.id === form.id)?.has_key
                         ? t("retrieval.apiKeyConfigured")
                         : t("retrieval.apiKeyPlaceholder")
                     }

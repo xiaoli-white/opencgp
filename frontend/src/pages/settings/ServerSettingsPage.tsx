@@ -13,7 +13,7 @@ import clsx from "clsx";
 import { api, type Health } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
-import ServerProvidersCard from "@/components/settings/ServerProvidersCard";
+import ProvidersEntryCard from "@/components/settings/ProvidersEntryCard";
 import UserReviewCard from "@/components/settings/UserReviewCard";
 import SettingsBreadcrumb from "@/components/settings/SettingsBreadcrumb";
 import NoAccessCard from "@/components/common/NoAccessCard";
@@ -106,17 +106,7 @@ export default function ServerSettingsPage() {
         }}
       />
 
-      <ServerProvidersCard
-        canManage={canServer}
-        onNotice={(message) => {
-          setError("");
-          setNotice(message);
-        }}
-        onError={(message) => {
-          setNotice("");
-          setError(message);
-        }}
-      />
+      <ProvidersEntryCard canManageServer={canServer} server />
 
       <motion.section
         initial={{ opacity: 0, y: 10 }}

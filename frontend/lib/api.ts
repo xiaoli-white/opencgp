@@ -414,6 +414,7 @@ export type RetrievalTestResult = {
   dim?: number;
   expected_dim?: number;
   sample_score?: number;
+  dim_updated?: boolean;
   error?: string;
 };
 
@@ -428,7 +429,37 @@ export type RetrievalEffectiveProvider = {
   error?: string;
 };
 
+export type RetrievalScopeSettings = {
+  embedding_provider_id: string | null;
+  rerank_provider_id: string | null;
+  vector_weight: number | null;
+  rerank_weight: number | null;
+  rerank_top_n: number | null;
+  configured: boolean;
+};
+
+export type RetrievalDefaults = {
+  vector_weight: number;
+  rerank_weight: number;
+  rerank_top_n: number;
+};
+
 export type RetrievalSettings = {
+  effective: {
+    embedding: RetrievalEffectiveProvider;
+    rerank: RetrievalEffectiveProvider;
+    weights: {
+      vector: number;
+      rerank: number;
+      top_n: number;
+      sources?: Record<string, string>;
+    };
+  };
+  scopes: {
+    user: RetrievalScopeSettings;
+    tenant: RetrievalScopeSettings;
+  };
+  defaults: RetrievalDefaults;
   embedding: RetrievalEffectiveProvider;
   rerank: RetrievalEffectiveProvider;
   weights: {
@@ -448,11 +479,11 @@ export type RetrievalSettings = {
 
 export type RetrievalSettingsPayload = {
   scope: "user" | "tenant";
-  embedding_provider_id?: string;
-  rerank_provider_id?: string;
-  vector_weight?: number;
-  rerank_weight?: number;
-  rerank_top_n?: number;
+  embedding_provider_id?: string | null;
+  rerank_provider_id?: string | null;
+  vector_weight?: number | null;
+  rerank_weight?: number | null;
+  rerank_top_n?: number | null;
 };
 
 export type EmbeddingStatus = {
@@ -1725,6 +1756,12 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+
+  clearRetrievalSettings: (scope: "user" | "tenant") =>
+    request<RetrievalSettings>(
+      `/api/v1/settings/retrieval/settings?scope=${encodeURIComponent(scope)}`,
+      { method: "DELETE" },
+    ),
 
   getEmbeddingStatus: (providerId?: string) =>
     request<EmbeddingStatus>(

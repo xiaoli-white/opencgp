@@ -379,7 +379,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 ? t("nav.media")
               : pathname === "/settings"
               ? t("nav.settings")
-              : pathname === "/settings/server"
+              : pathname.startsWith("/settings/providers")
+                ? t("providersHub.title")
+                : pathname === "/settings/server"
                 ? t("nav.server")
                 : activeCourse?.title ?? t("nav.course");
 

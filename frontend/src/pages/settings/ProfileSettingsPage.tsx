@@ -5,11 +5,9 @@ import { AlertCircle, ArrowRight, IdCard, Server, X } from "lucide-react";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
 import AccountCard from "@/components/settings/AccountCard";
-import ProviderCard from "@/components/settings/ProviderCard";
-import MyProvidersCard from "@/components/settings/MyProvidersCard";
+import ProvidersEntryCard from "@/components/settings/ProvidersEntryCard";
 import SpacesCard from "@/components/settings/SpacesCard";
 import ProfilesCard from "@/components/settings/ProfilesCard";
-import RetrievalCard from "@/components/settings/RetrievalCard";
 import RolesCard from "@/components/settings/RolesCard";
 import MembersCard from "@/components/settings/MembersCard";
 import QuotaCard from "@/components/settings/QuotaCard";
@@ -70,30 +68,12 @@ export default function ProfileSettingsPage() {
 
       <AccountCard canWrite={canWrite} onNotice={handleNotice} onError={handleError} />
 
-      <ProviderCard
-        canWrite={canWrite}
-        canManageServer={canServer}
-        onNotice={handleNotice}
-        onError={handleError}
-      />
-
-      <MyProvidersCard
-        canWrite={canWrite}
-        onNotice={handleNotice}
-        onError={handleError}
-      />
+      <ProvidersEntryCard canManageServer={canServer} />
 
       <SpacesCard onNotice={handleNotice} onError={handleError} />
 
       <ProfilesCard
         canWrite={canWrite}
-        onNotice={handleNotice}
-        onError={handleError}
-      />
-
-      <RetrievalCard
-        canWrite={canWrite}
-        canManageServer={canServer}
         onNotice={handleNotice}
         onError={handleError}
       />
