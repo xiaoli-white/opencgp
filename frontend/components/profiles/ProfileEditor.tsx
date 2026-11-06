@@ -383,7 +383,7 @@ function SamplePanel({
             </div>
           </div>
 
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <div className="flex min-w-0 flex-wrap items-start gap-1.5">
             {(sample.skipped ?? []).map((name) => (
               <span
                 key={`skipped-${name}`}
@@ -405,7 +405,7 @@ function SamplePanel({
               const symbol = verdict === "pass" ? "✓" : verdict === "warn" ? "⚠" : "✗";
               const active = openChip === item.name;
               return (
-                <div key={item.name} className="min-w-0">
+                <div key={item.name} className="flex min-w-0 flex-col items-start gap-1">
                   <button
                     type="button"
                     onClick={() => setOpenChip(active ? null : item.name)}
@@ -423,12 +423,29 @@ function SamplePanel({
                     <span className="font-mono">{item.name}</span>
                     <span>{symbol}</span>
                   </button>
+                  {active ? (
+                    <div
+                      className="max-w-[260px] break-words text-[10px] leading-relaxed text-slate-500 dark:text-slate-400"
+                      data-sample-detail={item.name}
+                    >
+                      {item.issues.length === 0
+                        ? t("profiles.sampleNoIssues")
+                        : item.issues
+                            .map((issue) =>
+                              issue.where ? `${issue.where}: ${issue.message}` : issue.message,
+                            )
+                            .join(" · ")}
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
           </div>
 
-          <div className="min-w-0 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400" data-sample-summary="true">
+          <div
+            className="mt-1 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400"
+            data-sample-summary="true"
+          >
             {t("profiles.sampleIssues", {
               count: (sample.validation?.results ?? []).reduce(
                 (total, item) => total + item.issues.length,
@@ -436,34 +453,6 @@ function SamplePanel({
               ),
             })}
           </div>
-
-          {openDetail ? (
-            <div
-              className="rounded-xl border border-white/60 bg-white/70 px-2.5 py-2 text-[10px] leading-relaxed text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-400"
-              data-sample-detail={openDetail.name}
-            >
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="font-mono text-[10px] text-slate-600 dark:text-slate-300">
-                  {openDetail.name}
-                </span>
-                <span className="text-[10px]">
-                  {openDetail.issues.length === 0
-                    ? t("profiles.sampleNoIssues")
-                    : t("profiles.sampleIssues", { count: openDetail.issues.length })}
-                </span>
-              </div>
-              {openDetail.issues.length > 0 ? (
-                <ul className="mt-1 list-disc space-y-0.5 pl-3">
-                  {openDetail.issues.map((issue, index) => (
-                    <li key={`${openDetail.name}-${index}`} className="break-words">
-                      {issue.where ? `${issue.where}: ` : ""}
-                      {issue.message}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          ) : null}
 
           <div className="flex flex-wrap items-center gap-1.5">
             <button
