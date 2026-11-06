@@ -14,6 +14,7 @@ from app.models.job import (
     KIND_PIECE_CREATE,
     KIND_PIECE_GENERATE,
     KIND_PIECE_REWRITE,
+    KIND_PIECE_VIDEO,
     KIND_RESEARCH,
     QUOTA_KIND_BY_JOB_KIND,
     STATUS_CANCELED,
@@ -73,6 +74,7 @@ class JobService:
     piece: Any = None
     generation: Any = None
     blueprint: Any = None
+    video: Any = None
     quota: Any = None
     llm_for: Callable[[str], Any] | None = None
     embedding_for: Callable[[str, str, str], Any] | None = None
@@ -93,6 +95,7 @@ class JobService:
             KIND_PIECE_CREATE: self._run_piece_create,
             KIND_PIECE_GENERATE: self._run_piece_generate,
             KIND_PIECE_REWRITE: self._run_piece_rewrite,
+            KIND_PIECE_VIDEO: self._run_piece_video,
             KIND_UNIT_GENERATE: self._run_unit_generate,
             KIND_BLUEPRINT_GENERATE: self._run_blueprint_generate,
             KIND_KB_EMBED_BACKFILL: self._run_kb_embed_backfill,
@@ -457,6 +460,72 @@ class JobService:
             "piece_id": piece.id,
             "current_version": piece.current_version,
             "words": len(piece.content),
+        }
+
+    async def _run_piece_video(
+        self, job: Job, payload: dict[str, Any], ctx: JobContext
+    ) -> dict[str, Any]:
+        ctx.ensure_active()
+        ctx.report(0.05)
+        if self.video is None:
+            raise ValueError("video generation service is not configured")
+        piece_id = str(payload.get("piece_id") or "").strip()
+        if not piece_id:
+            raise ValueError("missing piece_id")
+
+        piece = None
+        if self.piece is not None:
+            getter = getattr(self.piece, "get", None)
+            if callable(getter):
+                piece = getter(piece_id, ctx.tenant_id or None)
+        title = str(payload.get("title") or (getattr(piece, "title", "") if piece else "")).strip()
+        bullets = payload.get("bullets")
+        if not bullets and piece is not None:
+            bullets = [
+                f"{item.title}: {item.summary}" if item.summary else item.title
+                for item in piece.outline
+            ]
+        image_urls = payload.get("image_urls") or []
+        if not image_urls and piece is not None:
+            import re
+
+            image_urls = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", piece.content or "")
+
+        from app.models.auth import (
+            DEFAULT_TENANT_ID,
+            DEFAULT_USER_ID,
+            AuthContext,
+            Tenant,
+            User,
+        )
+
+        tenant_id = ctx.tenant_id or DEFAULT_TENANT_ID
+        user_id = ctx.user_id or DEFAULT_USER_ID
+        media_ctx = AuthContext(
+            user=User(id=user_id, email="", display_name=""),
+            tenant=Tenant(id=tenant_id, name=tenant_id),
+        )
+
+        def on_progress(value: float) -> None:
+            ctx.ensure_active()
+            ctx.report(0.05 + 0.9 * max(0.0, min(float(value), 1.0)))
+
+        asset = await self.video.generate(
+            media_ctx,
+            title=title,
+            bullets=list(bullets or []),
+            image_urls=list(image_urls or []),
+            on_progress=on_progress,
+        )
+        ctx.report(0.98)
+        ctx.ensure_active()
+        return {
+            "piece_id": piece_id,
+            "asset": asset.payload(),
+            "asset_id": asset.id,
+            "url": asset.url(),
+            "content_type": asset.content_type,
+            "bytes": int(asset.bytes),
         }
 
     async def _run_unit_generate(

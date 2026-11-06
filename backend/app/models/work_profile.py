@@ -68,6 +68,10 @@ class ProfileAssets(BaseModel):
     glossary: bool = False
     setting_book: bool = False
     character_sheet: bool = False
+    # Optional article illustration overrides. None means "use the global default".
+    auto_images: bool | None = None
+    max_images: int | None = None
+    style: str = ""
 
 
 class ProfileValidation(BaseModel):
@@ -341,6 +345,18 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
         ),
     )
 
+    auto_images_raw = assets_raw.get("auto_images")
+    auto_images = (
+        None
+        if auto_images_raw is None
+        else _as_bool(auto_images_raw, "assets.auto_images", errors, True)
+    )
+    max_images_raw = assets_raw.get("max_images")
+    max_images = (
+        None
+        if max_images_raw is None
+        else _as_int(max_images_raw, "assets.max_images", errors, 3, 0, 20)
+    )
     assets = ProfileAssets(
         glossary=_as_bool(assets_raw.get("glossary"), "assets.glossary", errors, False),
         setting_book=_as_bool(
@@ -349,6 +365,9 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
         character_sheet=_as_bool(
             assets_raw.get("character_sheet"), "assets.character_sheet", errors, False
         ),
+        auto_images=auto_images,
+        max_images=max_images,
+        style=_as_str(assets_raw.get("style"), "assets.style", errors),
     )
 
     validators = _as_str_list(validation_raw.get("validators"), "validation.validators", errors)

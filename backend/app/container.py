@@ -62,6 +62,7 @@ from app.services.profiles import ProfileService
 from app.services.validators import ValidatorRunner
 from app.services.accounts import AccountAdminService
 from app.services.media import MediaService
+from app.services.video import VideoService
 
 PROVIDER_CACHE_SIZE = 64
 
@@ -669,6 +670,7 @@ class Container:
                 repository=self.piece_repository(),
                 vectorstore=self.vectorstore(),
                 llm=self.llm(),
+                asset_max_images=getattr(self.settings.generation, "assets_max_images", 3),
             )
 
         return self._get_or_build("piece", build)
@@ -730,6 +732,7 @@ class Container:
                 piece=self.piece(),
                 generation=self.generation(),
                 blueprint=self.blueprint(),
+                video=self.video_service(),
                 quota=self.quota_service(),
                 llm_for=self.llm_for,
                 embedding_for=self.retrieval_embedding_for,
@@ -829,6 +832,33 @@ class Container:
             )
 
         return self._get_or_build("media_service", build)
+
+    def video_renderer(self):
+        def build():
+            settings = self.settings.video
+            backend = (settings.backend or "none").strip().lower()
+            if backend == "remotion":
+                from app.adapters.video.remotion import RemotionRenderer
+
+                return RemotionRenderer(
+                    node_bin=settings.node_bin,
+                    project=settings.project,
+                    timeout=settings.timeout,
+                )
+            return None
+
+        return self._get_or_build("video_renderer", build)
+
+    def video_service(self) -> VideoService:
+        def build() -> VideoService:
+            return VideoService(
+                media=self.media_service(),
+                renderer=self.video_renderer(),
+                backend=self.settings.video.backend,
+                public_base_url=getattr(self.settings.video, "public_base_url", ""),
+            )
+
+        return self._get_or_build("video_service", build)
 
     def executor(self) -> Executor:
         def build() -> Executor:

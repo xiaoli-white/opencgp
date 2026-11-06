@@ -28,6 +28,7 @@ KIND_PIECE_REWRITE = "piece_rewrite"
 KIND_UNIT_GENERATE = "unit_generate"
 KIND_BLUEPRINT_GENERATE = "blueprint_generate"
 KIND_KB_EMBED_BACKFILL = "kb_embed_backfill"
+KIND_PIECE_VIDEO = "piece_video"
 
 JOB_KINDS = (
     KIND_RESEARCH,
@@ -37,6 +38,7 @@ JOB_KINDS = (
     KIND_UNIT_GENERATE,
     KIND_BLUEPRINT_GENERATE,
     KIND_KB_EMBED_BACKFILL,
+    KIND_PIECE_VIDEO,
 )
 
 QUOTA_KIND_BY_JOB_KIND = {

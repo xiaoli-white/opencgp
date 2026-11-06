@@ -60,7 +60,13 @@ from app.models.mode import GenerationMode
 from app.models.thread import UnitThreadView
 from app.models.piece import PieceProfile
 from app.models.research import ResearchRun
-from app.models.job import JOB_KINDS, JOB_STATUSES, KIND_KB_EMBED_BACKFILL, Job
+from app.models.job import (
+    JOB_KINDS,
+    JOB_STATUSES,
+    KIND_KB_EMBED_BACKFILL,
+    KIND_PIECE_VIDEO,
+    Job,
+)
 from app.models.factcheck import FactCheckReport
 from app.services.jobs import JobContext
 from app.services.retrieval_providers import retrieval_request_cache
@@ -70,7 +76,7 @@ from app.services.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
 from app.services.metrics import get_metrics
 from app.services.textproc import line_diff
 from app.services.validators import ValidatorRunner
-from app.services.assets import AssetMaterializer
+from app.services.assets import DEFAULT_STYLE, AssetMaterializer
 from app.services.errors import (
     ShareExpiredError,
     ShareNotFoundError,
@@ -1508,20 +1514,47 @@ def get_unit(
     return unit.model_dump()
 
 
-def _asset_materializer():
+def _asset_materializer(spec: Any = None, *, auto_images: bool | None = None,
+                        max_images: int | None = None, style: str | None = None):
     """Illustration pipeline used by every content generation entry point.
 
-    Returns ``None`` when the image provider is not configured, in which case
-    the generator simply strips any marker the model produced.
+    Per-profile ``assets`` settings override the global defaults; explicit
+    arguments win only when the profile does not define that field. Returns
+    ``None`` when the image provider is not configured, in which case the
+    generator simply strips any marker the model produced.
     """
     media = container.media_service()
     provider = media.provider()
     if provider is None or getattr(provider, "is_placeholder", False):
         return None
+    profile_assets = getattr(spec, "assets", None) if spec is not None else None
+    profile_auto = getattr(profile_assets, "auto_images", None)
+    profile_max = getattr(profile_assets, "max_images", None)
+    profile_style = (getattr(profile_assets, "style", "") or "").strip()
+    resolved_auto = (
+        auto_images
+        if auto_images is not None
+        else (
+            profile_auto
+            if profile_auto is not None
+            else getattr(settings.generation, "assets_auto_images", True)
+        )
+    )
+    resolved_max = (
+        max_images
+        if max_images is not None
+        else (
+            profile_max
+            if profile_max is not None
+            else getattr(settings.generation, "assets_max_images", 3)
+        )
+    )
+    resolved_style = style if style is not None else (profile_style or DEFAULT_STYLE)
     return AssetMaterializer(
         media,
-        enabled=getattr(settings.generation, "assets_auto_images", True),
-        max_images=getattr(settings.generation, "assets_max_images", 3),
+        enabled=bool(resolved_auto),
+        max_images=int(resolved_max),
+        style=resolved_style,
     )
 
 
@@ -1550,7 +1583,9 @@ async def generate_unit(
             spec=_series_spec(container.series_repository().get_series(unit.series_id)),
             retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
             ctx=ctx,
-            assets=_asset_materializer(),
+            assets=_asset_materializer(
+                _series_spec(container.series_repository().get_series(unit.series_id))
+            ),
         )
     except UnitNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}") from exc
@@ -3367,6 +3402,12 @@ class PieceRevertRequest(BaseModel):
     version: int = Field(ge=1)
 
 
+class PieceVideoRequest(BaseModel):
+    title: str = ""
+    bullets: list[str] | None = None
+    image_urls: list[str] | None = None
+
+
 def _research_payload(run: ResearchRun) -> dict[str, Any]:
     return run.model_dump()
 
@@ -3611,8 +3652,9 @@ async def generate_piece_section(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_piece(piece_id, ctx, "write")
+    piece = _require_piece(piece_id, ctx, "write")
     payload = req or PieceSectionRequest()
+    spec = _piece_spec(piece)
     _charge(ctx, "piece", 1, ref_id=piece_id)
     try:
         section, piece = await container.piece().generate_section(
@@ -3623,6 +3665,9 @@ async def generate_piece_section(
             tenant_id=_tenant_of(ctx),
             llm=container.llm_for(ctx.user.id),
             retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
+            spec=spec,
+            ctx=ctx,
+            assets=_asset_materializer(spec),
         )
     except PieceSectionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"section not found: {exc}") from exc
@@ -3653,6 +3698,7 @@ async def generate_piece(
     if payload.expected_version is not None and int(payload.expected_version) != piece.current_version:
         return _conflict(VersionConflictError(int(payload.expected_version), piece.current_version))
     _charge(ctx, "piece", 1, ref_id=piece_id)
+    spec = _piece_spec(piece)
     updated = await container.piece().generate_all(
         piece_id,
         mode=payload.mode,
@@ -3660,6 +3706,9 @@ async def generate_piece(
         tenant_id=_tenant_of(ctx),
         llm=container.llm_for(ctx.user.id),
         retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
+        spec=spec,
+        ctx=ctx,
+        assets=_asset_materializer(spec),
     )
     report = await _validation_report(
         _piece_spec(updated),
@@ -3667,6 +3716,68 @@ async def generate_piece(
         {"piece_id": piece_id, "title": updated.title},
     )
     return {**updated.model_dump(), "validation": report.model_dump() if report else None}
+
+
+@app.post("/api/v1/pieces/{piece_id}/video", status_code=202)
+async def generate_piece_video(
+    piece_id: str,
+    request: Request,
+    req: PieceVideoRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    piece = _require_piece(piece_id, ctx, "write")
+    payload = req or PieceVideoRequest()
+    service = container.video_service()
+    try:
+        ok, reason = service.available()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"video generation is unavailable: {type(exc).__name__}: {exc}",
+        ) from exc
+    if not ok:
+        raise HTTPException(status_code=503, detail=reason)
+
+    title = (payload.title or piece.title or "").strip()
+    bullets = payload.bullets
+    if bullets is None:
+        bullets = [
+            f"{item.title}: {item.summary}" if item.summary else item.title
+            for item in piece.outline
+        ]
+    image_urls = payload.image_urls
+    if image_urls is None:
+        image_urls = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", piece.content or "")
+    base_url = str(request.base_url).rstrip("/")
+    resolved_images = [
+        item if item.startswith(("http://", "https://")) else f"{base_url}{item}"
+        for item in image_urls
+        if item
+    ]
+    try:
+        job = container.job_service().submit(
+            KIND_PIECE_VIDEO,
+            {
+                "piece_id": piece_id,
+                "title": title,
+                "bullets": list(bullets or []),
+                "image_urls": resolved_images,
+            },
+            _job_ctx(ctx),
+        )
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except QueueUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except UnsupportedJobKindError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "job_id": job.id,
+        "kind": job.kind,
+        "status": job.status,
+        "events": f"/api/v1/jobs/{job.id}/events",
+    }
 
 
 @app.post("/api/v1/pieces/{piece_id}/rewrite")

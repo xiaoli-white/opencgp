@@ -6,6 +6,7 @@ from app.models.auth import DEFAULT_TENANT_ID, AuthContext
 from app.models.media import (
     IMAGE_CONTENT_TYPES,
     IMAGE_EXTENSIONS,
+    MEDIA_EXTENSIONS,
     MEDIA_KIND_GENERATED,
     MEDIA_KIND_UPLOADED,
     MediaAsset,
@@ -49,6 +50,8 @@ def _sniff_content_type(data: bytes) -> str:
         return "image/jpeg"
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        return "video/mp4"
     return ""
 
 
@@ -86,18 +89,18 @@ class MediaService:
         source: str = SOURCE_UPLOAD,
     ) -> MediaAsset:
         if not data:
-            raise MediaInvalidError("image content is empty")
+            raise MediaInvalidError("media content is empty")
         if len(data) > self.max_bytes:
             raise MediaInvalidError(
-                f"images must not exceed {self.max_bytes // (1024 * 1024)}MB"
+                f"media must not exceed {self.max_bytes // (1024 * 1024)}MB"
             )
         mime = (content_type or "").split(";")[0].strip().lower()
-        extension = IMAGE_EXTENSIONS.get(mime, "")
+        extension = MEDIA_EXTENSIONS.get(mime, "")
         if not extension:
             sniffed = _sniff_content_type(data)
             if not sniffed:
-                raise MediaInvalidError("images support only png/jpg/jpeg/webp")
-            mime, extension = sniffed, IMAGE_EXTENSIONS[sniffed]
+                raise MediaInvalidError("unsupported media type; expected png/jpg/jpeg/webp/mp4")
+            mime, extension = sniffed, MEDIA_EXTENSIONS[sniffed]
         tenant_id = _tenant_of(ctx)
         user_id = ctx.user.id if ctx is not None and ctx.user is not None else ""
         asset_id = f"media_{uuid.uuid4().hex[:16]}"
@@ -105,7 +108,7 @@ class MediaService:
         try:
             self.storage.put(object_key, data, content_type=mime)
         except Exception as exc:  # noqa: BLE001
-            raise MediaInvalidError(f"failed to save the image: {exc}") from exc
+            raise MediaInvalidError(f"failed to save the media: {exc}") from exc
         width, height = _dimensions(data)
         asset = MediaAsset(
             id=asset_id,
@@ -147,9 +150,9 @@ class MediaService:
         try:
             return self.storage.get(asset.object_key)
         except FileNotFoundError as exc:
-            raise MediaAssetNotFoundError("image not found") from exc
+            raise MediaAssetNotFoundError("media not found") from exc
         except Exception as exc:  # noqa: BLE001
-            raise MediaAssetNotFoundError(f"failed to read the image: {exc}") from exc
+            raise MediaAssetNotFoundError(f"failed to read the media: {exc}") from exc
 
     def provider(self) -> ImageProvider | None:
         return self.image_provider

@@ -45,6 +45,7 @@ RERANK_BACKENDS = (
     "generic",
 )
 IMAGE_BACKENDS = ("none", "openai_images")
+VIDEO_BACKENDS = ("none", "remotion")
 EXECUTOR_BACKENDS = ("docker", "local", "none")
 
 
@@ -441,6 +442,25 @@ class ImageConfig:
 
 
 @dataclass
+class VideoConfig:
+    backend: str = "none"
+    node_bin: str = "node"
+    project: str = "tools/remotion"
+    public_base_url: str = ""
+    timeout: float = 300.0
+
+    @classmethod
+    def from_env(cls) -> "VideoConfig":
+        return cls(
+            backend=(_env("VIDEO_BACKEND", "none") or "none").strip().lower(),
+            node_bin=_env("VIDEO_NODE_BIN", "node") or "node",
+            project=_env("VIDEO_PROJECT", "tools/remotion") or "tools/remotion",
+            public_base_url=_env("VIDEO_PUBLIC_BASE_URL", ""),
+            timeout=max(1.0, float(_env("VIDEO_TIMEOUT", "300") or 300)),
+        )
+
+
+@dataclass
 class LockConfig:
     ttl_seconds: int = 120
 
@@ -529,6 +549,7 @@ class Settings:
     locks: LockConfig = field(default_factory=LockConfig)
     websearch: WebSearchConfig = field(default_factory=WebSearchConfig)
     image: ImageConfig = field(default_factory=ImageConfig)
+    video: VideoConfig = field(default_factory=VideoConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
     jobs: JobsConfig = field(default_factory=JobsConfig)
     exec: ExecConfig = field(default_factory=ExecConfig)
@@ -554,6 +575,7 @@ class Settings:
             locks=LockConfig.from_env(),
             websearch=WebSearchConfig.from_env(),
             image=ImageConfig.from_env(),
+            video=VideoConfig.from_env(),
             notify=NotifyConfig.from_env(),
             jobs=JobsConfig.from_env(),
             exec=ExecConfig.from_env(),

@@ -199,10 +199,15 @@ class GenerationService:
             or policy != "required"
         )
         asset_ids: list[str] = []
-        if assets is None or ctx is None:
+        materializer = assets.with_profile(spec) if assets is not None else None
+        if materializer is None or ctx is None:
             content = PLACEHOLDER.sub("", content).strip()
-        elif assets.has_placeholders(content):
-            content, asset_ids, asset_errors = await assets.materialize(ctx, content)
+        elif materializer.has_placeholders(content):
+            try:
+                content, asset_ids, asset_errors = await materializer.materialize(ctx, content)
+            except Exception as exc:  # noqa: BLE001 - illustration must not break generation
+                content = PLACEHOLDER.sub("", content).strip()
+                asset_errors = [f"{type(exc).__name__}: {exc}"[:200]]
             if asset_errors:
                 note_value = f"{note_value};assets:error={';'.join(asset_errors)[:200]}"
             elif asset_ids:

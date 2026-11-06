@@ -60,6 +60,9 @@ type EditorForm = {
   glossary: boolean;
   settingBook: boolean;
   characterSheet: boolean;
+  autoImages: boolean;
+  maxImages: number;
+  imageStyle: string;
   validators: string[];
   strictness: string;
   prompts: PromptForm;
@@ -88,6 +91,9 @@ const EMPTY_FORM: EditorForm = {
   glossary: false,
   settingBook: false,
   characterSheet: false,
+  autoImages: true,
+  maxImages: 3,
+  imageStyle: "",
   validators: ["citation"],
   strictness: "normal",
   prompts: { system: "", outline: "", unit: "", revise: "" },
@@ -107,6 +113,11 @@ function toInt(value: string, fallback: number): number {
 
 function toBool(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function clampImages(value: number): number {
+  if (!Number.isFinite(value)) return 3;
+  return Math.min(6, Math.max(1, Math.round(value)));
 }
 
 function formFromProfile(profile: WorkProfile | null): EditorForm {
@@ -137,6 +148,9 @@ function formFromProfile(profile: WorkProfile | null): EditorForm {
     glossary: toBool(spec.assets?.glossary, false),
     settingBook: toBool(spec.assets?.setting_book, false),
     characterSheet: toBool(spec.assets?.character_sheet, false),
+    autoImages: toBool(spec.assets?.auto_images, true),
+    maxImages: clampImages(spec.assets?.max_images ?? 3),
+    imageStyle: spec.assets?.style ?? "",
     validators: spec.validation?.validators ?? ["citation"],
     strictness: strictness === "loose" ? "relaxed" : strictness,
     prompts: {
@@ -183,6 +197,9 @@ function buildSpec(form: EditorForm): ProfileSpec {
       glossary: form.glossary,
       setting_book: form.settingBook,
       character_sheet: form.characterSheet,
+      auto_images: form.autoImages,
+      max_images: form.maxImages,
+      style: form.imageStyle.trim(),
     },
     validation: {
       validators: form.validators,
@@ -1081,6 +1098,53 @@ export default function ProfileEditor({
                         onChange={(next) => update("characterSheet", next)}
                       />
                     </div>
+                  </Section>
+
+                  <Section
+                    title={t("profiles.assetsTitle")}
+                    hint={t("profiles.assetsHint")}
+                  >
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-3"
+                      data-field="assets.auto_images"
+                    >
+                      <Toggle
+                        label={t("profiles.assetsAuto")}
+                        checked={form.autoImages}
+                        onChange={(next) => update("autoImages", next)}
+                      />
+                      <label className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                        {t("profiles.assetsMax")}
+                        <input
+                          type="number"
+                          min={1}
+                          max={6}
+                          step={1}
+                          value={form.maxImages}
+                          disabled={!form.autoImages}
+                          onChange={(event) =>
+                            update("maxImages", clampImages(toInt(event.target.value, 3)))
+                          }
+                          className={fieldClass("assets.max_images", "input mt-0 h-8 w-16")}
+                          data-field="assets.max_images"
+                        />
+                      </label>
+                    </div>
+                    <label className="block text-[11px] text-slate-500 dark:text-slate-400">
+                      {t("profiles.assetsStyle")}
+                      <textarea
+                        rows={2}
+                        value={form.imageStyle}
+                        disabled={!form.autoImages}
+                        onChange={(event) => update("imageStyle", event.target.value)}
+                        className={fieldClass("assets.style", "input mt-1 resize-y text-[11.5px]")}
+                        placeholder={t("profiles.assetsStyleHint")}
+                        data-field="assets.style"
+                      />
+                    </label>
+                    <p className="text-[10.5px] leading-relaxed text-slate-400 dark:text-slate-500">
+                      {t("profiles.assetsStyleHint")}
+                    </p>
                   </Section>
 
                   <Section title={t("profiles.validationSection")}>

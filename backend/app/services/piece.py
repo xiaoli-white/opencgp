@@ -6,6 +6,7 @@ import time
 import uuid
 from typing import Any, Callable, Mapping, Sequence
 
+from app.models.auth import AuthContext
 from app.models.citation import Citation
 from app.models.generation import Evidence
 from app.models.piece import (
@@ -24,6 +25,7 @@ from app.models.work_profile import ProfileSpec
 from app.ports.llm import LLMProvider
 from app.ports.piece_repository import PieceRepository
 from app.ports.vectorstore import VectorStore
+from app.services.assets import PLACEHOLDER, AssetMaterializer
 from app.services.errors import (
     PieceNotFoundError,
     PieceSectionNotFoundError,
@@ -64,10 +66,12 @@ class PieceService:
         max_evidence: int = 8,
         evidence_char_limit: int = 400,
         default_mode: str = "loose",
+        asset_max_images: int = 0,
     ) -> None:
         self.repository = repository
         self.vectorstore = vectorstore
         self.llm = llm
+        self.asset_max_images = max(0, int(asset_max_images or 0))
         self.default_top_k = default_top_k
         self.max_evidence = max_evidence
         self.evidence_char_limit = evidence_char_limit
@@ -307,6 +311,9 @@ class PieceService:
         tenant_id: str = "",
         llm: LLMProvider | None = None,
         retrieval: RetrievalContext | None = None,
+        spec: ProfileSpec | None = None,
+        ctx: AuthContext | None = None,
+        assets: AssetMaterializer | None = None,
     ) -> tuple[OutlineSection, Piece]:
         piece = self._require(piece_id)
         section = next(
@@ -320,8 +327,16 @@ class PieceService:
             piece, section, top_k, tenant_id, retrieval
         )
         content = await self._write_section(
-            provider, piece, section, evidence, resolved_mode, citations
+            provider, piece, section, evidence, resolved_mode, citations, spec
         )
+        content, asset_ids, asset_errors = await self._materialize_content(
+            ctx, assets, spec, content
+        )
+        note = f"section:{section.id}"
+        if asset_errors:
+            note = f"{note};assets:error={';'.join(asset_errors)[:200]}"
+        elif asset_ids:
+            note = f"{note};assets:{len(asset_ids)}"
         merged_citations = list(piece.citations)
         by_key = {
             (item.source_id, item.chunk_index): item for item in merged_citations
@@ -352,7 +367,7 @@ class PieceService:
             content=self._compose(piece, updated_outline),
             outline=updated_outline,
             citations=merged_citations,
-            note=f"section:{section.id}",
+            note=note,
             mode=resolved_mode.value,
         )
         if applied is None:
@@ -375,6 +390,9 @@ class PieceService:
         llm: LLMProvider | None = None,
         on_progress: Callable[[int, int], None] | None = None,
         retrieval: RetrievalContext | None = None,
+        spec: ProfileSpec | None = None,
+        ctx: AuthContext | None = None,
+        assets: AssetMaterializer | None = None,
     ) -> Piece:
         piece = self._require(piece_id)
         resolved_mode = GenerationMode.normalize(mode or piece.last_mode or self.default_mode)
@@ -382,6 +400,8 @@ class PieceService:
         sections: list[OutlineSection] = []
         citations: list[Citation] = []
         by_key: dict[tuple[str, int], Citation] = {}
+        asset_ids_total: list[str] = []
+        asset_errors: list[str] = []
         total = max(1, len(piece.outline))
         for index, section in enumerate(piece.outline, start=1):
             found, evidence = await self._evidence(
@@ -401,8 +421,18 @@ class PieceService:
                 by_key[key] = citation
                 citations.append(citation)
             content = await self._write_section(
-                provider, piece, section, evidence, resolved_mode, found
+                provider, piece, section, evidence, resolved_mode, found, spec
             )
+            budget_assets = assets
+            if assets is not None:
+                budget_assets = assets.with_profile(spec).with_limit(
+                    max(0, self.asset_max_images - len(asset_ids_total))
+                )
+            content, asset_ids, section_errors = await self._materialize_content(
+                ctx, budget_assets, spec, content
+            )
+            asset_ids_total.extend(asset_ids)
+            asset_errors.extend(section_errors)
             sections.append(
                 section.model_copy(
                     update={"content": content, "status": SECTION_GENERATED}
@@ -410,12 +440,17 @@ class PieceService:
             )
             if on_progress is not None:
                 on_progress(index, total)
+        note = "generate_all"
+        if asset_errors:
+            note = f"{note};assets:error={';'.join(asset_errors)[:200]}"
+        elif asset_ids_total:
+            note = f"{note};assets:{len(asset_ids_total)}"
         applied = self.repository.append_version(
             piece_id,
             content=self._compose(piece, sections),
             outline=sections,
             citations=citations,
-            note="generate_all",
+            note=note,
             mode=resolved_mode.value,
         )
         if applied is None:
@@ -481,6 +516,25 @@ class PieceService:
         if applied is None:
             raise PieceNotFoundError(piece_id)
         return applied
+
+    async def _materialize_content(
+        self,
+        ctx: AuthContext | None,
+        assets: AssetMaterializer | None,
+        spec: ProfileSpec | None,
+        content: str,
+    ) -> tuple[str, list[str], list[str]]:
+        """Replace image markers before persisting; failures only add a note."""
+        materializer = assets.with_profile(spec) if assets is not None else None
+        if materializer is None or ctx is None:
+            return PLACEHOLDER.sub("", content).strip(), [], []
+        if not materializer.has_placeholders(content):
+            return content, [], []
+        try:
+            return await materializer.materialize(ctx, content)
+        except Exception as exc:  # noqa: BLE001 - illustration must not break generation
+            cleaned = PLACEHOLDER.sub("", content).strip()
+            return cleaned, [], [f"{type(exc).__name__}: {exc}"[:200]]
 
     def _require(self, piece_id: str) -> Piece:
         piece = self.repository.get(piece_id)
@@ -641,6 +695,7 @@ class PieceService:
         evidence: Sequence[Evidence],
         mode: GenerationMode,
         citations: Sequence[Citation],
+        spec: ProfileSpec | None = None,
     ) -> str:
         if mode is GenerationMode.strict and not evidence:
             return NO_EVIDENCE_NOTICE
@@ -648,9 +703,9 @@ class PieceService:
             draft = self._placeholder_section(piece, section, evidence, mode)
             return self._finish(draft, mode)
         prompt = (
-            self._strict_prompt(piece, section, evidence)
+            self._strict_prompt(piece, section, evidence, spec)
             if mode is GenerationMode.strict
-            else self._loose_prompt(piece, section, evidence)
+            else self._loose_prompt(piece, section, evidence, spec)
         )
         text = await provider.complete(prompt)
         return self._finish(text, mode)
@@ -688,6 +743,7 @@ class PieceService:
         piece: Piece,
         section: OutlineSection,
         evidence: Sequence[Evidence],
+        spec: ProfileSpec | None = None,
     ) -> str:
         lines = [
             "You are a rigorous long-form writer working on one section of a single-page long-form piece.",
@@ -710,13 +766,36 @@ class PieceService:
             ]
             lines.append(f"[{item.marker}] {item.citation.source_name}: {snippet}")
         lines.append("Output only this section's body Markdown; do not output explanations.")
+        lines.extend(self._asset_prompt_lines(spec))
         return "\n".join(lines)
+
+
+    def _asset_prompt_lines(self, spec: ProfileSpec | None) -> list[str]:
+        """Ask for illustration markers when the profile or settings allow images."""
+        profile_assets = getattr(spec, "assets", None) if spec is not None else None
+        max_images = getattr(profile_assets, "max_images", None)
+        if max_images is None:
+            max_images = self.asset_max_images
+        auto_images = getattr(profile_assets, "auto_images", None)
+        if auto_images is not None and not bool(auto_images):
+            return []
+        max_images = max(0, int(max_images or 0))
+        if not max_images:
+            return []
+        return [
+            "",
+            f"You may add at most {max_images} illustration marker(s) in this section.",
+            "A marker is a line that contains exactly: [[image: a short, concrete scene description]]",
+            "Place it right below the paragraph it illustrates, and only where an image genuinely helps.",
+            "Do not mention the marker in the prose and do not number them.",
+        ]
 
     def _loose_prompt(
         self,
         piece: Piece,
         section: OutlineSection,
         evidence: Sequence[Evidence],
+        spec: ProfileSpec | None = None,
     ) -> str:
         lines = [
             "You are an experienced long-form writer working on one section of a single-page long-form piece.",
@@ -736,6 +815,7 @@ class PieceService:
                 ]
                 lines.append(f"[{item.marker}] {item.citation.source_name}: {snippet}")
         lines.append("Output only this section's body Markdown; do not output explanations.")
+        lines.extend(self._asset_prompt_lines(spec))
         return "\n".join(lines)
 
     def _rewrite_prompt(

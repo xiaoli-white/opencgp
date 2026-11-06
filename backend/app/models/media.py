@@ -7,7 +7,13 @@ from pydantic import BaseModel
 MEDIA_KIND_GENERATED = "generated"
 MEDIA_KIND_UPLOADED = "uploaded"
 MEDIA_KIND_SEARCHED = "searched"
-MEDIA_KINDS = (MEDIA_KIND_GENERATED, MEDIA_KIND_UPLOADED, MEDIA_KIND_SEARCHED)
+MEDIA_KIND_VIDEO = "video"
+MEDIA_KINDS = (
+    MEDIA_KIND_GENERATED,
+    MEDIA_KIND_UPLOADED,
+    MEDIA_KIND_SEARCHED,
+    MEDIA_KIND_VIDEO,
+)
 
 SOURCE_UPLOAD = "upload"
 SOURCE_URL = "url"
@@ -25,6 +31,18 @@ IMAGE_EXTENSIONS = {
     "image/jpeg": "jpg",
     "image/webp": "webp",
 }
+
+VIDEO_CONTENT_TYPES = {
+    "mp4": "video/mp4",
+}
+
+VIDEO_EXTENSIONS = {
+    "video/mp4": "mp4",
+}
+
+# Content types accepted by the media library. Image uploads stay restricted
+# to IMAGE_EXTENSIONS through detect_image_type().
+MEDIA_EXTENSIONS = {**IMAGE_EXTENSIONS, **VIDEO_EXTENSIONS}
 
 DEFAULT_IMAGE_SIZE = "1024x1024"
 

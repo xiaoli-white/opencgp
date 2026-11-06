@@ -1139,6 +1139,9 @@ export type ProfileAssetsSpec = {
   glossary?: boolean;
   setting_book?: boolean;
   character_sheet?: boolean;
+  auto_images?: boolean;
+  max_images?: number;
+  style?: string;
 };
 
 export type ProfileValidationSpec = {

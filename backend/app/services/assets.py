@@ -37,8 +37,37 @@ class AssetMaterializer:
         self.size = size or "1024x1024"
         self.style = (style or "").strip()
 
+    def with_limit(self, remaining: int) -> "AssetMaterializer":
+        """Return a copy capped to ``remaining`` images (used for a whole-piece budget)."""
+        return AssetMaterializer(
+            self.media,
+            enabled=self.enabled,
+            max_images=max(0, int(remaining)),
+            size=self.size,
+            style=self.style,
+        )
+
     def has_placeholders(self, text: str) -> bool:
         return bool(text) and PLACEHOLDER.search(text) is not None
+
+    def with_profile(self, spec: Any) -> "AssetMaterializer":
+        """Return a copy with optional per-profile illustration settings applied."""
+        profile_assets = getattr(spec, "assets", None) if spec is not None else None
+        if profile_assets is None:
+            return self
+        auto_images = getattr(profile_assets, "auto_images", None)
+        max_images = getattr(profile_assets, "max_images", None)
+        raw_style = getattr(profile_assets, "style", "") or ""
+        style = raw_style.strip()
+        if auto_images is None and max_images is None and not style:
+            return self
+        return AssetMaterializer(
+            self.media,
+            enabled=self.enabled if auto_images is None else bool(auto_images),
+            max_images=self.max_images if max_images is None else int(max_images),
+            size=self.size,
+            style=style or self.style,
+        )
 
     def _prompt_for(self, description: str) -> str:
         description = description.strip()
@@ -54,9 +83,9 @@ class AssetMaterializer:
         Markers beyond ``max_images`` and any marker that fails to render are
         removed from the body so raw markers never leak into the article.
         """
-        if not self.enabled or not text:
+        if not text:
             return text, [], []
-        if self.max_images == 0:
+        if not self.enabled or self.max_images == 0:
             return PLACEHOLDER.sub("", text).strip(), [], []
 
         matches = list(PLACEHOLDER.finditer(text))

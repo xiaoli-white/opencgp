@@ -192,6 +192,14 @@ class ImageGenerationError(RuntimeError):
     pass
 
 
+class VideoUnavailableError(RuntimeError):
+    pass
+
+
+class VideoRenderError(RuntimeError):
+    pass
+
+
 class MediaAssetNotFoundError(LookupError):
     pass
 
