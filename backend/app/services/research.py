@@ -38,6 +38,7 @@ PLACEHOLDER_WARNING = "未配置 LLM key，本研究为基于检索证据的占�
 NO_EVIDENCE_WARNING = "知识库与联网检索均无命中，本研究由大模型基于自身知识生成，未经证据核实"
 WEB_DISABLED_WARNING = "联网检索未启用，仅使用知识库证据"
 MAX_SECTION_CHARS = 400
+ProgressCallback = Callable[[str, float], None]
 
 
 class ResearchService:
@@ -79,7 +80,16 @@ class ResearchService:
         user_id: str = "",
         llm: LLMProvider | None = None,
         retrieval: RetrievalContext | None = None,
+        on_progress: ProgressCallback | None = None,
     ) -> ResearchRun:
+        def notify(stage: str, value: float) -> None:
+            if on_progress is None:
+                return
+            try:
+                on_progress(stage, max(0.0, min(float(value), 1.0)))
+            except Exception:
+                pass
+
         resolved_topic = (topic or "").strip()
         if not resolved_topic:
             raise ValueError("研究主题不能为空")
@@ -98,24 +108,34 @@ class ResearchService:
             provider=type(provider).__name__,
         )
         try:
+            notify("planning", 0.05)
             questions = await self._plan(provider, resolved_topic, resolved_depth)
             run.questions = questions
+            notify("planning", 0.10)
             citations, web_used, web_available = await self._gather(
-                questions, resolved_top_k, source_ids, tenant_id, retrieval
+                questions,
+                resolved_top_k,
+                source_ids,
+                tenant_id,
+                retrieval,
+                on_progress=notify,
             )
             citations = await self._apply_rerank(
-                resolved_topic, citations, user_id, retrieval
+                resolved_topic, citations, user_id, retrieval, on_progress=notify
             )
             run.citations = citations
             run.web_used = web_used
+            notify("synthesizing", 0.65)
             brief, warning = await self._synthesize(
                 provider, resolved_topic, questions, citations, resolved_depth
             )
+            notify("synthesizing", 0.92)
             run.brief = brief
             run.warning = self._warning(provider, citations, web_available, warning)
             if retrieval is not None:
                 run.retrieval = retrieval.summary()
                 run.warnings = list(retrieval.warnings)
+            notify("done", 0.95)
         except ResearchParseError:
             run.status = STATUS_FAILED
             run.warning = "研究综合失败：模型输出无法解析为结构化 JSON"
@@ -168,13 +188,15 @@ class ResearchService:
         source_ids: Sequence[str] | None,
         tenant_id: str,
         retrieval: RetrievalContext | None = None,
+        on_progress: ProgressCallback | None = None,
     ) -> tuple[list[Citation], int, bool]:
         citations: list[Citation] = []
         seen: set[str] = set()
         web_used = 0
         web_search = self.web_search
         web_available = bool(web_search is not None and web_search.healthcheck())
-        for question in questions:
+        total = max(1, len(questions))
+        for position, question in enumerate(questions, start=1):
             if retrieval is not None:
                 found, _ = await retrieval.search(
                     self.vectorstore,
@@ -225,6 +247,8 @@ class ResearchService:
                             },
                         )
                     )
+            if on_progress is not None:
+                on_progress("retrieving", 0.10 + 0.45 * position / total)
         return citations[: self.max_evidence], web_used, web_available
 
     async def _apply_rerank(
@@ -233,6 +257,7 @@ class ResearchService:
         citations: list[Citation],
         user_id: str,
         retrieval: RetrievalContext | None = None,
+        on_progress: ProgressCallback | None = None,
     ) -> list[Citation]:
         if not citations:
             return citations
@@ -250,6 +275,8 @@ class ResearchService:
             weight = self.rerank_weight
             top_n = self.rerank_top_n
             rerank_model = str(getattr(reranker, "model", "") or "") or None
+        if on_progress is not None:
+            on_progress("reranking", 0.55)
         try:
             scores = await reranker.rerank(
                 query, [citation.text for citation in citations], top_n
@@ -258,7 +285,11 @@ class ResearchService:
             print(f"[research] rerank 失败，跳过重排: {exc!r}")
             if retrieval is not None and "rerank_failed" not in retrieval.warnings:
                 retrieval.warnings.append("rerank_failed")
+            if on_progress is not None:
+                on_progress("reranking", 0.65)
             return citations
+        if on_progress is not None:
+            on_progress("reranking", 0.65)
         if len(scores) != len(citations):
             return citations
         for citation, score in zip(citations, scores):

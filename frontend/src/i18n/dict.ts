@@ -193,7 +193,7 @@ export const zh = {
     sharedSuffix: " · 共享给我 {count} 个",
   },
   myProviders: {
-    title: "我的模型通道",
+    title: "模型通道",
     add: "新增通道",
     hint: "个人通道仅你自己可见，可与服务器通道一起在「我的模型」里切换；未指定时使用服务器默认。",
     readOnlyHint: "当前角色只读，我的通道仅可查看。",
@@ -246,7 +246,7 @@ export const zh = {
     memberNote: "空间成员",
   },
   serverProviders: {
-    title: "服务器模型通道",
+    title: "模型通道",
     add: "新增通道",
     hint: "通道为全局配置，所有空间共用；个人密钥可覆盖通道密钥。",
     loading: "加载中…",
@@ -1779,7 +1779,7 @@ export const en: Dict = {
     sharedSuffix: " · {count} shared with me",
   },
   myProviders: {
-    title: "My model channels",
+    title: "Model channels",
     add: "Add channel",
     hint: "Personal channels are visible only to you and can be picked in My model alongside server channels; the server default is used otherwise.",
     readOnlyHint: "Read-only for your role — personal channels are view-only.",
@@ -1832,7 +1832,7 @@ export const en: Dict = {
     memberNote: "Space member",
   },
   serverProviders: {
-    title: "Server model channels",
+    title: "Model channels",
     add: "Add channel",
     hint: "Channels are global config shared by every space; personal keys can override the channel key.",
     loading: "Loading…",

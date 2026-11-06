@@ -331,7 +331,19 @@ class JobService:
         self, job: Job, payload: dict[str, Any], ctx: JobContext
     ) -> dict[str, Any]:
         ctx.ensure_active()
-        ctx.report(0.2)
+        stages: list[dict[str, Any]] = []
+        last_progress = max(float(job.progress or 0.0), STAGE_START)
+
+        def on_progress(stage: str, value: float) -> None:
+            nonlocal last_progress
+            resolved = max(0.0, min(float(value), 1.0))
+            if resolved < last_progress:
+                resolved = last_progress
+            stages.append({"stage": stage, "at": round(time.time(), 4)})
+            if resolved > last_progress:
+                last_progress = resolved
+                ctx.report(resolved)
+
         run = await self.research.run(
             payload.get("topic", ""),
             depth=int(payload.get("depth") or 1),
@@ -341,8 +353,9 @@ class JobService:
             user_id=ctx.user_id,
             llm=ctx.llm,
             retrieval=ctx.retrieval,
+            on_progress=on_progress,
         )
-        ctx.report(0.9)
+        ctx.report(max(last_progress, 0.9))
         ctx.ensure_active()
         return {
             "research_id": run.id,
@@ -353,6 +366,8 @@ class JobService:
             "citations": len(run.citations),
             "warnings": list(run.warnings),
             "retrieval": dict(run.retrieval),
+            "stage": stages[-1]["stage"] if stages else "",
+            "stages": stages,
         }
 
     async def _run_longform_create(
