@@ -36,6 +36,8 @@ from app.models.work_profile import ProfileSpec
 from app.ports.series_repository import SeriesRepository
 from app.ports.llm import LLMProvider
 from app.ports.vectorstore import VectorStore
+from app.models.auth import AuthContext
+from app.services.assets import PLACEHOLDER, AssetMaterializer
 from app.services.errors import UnitNotFoundError, VersionConflictError
 from app.services.factcheck import FactCheckService
 from app.services.retrieval_providers import RetrievalContext
@@ -87,6 +89,7 @@ class GenerationService:
         min_score: float = 0.15,
         factcheck: FactCheckService | None = None,
         validators: ValidatorRunner | None = None,
+        asset_max_images: int = 3,
     ) -> None:
         self.repository = repository
         self.vectorstore = vectorstore
@@ -98,6 +101,7 @@ class GenerationService:
         self.min_score = float(min_score)
         self.factcheck = factcheck
         self.validators = validators
+        self.asset_max_images = max(0, int(asset_max_images or 0))
 
     async def generate_unit(
         self,
@@ -112,6 +116,8 @@ class GenerationService:
         llm: LLMProvider | None = None,
         spec: ProfileSpec | None = None,
         retrieval: RetrievalContext | None = None,
+        ctx: AuthContext | None = None,
+        assets: AssetMaterializer | None = None,
     ) -> GenerationResult:
         unit = self.repository.get_unit(unit_id)
         if unit is None:
@@ -192,6 +198,16 @@ class GenerationService:
             or bool(evidence)
             or policy != "required"
         )
+        asset_ids: list[str] = []
+        if assets is None or ctx is None:
+            content = PLACEHOLDER.sub("", content).strip()
+        elif assets.has_placeholders(content):
+            content, asset_ids, asset_errors = await assets.materialize(ctx, content)
+            if asset_errors:
+                note_value = f"{note_value};assets:error={';'.join(asset_errors)[:200]}"
+            elif asset_ids:
+                note_value = f"{note_value};assets:{len(asset_ids)}"
+
         applied = self.repository.append_version(
             unit_id,
             content=content,
@@ -393,6 +409,7 @@ class GenerationService:
         lines.extend(self._evidence_block(evidence))
         lines.append("## Output")
         lines.append("Output only the body Markdown; do not output explanations, prefaces, or commentary about the writing process.")
+        lines.extend(self._asset_lines())
         return "\n".join(lines)
 
     def _build_loose_prompt(
@@ -448,6 +465,7 @@ class GenerationService:
             lines.extend(["(No relevant knowledge-base evidence was retrieved this time; you may write entirely from the model's own knowledge)", ""])
         lines.append("## Output")
         lines.append("Output only the body Markdown; do not output explanations, prefaces, or commentary about the writing process.")
+        lines.extend(self._asset_lines())
         return "\n".join(lines)
 
     def _build_free_prompt(
@@ -502,7 +520,26 @@ class GenerationService:
                 lines.append("")
         lines.append("## Output")
         lines.append("Output only the body Markdown; do not output explanations, prefaces, or commentary about the writing process.")
+        lines.extend(self._asset_lines())
         return "\n".join(lines)
+
+
+    def _asset_lines(self) -> list[str]:
+        """Ask the model to mark spots where an illustration would help.
+
+        The markers are resolved to real images after generation, so the body
+        text keeps its own order; the article is still the primary artifact.
+        """
+        if not self.asset_max_images:
+            return []
+        return [
+            "",
+            "## Illustration markers (optional)",
+            f"You may add at most {self.asset_max_images} illustration marker(s) in the whole body.",
+            "A marker is a line that contains exactly: [[image: a short, concrete scene description]]",
+            "Put it directly below the paragraph it illustrates, and only where an image genuinely helps understanding.",
+            "Do not mention the marker in the prose, do not number them, and do not output anything when no image is needed.",
+        ]
 
     @staticmethod
     def _unit_context(unit: Unit, spec: ProfileSpec | None = None) -> list[str]:

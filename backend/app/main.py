@@ -70,6 +70,7 @@ from app.services.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
 from app.services.metrics import get_metrics
 from app.services.textproc import line_diff
 from app.services.validators import ValidatorRunner
+from app.services.assets import AssetMaterializer
 from app.services.errors import (
     ShareExpiredError,
     ShareNotFoundError,
@@ -1507,6 +1508,23 @@ def get_unit(
     return unit.model_dump()
 
 
+def _asset_materializer():
+    """Illustration pipeline used by every content generation entry point.
+
+    Returns ``None`` when the image provider is not configured, in which case
+    the generator simply strips any marker the model produced.
+    """
+    media = container.media_service()
+    provider = media.provider()
+    if provider is None or getattr(provider, "is_placeholder", False):
+        return None
+    return AssetMaterializer(
+        media,
+        enabled=getattr(settings.generation, "assets_auto_images", True),
+        max_images=getattr(settings.generation, "assets_max_images", 3),
+    )
+
+
 @app.post("/api/v1/units/{unit_id}/generate")
 async def generate_unit(
     unit_id: str,
@@ -1531,6 +1549,8 @@ async def generate_unit(
             llm=container.llm_for(ctx.user.id),
             spec=_series_spec(container.series_repository().get_series(unit.series_id)),
             retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
+            ctx=ctx,
+            assets=_asset_materializer(),
         )
     except UnitNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}") from exc

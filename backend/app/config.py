@@ -293,6 +293,8 @@ class GenerationConfig:
     evidence_char_limit: int = 600
     max_evidence: int = 8
     default_mode: str = "strict"
+    assets_auto_images: bool = True
+    assets_max_images: int = 3
 
     @classmethod
     def from_env(cls) -> "GenerationConfig":
@@ -301,6 +303,9 @@ class GenerationConfig:
             evidence_char_limit=int(_env("GENERATION_EVIDENCE_CHAR_LIMIT", "600") or 600),
             max_evidence=int(_env("GENERATION_MAX_EVIDENCE", "8") or 8),
             default_mode=_env("GENERATION_DEFAULT_MODE", "strict"),
+            assets_auto_images=(_env("ASSETS_AUTO_IMAGES", "true") or "true").strip().lower()
+            in ("1", "true", "yes", "on"),
+            assets_max_images=max(0, int(_env("ASSETS_MAX_IMAGES", "3") or 3)),
         )
 
 
