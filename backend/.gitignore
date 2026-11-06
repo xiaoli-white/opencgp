@@ -4,8 +4,8 @@ __pycache__/
 .venv/
 venv/
 
-# 运行时数据（SQLite / 本地存储 / 向量索引）
+# Runtime data (SQLite, local storage, vector index)
 data/
 
-# 环境变量（勿提交真实密钥）
+# Environment files (never commit real keys)
 .env
