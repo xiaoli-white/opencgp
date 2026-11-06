@@ -4,7 +4,7 @@
 SQL 方言与驱动由 adapter 实现。
 
 约定：
-- 一讲对应一条讲级线程：``get_or_create_lesson_thread`` 幂等，重复调用返回同一条。
+- 一讲对应一条讲级线程：``get_or_create_unit_thread`` 幂等，重复调用返回同一条。
 - 消息只追加不修改，保证对话线可回放、可审计。
 - 消息按 ``created_at`` 升序返回，同一线程内时间戳单调递增。
 - 找不到实体时返回 ``None``，由上层决定错误语义。
@@ -20,18 +20,18 @@ from app.models.thread import Message, Thread
 
 @runtime_checkable
 class ConversationRepository(Protocol):
-    def get_or_create_lesson_thread(
-        self, lesson_id: str, course_id: str = "", title: str = ""
+    def get_or_create_unit_thread(
+        self, unit_id: str, series_id: str = "", title: str = ""
     ) -> Thread:
         ...
 
     def get_thread(self, thread_id: str) -> Thread | None:
         ...
 
-    def get_lesson_thread(self, lesson_id: str) -> Thread | None:
+    def get_unit_thread(self, unit_id: str) -> Thread | None:
         ...
 
-    def list_lesson_threads(self, lesson_id: str) -> list[Thread]:
+    def list_unit_threads(self, unit_id: str) -> list[Thread]:
         ...
 
     def append_message(
@@ -53,7 +53,7 @@ class ConversationRepository(Protocol):
         ...
 
     def list_threads(
-        self, course_ids: Sequence[str] | None = None, limit: int = 200
+        self, series_ids: Sequence[str] | None = None, limit: int = 200
     ) -> list[Thread]:
         ...
 

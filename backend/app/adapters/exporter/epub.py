@@ -95,7 +95,7 @@ def render(
 
     if document.front_matter.strip():
         body = "<h2>" + escape(
-            "课程信息" if document.source_type == "course" else "文档信息"
+            "课程信息" if document.source_type == "series" else "文档信息"
         ) + "</h2>" + markdown_to_html(document.front_matter.strip())
         files.append(("OEBPS/frontmatter.xhtml", _page(document.title, body)))
         manifest.append(

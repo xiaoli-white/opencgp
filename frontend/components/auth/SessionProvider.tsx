@@ -39,7 +39,7 @@ type SessionValue = {
   roleName: string;
   actions: RoleAction[];
   scope: RoleScope;
-  visibleCourseIds: string[] | "all";
+  visibleSeriesIds: string[] | "all";
   tenant: string;
   tenantName: string;
   tenants: TenantOption[];
@@ -88,7 +88,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const switchTenant = useCallback((tenant: string) => {
     if (!tenant || tenant === getTenantId()) return;
     persistTenant(tenant);
-    window.dispatchEvent(new Event("course-studio:refresh"));
+    window.dispatchEvent(new Event("series-studio:refresh"));
   }, []);
 
   const logout = useCallback(async () => {
@@ -100,7 +100,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     clearSession();
     setMe(null);
     setCaps(null);
-    window.dispatchEvent(new Event("course-studio:refresh"));
+    window.dispatchEvent(new Event("series-studio:refresh"));
   }, []);
 
   const value = useMemo<SessionValue>(() => {
@@ -117,7 +117,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       roleName,
       actions,
       scope: caps?.role?.scope ?? me?.scope ?? "all",
-      visibleCourseIds: caps?.visible_course_ids ?? "all",
+      visibleSeriesIds: caps?.visible_series_ids ?? "all",
       tenant: tenantId(me?.tenant),
       tenantName: tenantName(me?.tenant),
       tenants: (me?.tenants ?? []).map((item) => ({
@@ -153,7 +153,7 @@ export function useSession(): SessionValue {
     roleName: "",
     actions: [],
     scope: "all",
-    visibleCourseIds: "all",
+    visibleSeriesIds: "all",
     tenant: "",
     tenantName: "",
     tenants: [],

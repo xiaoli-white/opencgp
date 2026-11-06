@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 
-const STORAGE_KEY = "course-studio-theme";
+const STORAGE_KEY = "series-studio-theme";
 
 export default function ThemeToggle() {
   const [dark, setDark] = useState(false);

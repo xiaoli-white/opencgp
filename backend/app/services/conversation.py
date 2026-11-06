@@ -21,7 +21,7 @@ import re
 from typing import Sequence
 
 from app.models.citation import Citation
-from app.models.course import Course, Lesson
+from app.models.series import Series, Unit
 from app.models.mode import LOOSE_BANNER, GenerationMode, with_loose_notice
 from app.models.thread import (
     AmendResult,
@@ -31,12 +31,12 @@ from app.models.thread import (
     Thread,
 )
 from app.ports.conversation_repository import ConversationRepository
-from app.ports.course_repository import CourseRepository
+from app.ports.series_repository import SeriesRepository
 from app.ports.llm import LLMProvider
 from app.services.errors import (
     EmptyLLMResponseError,
-    LessonContentEmptyError,
-    LessonNotFoundError,
+    UnitContentEmptyError,
+    UnitNotFoundError,
     MessageNotFoundError,
     VersionConflictError,
 )
@@ -49,7 +49,7 @@ SELECTION_CHAR_LIMIT = 1200
 class ConversationService:
     def __init__(
         self,
-        repository: CourseRepository,
+        repository: SeriesRepository,
         conversations: ConversationRepository,
         llm: LLMProvider,
         history_limit: int = 20,
@@ -67,23 +67,23 @@ class ConversationService:
 
     async def ask(
         self,
-        lesson_id: str,
+        unit_id: str,
         question: str,
         selection: str | None = None,
         llm: LLMProvider | None = None,
     ) -> AskResult:
-        lesson, course, citations = self._context(lesson_id)
-        thread = self._lesson_thread(lesson)
+        unit, series, citations = self._context(unit_id)
+        thread = self._unit_thread(unit)
         history = self.conversations.list_messages(thread.id, limit=self.history_limit)
         selected = (selection or "").strip() or None
         prompt = self._build_ask_prompt(
-            course, lesson, citations, history, question, selected
+            series, unit, citations, history, question, selected
         )
 
         llm_provider = llm or self.llm
         provider = type(llm_provider).__name__
         if getattr(llm_provider, "is_placeholder", False):
-            answer = self._placeholder_answer(lesson, question, citations)
+            answer = self._placeholder_answer(unit, question, citations)
         else:
             answer = (await llm_provider.complete(prompt)).strip()
             if not answer:
@@ -94,38 +94,38 @@ class ConversationService:
             thread.id, "assistant", answer, citations
         )
         return AskResult(
-            lesson_id=lesson.id,
+            unit_id=unit.id,
             thread_id=thread.id,
             question=question,
             answer=answer,
             user_message_id=user_message.id,
             assistant_message_id=assistant_message.id,
             citations=citations,
-            grounded=bool(citations) and bool(lesson.content.strip()),
+            grounded=bool(citations) and bool(unit.content.strip()),
             provider=provider,
             prompt=prompt,
         )
 
     async def amend(
         self,
-        lesson_id: str,
+        unit_id: str,
         instruction: str,
         target: str | None = None,
         mode: str | None = None,
         expected_version: int | None = None,
         llm: LLMProvider | None = None,
     ) -> AmendResult:
-        lesson, course, citations = self._context(lesson_id)
-        if expected_version is not None and int(expected_version) != lesson.current_version:
-            raise VersionConflictError(int(expected_version), lesson.current_version)
-        current_content = lesson.content.strip()
+        unit, series, citations = self._context(unit_id)
+        if expected_version is not None and int(expected_version) != unit.current_version:
+            raise VersionConflictError(int(expected_version), unit.current_version)
+        current_content = unit.content.strip()
         if not current_content:
-            raise LessonContentEmptyError(lesson_id)
+            raise UnitContentEmptyError(unit_id)
         resolved_mode = GenerationMode.normalize(mode)
         resolved_target = (target or "").strip()
         prompt = self._build_amend_prompt(
-            course,
-            lesson,
+            series,
+            unit,
             current_content,
             citations,
             instruction,
@@ -148,7 +148,7 @@ class ConversationService:
 
         note = self._amend_note(instruction, resolved_target, resolved_mode)
         applied = self.repository.append_version(
-            lesson_id,
+            unit_id,
             content=new_content,
             citations=citations,
             note=note,
@@ -156,10 +156,10 @@ class ConversationService:
             mode=resolved_mode.value,
         )
         if applied is None:
-            raise LessonNotFoundError(lesson_id)
+            raise UnitNotFoundError(unit_id)
         updated, record = applied
 
-        thread = self._lesson_thread(lesson)
+        thread = self._unit_thread(unit)
         scope = f"[{resolved_target}] " if resolved_target else ""
         self.conversations.append_message(
             thread.id, "user", f"[amend:{resolved_mode.value}] {scope}{instruction.strip()}"
@@ -172,11 +172,11 @@ class ConversationService:
         )
 
         return AmendResult(
-            lesson_id=lesson_id,
+            unit_id=unit_id,
             instruction=instruction,
             target=resolved_target,
             version=record.version,
-            previous_version=lesson.current_version,
+            previous_version=unit.current_version,
             mode=resolved_mode.value,
             content=updated.content,
             citations=citations,
@@ -187,40 +187,40 @@ class ConversationService:
 
     async def drilldown(
         self,
-        lesson_id: str,
+        unit_id: str,
         message_id: str | None = None,
         question: str | None = None,
         llm: LLMProvider | None = None,
     ) -> DrilldownResult:
-        lesson, _course, lesson_citations = self._context(lesson_id)
-        thread = self.conversations.get_lesson_thread(lesson_id)
+        unit, _series, unit_citations = self._context(unit_id)
+        thread = self.conversations.get_unit_thread(unit_id)
         if thread is None:
-            raise MessageNotFoundError(lesson_id)
+            raise MessageNotFoundError(unit_id)
         messages = self.conversations.list_messages(thread.id)
         source = self._select_answer(messages, message_id, question)
         if source is None:
-            raise MessageNotFoundError(message_id or question or lesson_id)
+            raise MessageNotFoundError(message_id or question or unit_id)
 
         source_question = self._question_before(messages, source.id) or (question or "追问")
         appended = self._drilldown_section(source_question, source.content)
-        base = lesson.content.rstrip()
+        base = unit.content.rstrip()
         new_content = f"{base}\n\n{appended}" if base else appended
-        citations = source.citations or lesson_citations
+        citations = source.citations or unit_citations
 
         applied = self.repository.append_version(
-            lesson_id,
+            unit_id,
             content=new_content,
             citations=citations,
             note=DRILLDOWN_NOTE,
             status="amended",
-            mode=lesson.last_mode,
+            mode=unit.last_mode,
         )
         if applied is None:
-            raise LessonNotFoundError(lesson_id)
+            raise UnitNotFoundError(unit_id)
         updated, record = applied
 
         return DrilldownResult(
-            lesson_id=lesson_id,
+            unit_id=unit_id,
             thread_id=thread.id,
             source_message_id=source.id,
             version=record.version,
@@ -231,28 +231,28 @@ class ConversationService:
         )
 
     def _context(
-        self, lesson_id: str
-    ) -> tuple[Lesson, Course | None, list[Citation]]:
-        lesson = self.repository.get_lesson(lesson_id)
-        if lesson is None:
-            raise LessonNotFoundError(lesson_id)
-        course = self.repository.get_course(lesson.course_id)
+        self, unit_id: str
+    ) -> tuple[Unit, Series | None, list[Citation]]:
+        unit = self.repository.get_unit(unit_id)
+        if unit is None:
+            raise UnitNotFoundError(unit_id)
+        series = self.repository.get_series(unit.series_id)
         citations: list[Citation] = []
-        if lesson.current_version > 0:
-            version = self.repository.get_version(lesson_id, lesson.current_version)
+        if unit.current_version > 0:
+            version = self.repository.get_version(unit_id, unit.current_version)
             if version is not None:
                 citations = list(version.citations)
-        return lesson, course, citations
+        return unit, series, citations
 
-    def _lesson_thread(self, lesson: Lesson) -> Thread:
-        return self.conversations.get_or_create_lesson_thread(
-            lesson.id, lesson.course_id, f"{lesson.title} · 对话"
+    def _unit_thread(self, unit: Unit) -> Thread:
+        return self.conversations.get_or_create_unit_thread(
+            unit.id, unit.series_id, f"{unit.title} · 对话"
         )
 
     def _build_ask_prompt(
         self,
-        course: Course | None,
-        lesson: Lesson,
+        series: Series | None,
+        unit: Unit,
         citations: Sequence[Citation],
         history: Sequence[Message],
         question: str,
@@ -262,14 +262,14 @@ class ConversationService:
             "你是这门课程的助教，负责基于这一讲已写好的正文与引用证据回答读者追问。",
             "",
             "## 讲次",
-            f"- 课程：{course.title if course else '未命名课程'}",
-            f"- 讲次：第 {lesson.order_index} 讲 · {lesson.title}",
+            f"- 课程：{series.title if series else '未命名课程'}",
+            f"- 讲次：第 {unit.order_index} 讲 · {unit.title}",
         ]
-        if lesson.learning_objectives:
-            lines.append("- 学习目标：" + "；".join(lesson.learning_objectives))
+        if unit.learning_objectives:
+            lines.append("- 学习目标：" + "；".join(unit.learning_objectives))
 
         lines.extend(["", "## 当前正文（Markdown）"])
-        content = lesson.content.strip()
+        content = unit.content.strip()
         if content:
             lines.append(self._clip(content, self.content_char_limit))
         else:
@@ -327,8 +327,8 @@ class ConversationService:
 
     def _build_amend_prompt(
         self,
-        course: Course | None,
-        lesson: Lesson,
+        series: Series | None,
+        unit: Unit,
         content: str,
         citations: Sequence[Citation],
         instruction: str,
@@ -341,8 +341,8 @@ class ConversationService:
             else "你是经验丰富的课程编辑，负责按读者的自然语言指令修改一讲正文。",
             "",
             "## 讲次",
-            f"- 课程：{course.title if course else '未命名课程'}",
-            f"- 讲次：第 {lesson.order_index} 讲 · {lesson.title}",
+            f"- 课程：{series.title if series else '未命名课程'}",
+            f"- 讲次：第 {unit.order_index} 讲 · {unit.title}",
             "",
             "## 修改指令",
             instruction.strip(),
@@ -398,7 +398,7 @@ class ConversationService:
 
     def _placeholder_answer(
         self,
-        lesson: Lesson,
+        unit: Unit,
         question: str,
         citations: Sequence[Citation],
     ) -> str:
@@ -411,7 +411,7 @@ class ConversationService:
             "",
             "## 正文中的相关片段",
         ]
-        excerpts = self._relevant_excerpts(lesson.content, question)
+        excerpts = self._relevant_excerpts(unit.content, question)
         if excerpts:
             lines.extend(f"- {excerpt}" for excerpt in excerpts)
         else:

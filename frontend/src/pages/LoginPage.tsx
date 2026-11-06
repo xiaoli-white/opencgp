@@ -72,7 +72,7 @@ export default function LoginPage() {
       setToken(payload.token);
       const first = tenantId(payload.tenants?.[0]?.tenant);
       if (first) setTenantId(first, false);
-      window.dispatchEvent(new Event("course-studio:refresh"));
+      window.dispatchEvent(new Event("series-studio:refresh"));
       go();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("auth.genericError"));

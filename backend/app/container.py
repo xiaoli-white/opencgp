@@ -19,7 +19,7 @@ from app.config import Settings, get_settings
 from app.ports.auth_repository import AuthRepository
 from app.ports.conversation_repository import ConversationRepository
 from app.ports.blueprint_repository import BlueprintRepository
-from app.ports.course_repository import CourseRepository
+from app.ports.series_repository import SeriesRepository
 from app.ports.database import Database
 from app.ports.embedding import EmbeddingProvider
 from app.ports.exporter import Exporter
@@ -37,7 +37,7 @@ from app.ports.image_provider import ImageProvider
 from app.ports.media_repository import MediaRepository
 from app.ports.executor import Executor
 from app.ports.research_repository import ResearchRepository
-from app.ports.longform_repository import LongformRepository
+from app.ports.piece_repository import PieceRepository
 from app.ports.job_repository import JobRepository
 from app.ports.job_queue import JobQueue
 from app.ports.creation_profile_repository import CreationProfileRepository
@@ -55,7 +55,7 @@ from app.services.provider_settings import ProviderSettingsService
 from app.services.quota import QuotaService
 from app.services.user_providers import UserProviderService
 from app.services.research import ResearchService
-from app.services.longform import LongformService
+from app.services.piece import PieceService
 from app.services.jobs import JobService
 from app.services.creation_profiles import CreationProfileService
 from app.services.profiles import ProfileService
@@ -351,25 +351,25 @@ class Container:
     def export_service(self) -> ExportService:
         def build() -> ExportService:
             return ExportService(
-                course_repository=self.course_repository(),
-                longform_repository=self.longform_repository(),
+                series_repository=self.series_repository(),
+                piece_repository=self.piece_repository(),
                 exporter=self.exporter(),
             )
 
         return self._get_or_build("export_service", build)
 
-    def course_repository(self) -> CourseRepository:
-        def build() -> CourseRepository:
-            from app.adapters.database.course_repository import DatabaseCourseRepository
+    def series_repository(self) -> SeriesRepository:
+        def build() -> SeriesRepository:
+            from app.adapters.database.series_repository import DatabaseSeriesRepository
 
-            return DatabaseCourseRepository(database=self.database())
+            return DatabaseSeriesRepository(database=self.database())
 
-        return self._get_or_build("course_repository", build)
+        return self._get_or_build("series_repository", build)
 
     def generation(self) -> GenerationService:
         def build() -> GenerationService:
             return GenerationService(
-                repository=self.course_repository(),
+                repository=self.series_repository(),
                 vectorstore=self.vectorstore(),
                 llm=self.llm(),
                 default_top_k=self.settings.generation.top_k,
@@ -388,7 +388,7 @@ class Container:
             return FactCheckService(
                 vectorstore=self.vectorstore(),
                 llm=self.llm(),
-                repository=self.course_repository(),
+                repository=self.series_repository(),
             )
 
         return self._get_or_build("factcheck", build)
@@ -415,7 +415,7 @@ class Container:
             default_mode = settings.default_mode or self.settings.generation.default_mode
             return BlueprintService(
                 repository=self.blueprint_repository(),
-                course_repository=self.course_repository(),
+                series_repository=self.series_repository(),
                 vectorstore=self.vectorstore(),
                 llm=self.llm(),
                 default_top_k=settings.top_k,
@@ -653,25 +653,25 @@ class Container:
 
         return self._get_or_build("research", build)
 
-    def longform_repository(self) -> LongformRepository:
-        def build() -> LongformRepository:
-            from app.adapters.database.longform_repository import (
-                DatabaseLongformRepository,
+    def piece_repository(self) -> PieceRepository:
+        def build() -> PieceRepository:
+            from app.adapters.database.piece_repository import (
+                DatabasePieceRepository,
             )
 
-            return DatabaseLongformRepository(database=self.database())
+            return DatabasePieceRepository(database=self.database())
 
-        return self._get_or_build("longform_repository", build)
+        return self._get_or_build("piece_repository", build)
 
-    def longform(self) -> LongformService:
-        def build() -> LongformService:
-            return LongformService(
-                repository=self.longform_repository(),
+    def piece(self) -> PieceService:
+        def build() -> PieceService:
+            return PieceService(
+                repository=self.piece_repository(),
                 vectorstore=self.vectorstore(),
                 llm=self.llm(),
             )
 
-        return self._get_or_build("longform", build)
+        return self._get_or_build("piece", build)
 
     def job_repository(self) -> JobRepository:
         def build() -> JobRepository:
@@ -727,7 +727,7 @@ class Container:
                 repository=self.job_repository(),
                 queue=self.job_queue(),
                 research=self.research(),
-                longform=self.longform(),
+                piece=self.piece(),
                 generation=self.generation(),
                 blueprint=self.blueprint(),
                 quota=self.quota_service(),
@@ -784,8 +784,8 @@ class Container:
                 provider_settings=self.provider_settings_repository(),
                 locks=self.lock_repository(),
                 conversations=self.conversation_repository(),
-                courses=self.course_repository(),
-                longforms=self.longform_repository(),
+                series=self.series_repository(),
+                pieces=self.piece_repository(),
             )
 
         return self._get_or_build("account_admin", build)
@@ -931,8 +931,8 @@ class Container:
 
             return ShareService(
                 repository=self.share_repository(),
-                course_repository=self.course_repository(),
-                longform_repository=self.longform_repository(),
+                series_repository=self.series_repository(),
+                piece_repository=self.piece_repository(),
             )
 
         return self._get_or_build("shares", build)
@@ -985,7 +985,7 @@ class Container:
         def build() -> ConversationService:
             settings = self.settings.conversation
             return ConversationService(
-                repository=self.course_repository(),
+                repository=self.series_repository(),
                 conversations=self.conversation_repository(),
                 llm=self.llm(),
                 history_limit=settings.history_limit,

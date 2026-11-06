@@ -5,8 +5,8 @@ import time
 from typing import Any
 
 from app.models.share_link import RESOURCE_TYPES, ShareLink
-from app.ports.course_repository import CourseRepository
-from app.ports.longform_repository import LongformRepository
+from app.ports.series_repository import SeriesRepository
+from app.ports.piece_repository import PieceRepository
 from app.ports.share_repository import ShareRepository
 from app.services.errors import (
     ShareExpiredError,
@@ -22,12 +22,12 @@ class ShareService:
     def __init__(
         self,
         repository: ShareRepository,
-        course_repository: CourseRepository,
-        longform_repository: LongformRepository,
+        series_repository: SeriesRepository,
+        piece_repository: PieceRepository,
     ) -> None:
         self.repository = repository
-        self.course_repository = course_repository
-        self.longform_repository = longform_repository
+        self.series_repository = series_repository
+        self.piece_repository = piece_repository
         self._hits: dict[str, tuple[float, int]] = {}
 
     def create(
@@ -97,49 +97,49 @@ class ShareService:
             self._hits = {key: (window, count)}
 
     def _content(self, link: ShareLink) -> dict[str, Any]:
-        if link.resource_type == "course":
-            return self._course_content(link)
-        return self._longform_content(link)
+        if link.resource_type == "series":
+            return self._series_content(link)
+        return self._piece_content(link)
 
-    def _course_content(self, link: ShareLink) -> dict[str, Any]:
-        course = self.course_repository.get_course(link.resource_id, link.tenant_id)
-        if course is None:
+    def _series_content(self, link: ShareLink) -> dict[str, Any]:
+        series = self.series_repository.get_series(link.resource_id, link.tenant_id)
+        if series is None:
             raise ShareNotFoundError("分享的内容不存在")
-        lessons = self.course_repository.list_lessons(course.id)
+        units = self.series_repository.list_units(series.id)
         chapters = [
-            {"title": lesson.title, "content": lesson.content}
-            for lesson in lessons
-            if (lesson.content or "").strip()
+            {"title": unit.title, "content": unit.content}
+            for unit in units
+            if (unit.content or "").strip()
         ]
         return {
-            "resource_type": "course",
-            "title": course.title,
-            "subtitle": course.subtitle,
+            "resource_type": "series",
+            "title": series.title,
+            "subtitle": series.subtitle,
             "author": "",
-            "created_at": course.created_at,
+            "created_at": series.created_at,
             "chapters": chapters,
             "citations": [],
         }
 
-    def _longform_content(self, link: ShareLink) -> dict[str, Any]:
-        longform = self.longform_repository.get(link.resource_id)
-        if longform is None or (longform.tenant_id and longform.tenant_id != link.tenant_id):
+    def _piece_content(self, link: ShareLink) -> dict[str, Any]:
+        piece = self.piece_repository.get(link.resource_id)
+        if piece is None or (piece.tenant_id and piece.tenant_id != link.tenant_id):
             raise ShareNotFoundError("分享的内容不存在")
         chapters = [
             {"title": section.title, "content": section.content}
-            for section in longform.outline
+            for section in piece.outline
             if (section.content or "").strip()
         ]
         citations = [
             {"source_name": item.source_name, "chunk_index": item.chunk_index}
-            for item in longform.citations
+            for item in piece.citations
         ]
         return {
-            "resource_type": "longform",
-            "title": longform.title,
+            "resource_type": "piece",
+            "title": piece.title,
             "subtitle": "",
             "author": "",
-            "created_at": longform.created_at,
+            "created_at": piece.created_at,
             "chapters": chapters,
             "citations": citations,
         }

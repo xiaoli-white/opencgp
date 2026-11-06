@@ -23,21 +23,21 @@ import {
   type Blueprint,
   type GenerationMode,
   type GlossaryTerm,
-  type Lesson,
+  type Unit,
 } from "@/lib/api";
 import { formatRelative, modeLabel } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
-import ModePicker from "@/components/course/ModePicker";
-import type { VersionConflict } from "@/components/course/ConflictDialog";
+import ModePicker from "@/components/series/ModePicker";
+import type { VersionConflict } from "@/components/series/ConflictDialog";
 import LearningPathTimeline from "@/components/blueprint/LearningPathTimeline";
 import GlossaryGrid from "@/components/blueprint/GlossaryGrid";
 
 type BlueprintBoardProps = {
-  courseId: string;
-  lessons: Lesson[];
+  seriesId: string;
+  units: Unit[];
   reloadKey: number;
-  onOpenLesson: (lessonId: string) => void;
-  onLessonsChanged: () => Promise<void>;
+  onOpenUnit: (unitId: string) => void;
+  onUnitsChanged: () => Promise<void>;
   onNotice: (message: string) => void;
   onError: (message: string) => void;
   onProgressRefresh: () => void;
@@ -45,11 +45,11 @@ type BlueprintBoardProps = {
 };
 
 export default function BlueprintBoard({
-  courseId,
-  lessons,
+  seriesId,
+  units,
   reloadKey,
-  onOpenLesson,
-  onLessonsChanged,
+  onOpenUnit,
+  onUnitsChanged,
   onNotice,
   onError,
   onProgressRefresh,
@@ -74,29 +74,29 @@ export default function BlueprintBoard({
     setLoading(true);
     setLoadError("");
     try {
-      const data = await api.getBlueprint(courseId);
+      const data = await api.getBlueprint(seriesId);
       setBlueprint(data.exists ? data.blueprint : null);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "蓝图加载失败");
     } finally {
       setLoading(false);
     }
-  }, [courseId]);
+  }, [seriesId]);
 
   useEffect(() => {
     void load();
   }, [load, reloadKey]);
 
-  const lessonTitleMap = useMemo(() => {
+  const unitTitleMap = useMemo(() => {
     const map = new Map<string, string>();
-    lessons.forEach((lesson) => map.set(lesson.id, lesson.title));
+    units.forEach((unit) => map.set(unit.id, unit.title));
     return map;
-  }, [lessons]);
+  }, [units]);
 
   const blueprintVersion = blueprint?.version ?? null;
 
   const boundCount = useMemo(
-    () => blueprint?.outline.filter((node) => node.lesson_id).length ?? 0,
+    () => blueprint?.outline.filter((node) => node.unit_id).length ?? 0,
     [blueprint],
   );
 
@@ -108,7 +108,7 @@ export default function BlueprintBoard({
       setConflict("");
       onError("");
       try {
-        const result = await api.generateBlueprint(courseId, {
+        const result = await api.generateBlueprint(seriesId, {
           mode: useMode,
           top_k: topK,
           focus: focus.trim(),
@@ -143,7 +143,7 @@ export default function BlueprintBoard({
     },
     [
       blueprintVersion,
-      courseId,
+      seriesId,
       focus,
       mode,
       onError,
@@ -158,14 +158,14 @@ export default function BlueprintBoard({
     setApplying(true);
     onError("");
     try {
-      const result = await api.applyBlueprint(courseId);
+      const result = await api.applyBlueprint(seriesId);
       setBlueprint(result.blueprint);
       onNotice(
         result.created_count > 0
           ? `已应用蓝图：新建 ${result.created_count} 讲`
           : "蓝图已应用：所有节点都已绑定讲次",
       );
-      await onLessonsChanged();
+      await onUnitsChanged();
       onProgressRefresh();
     } catch (err) {
       onError(err instanceof Error ? err.message : "应用蓝图失败");
@@ -178,7 +178,7 @@ export default function BlueprintBoard({
     setSavingGlossary(true);
     onError("");
     try {
-      const payload = await api.saveGlossary(courseId, terms);
+      const payload = await api.saveGlossary(seriesId, terms);
       setBlueprint((prev) =>
         prev ? { ...prev, glossary: payload.glossary } : prev,
       );
@@ -325,7 +325,7 @@ export default function BlueprintBoard({
                 蓝图会基于知识库证据规划学习阶段、大纲节点与术语表；生成后可以逐节点审阅、应用到系列，再回到阅读视图逐讲生成正文。
               </p>
             </div>
-            <span className="chip-muted">{lessons.length} 个现有讲次</span>
+            <span className="chip-muted">{units.length} 个现有讲次</span>
           </div>
 
           <div className="mt-5 space-y-3">
@@ -507,7 +507,7 @@ export default function BlueprintBoard({
           <div className="mt-3">
             <LearningPathTimeline
               blueprint={blueprint}
-              onOpenLesson={onOpenLesson}
+              onOpenUnit={onOpenUnit}
             />
           </div>
         </div>
@@ -540,8 +540,8 @@ export default function BlueprintBoard({
                         const node = blueprint.outline.find(
                           (item) => item.id === nodeId,
                         );
-                        return node?.lesson_id
-                          ? lessonTitleMap.get(node.lesson_id) ?? ""
+                        return node?.unit_id
+                          ? unitTitleMap.get(node.unit_id) ?? ""
                           : "";
                       })
                       .filter(Boolean),
@@ -558,8 +558,8 @@ export default function BlueprintBoard({
       <div className="flex justify-center">
         <button
           type="button"
-          onClick={() => onOpenLesson(lessons[0]?.id ?? "")}
-          disabled={!lessons[0]?.id}
+          onClick={() => onOpenUnit(units[0]?.id ?? "")}
+          disabled={!units[0]?.id}
           className="btn-quiet"
         >
           回到阅读视图

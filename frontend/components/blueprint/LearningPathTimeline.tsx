@@ -10,11 +10,11 @@ import {
   Waypoints,
 } from "lucide-react";
 import type { Blueprint, OutlineNode } from "@/lib/api";
-import StatusBadge, { statusDotClass } from "@/components/course/StatusBadge";
+import StatusBadge, { statusDotClass } from "@/components/series/StatusBadge";
 
 type LearningPathTimelineProps = {
   blueprint: Blueprint;
-  onOpenLesson: (lessonId: string) => void;
+  onOpenUnit: (unitId: string) => void;
 };
 
 function nodeMinutes(node: OutlineNode): string {
@@ -23,7 +23,7 @@ function nodeMinutes(node: OutlineNode): string {
 
 export default function LearningPathTimeline({
   blueprint,
-  onOpenLesson,
+  onOpenUnit,
 }: LearningPathTimelineProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
@@ -52,7 +52,7 @@ export default function LearningPathTimeline({
     setCollapsed((prev) => ({ ...prev, [stageId]: !prev[stageId] }));
 
   const renderNode = (node: OutlineNode, index: number) => {
-    const bound = Boolean(node.lesson_id);
+    const bound = Boolean(node.unit_id);
     return (
       <motion.li
         key={node.id || `${node.title}-${index}`}
@@ -103,10 +103,10 @@ export default function LearningPathTimeline({
                 前置 {node.prerequisites.length}
               </span>
             ) : null}
-            {node.lesson_id ? (
+            {node.unit_id ? (
               <button
                 type="button"
-                onClick={() => onOpenLesson(node.lesson_id as string)}
+                onClick={() => onOpenUnit(node.unit_id as string)}
                 className="btn-quiet !px-2 !py-1 text-[10px]"
               >
                 <CornerDownRight size={10} />

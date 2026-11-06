@@ -5,9 +5,9 @@ from typing import Any
 
 from app.models.auth import DELETED_EMAIL_MARKER, USER_STATUS_ACTIVE, User
 from app.ports.conversation_repository import ConversationRepository
-from app.ports.course_repository import CourseRepository
+from app.ports.series_repository import SeriesRepository
 from app.ports.lock_repository import LockRepository
-from app.ports.longform_repository import LongformRepository
+from app.ports.piece_repository import PieceRepository
 from app.ports.provider_settings_repository import ProviderSettingsRepository
 from app.ports.user_provider_repository import UserProviderRepository
 from app.services.auth import AuthService
@@ -26,16 +26,16 @@ class AccountAdminService:
         provider_settings: ProviderSettingsRepository,
         locks: LockRepository,
         conversations: ConversationRepository | None = None,
-        courses: CourseRepository | None = None,
-        longforms: LongformRepository | None = None,
+        series: SeriesRepository | None = None,
+        pieces: PieceRepository | None = None,
     ) -> None:
         self.auth = auth
         self.user_providers = user_providers
         self.provider_settings = provider_settings
         self.locks = locks
         self.conversations = conversations
-        self.courses = courses
-        self.longforms = longforms
+        self.series = series
+        self.pieces = pieces
 
     def update_user(
         self,
@@ -58,10 +58,10 @@ class AccountAdminService:
 
     def count_works(self, user_id: str) -> int:
         total = 0
-        if self.courses is not None:
-            total += int(self.courses.count_by_user(user_id))
-        if self.longforms is not None:
-            total += int(self.longforms.count_by_user(user_id))
+        if self.series is not None:
+            total += int(self.series.count_by_user(user_id))
+        if self.pieces is not None:
+            total += int(self.pieces.count_by_user(user_id))
         return total
 
     def delete_user(
@@ -102,14 +102,14 @@ class AccountAdminService:
                 forced_tenants.append(tenant.id)
                 continue
             raise UserDeleteForbiddenError("不能删除租户里最后一个 owner")
-        moved_courses = 0
-        moved_longforms = 0
+        moved_series = 0
+        moved_pieces = 0
         moved_providers = 0
         if target is not None:
-            if self.courses is not None:
-                moved_courses = self.courses.transfer_by_user(user_id, target.id)
-            if self.longforms is not None:
-                moved_longforms = self.longforms.transfer_by_user(user_id, target.id)
+            if self.series is not None:
+                moved_series = self.series.transfer_by_user(user_id, target.id)
+            if self.pieces is not None:
+                moved_pieces = self.pieces.transfer_by_user(user_id, target.id)
             moved_providers = self.user_providers.reassign_user(user_id, target.id)
             self._transfer_settings(user_id, target.id)
             for tenant_id in personal_tenants:
@@ -141,8 +141,8 @@ class AccountAdminService:
                 "personal_tenants": len(personal_tenants) + len(forced_tenants),
                 "transferred": {
                     "to_user_id": target.id if target else "",
-                    "courses": moved_courses,
-                    "longforms": moved_longforms,
+                    "series": moved_series,
+                    "pieces": moved_pieces,
                 },
             },
         }

@@ -11,15 +11,15 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { api, type Course } from "@/lib/api";
+import { api, type Series } from "@/lib/api";
 import { difficultyLabel, formatRelative } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
 import ProfileSelect, { useWorkProfiles } from "@/components/profiles/ProfileSelect";
 import { useI18n } from "@/i18n/I18nProvider";
 
 const FLOW = [
-  "home.flow.createCourse",
-  "home.flow.createLesson",
+  "home.flow.createSeries",
+  "home.flow.createUnit",
   "home.flow.research",
   "home.flow.generate",
   "home.flow.revise",
@@ -27,11 +27,11 @@ const FLOW = [
 ];
 
 export default function HomePage() {
-  const { can, visibleCourseIds } = useSession();
+  const { can, visibleSeriesIds } = useSession();
   const { t } = useI18n();
   const navigate = useNavigate();
   const { profiles } = useWorkProfiles();
-  const [courses, setCourses] = useState<Course[]>([]);
+  const [series, setSeries] = useState<Series[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [formOpen, setFormOpen] = useState(false);
@@ -58,9 +58,9 @@ export default function HomePage() {
   useEffect(() => {
     let cancelled = false;
     api
-      .listCourses()
+      .listSeries()
       .then((data) => {
-        if (!cancelled) setCourses(data.courses);
+        if (!cancelled) setSeries(data.series);
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -75,14 +75,14 @@ export default function HomePage() {
     };
   }, []);
 
-  const createCourse = async (event: React.FormEvent) => {
+  const createSeries = async (event: React.FormEvent) => {
     event.preventDefault();
     const title = form.title.trim();
     if (!title || creating) return;
     setCreating(true);
     setError("");
     try {
-      const course = await api.createCourse({
+      const series = await api.createSeries({
         title,
         subtitle: form.subtitle.trim(),
         audience: form.audience.trim(),
@@ -90,8 +90,8 @@ export default function HomePage() {
         language: form.language,
         profile_id: form.profileId,
       });
-      window.dispatchEvent(new Event("course-studio:refresh"));
-      navigate(`/courses/${course.id}`);
+      window.dispatchEvent(new Event("series-studio:refresh"));
+      navigate(`/series/${series.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("home.createFailed"));
     } finally {
@@ -130,14 +130,14 @@ export default function HomePage() {
               className="btn btn-primary w-full justify-center sm:w-auto"
             >
               <Plus size={15} />
-              {t("home.newCourse")}
+              {t("home.newSeries")}
             </button>
             <Link to="/kb" className="btn btn-ghost w-full justify-center sm:w-auto">
               <BookOpen size={14} />
               {t("home.openKb")}
             </Link>
             <span className="text-center text-[11px] text-slate-400 dark:text-slate-500 sm:text-left">
-              {t("home.courseCountInline", { count: courses.length })}
+              {t("home.seriesCountInline", { count: series.length })}
             </span>
           </div>
           <div className="mt-6 flex flex-wrap items-center gap-1.5">
@@ -165,7 +165,7 @@ export default function HomePage() {
             className="overflow-hidden"
           >
             <form
-              onSubmit={createCourse}
+              onSubmit={createSeries}
               className="glass rounded-3xl p-5 shadow-glass sm:p-6"
             >
               <div className="flex items-start justify-between gap-3">
@@ -189,7 +189,7 @@ export default function HomePage() {
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <label className="sm:col-span-2">
                   <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                    {t("home.form.courseTitle")}
+                    {t("home.form.seriesTitle")}
                   </span>
                   <input
                     autoFocus
@@ -197,7 +197,7 @@ export default function HomePage() {
                     onChange={(event) =>
                       setForm({ ...form, title: event.target.value })
                     }
-                    placeholder={t("home.form.courseTitlePlaceholder")}
+                    placeholder={t("home.form.seriesTitlePlaceholder")}
                     className="input"
                   />
                 </label>
@@ -267,7 +267,7 @@ export default function HomePage() {
                 </div>
                 <label className="sm:col-span-2">
                   <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                    {t("profiles.courseProfileLabel")}
+                    {t("profiles.seriesProfileLabel")}
                   </span>
                   <ProfileSelect
                     value={form.profileId}
@@ -328,7 +328,7 @@ export default function HomePage() {
             </p>
           </div>
           <span className="text-[11px] text-slate-400 dark:text-slate-500">
-            {t("home.courseCount", { count: courses.length })}
+            {t("home.seriesCount", { count: series.length })}
           </span>
         </div>
 
@@ -341,7 +341,7 @@ export default function HomePage() {
               />
             ))}
           </div>
-        ) : courses.length === 0 ? (
+        ) : series.length === 0 ? (
           <div className="glass rounded-3xl px-6 py-14 text-center shadow-glass">
             <div className="brand-gradient mx-auto grid h-12 w-12 place-items-center rounded-2xl text-white shadow-brand">
               <BookOpen size={20} />
@@ -363,9 +363,9 @@ export default function HomePage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {courses.map((course, index) => (
+            {series.map((series, index) => (
               <motion.article
-                key={course.id}
+                key={series.id}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3, delay: Math.min(index * 0.04, 0.3) }}
@@ -374,25 +374,25 @@ export default function HomePage() {
               >
                 <div className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-gradient-to-br from-indigo-400/25 to-violet-400/15 blur-2xl transition-transform duration-500 group-hover:scale-125" />
                 <div className="relative flex items-center justify-between">
-                  <span className="chip">{difficultyLabel(course.difficulty)}</span>
-                  {visibleCourseIds !== "all" &&
-                  visibleCourseIds.includes(course.id) ? (
+                  <span className="chip">{difficultyLabel(series.difficulty)}</span>
+                  {visibleSeriesIds !== "all" &&
+                  visibleSeriesIds.includes(series.id) ? (
                     <span className="chip">{t("home.restricted")}</span>
                   ) : null}
                   <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                    {formatRelative(course.updated_at)}
+                    {formatRelative(series.updated_at)}
                   </span>
                 </div>
                 <h3 className="relative mt-4 line-clamp-2 text-lg font-semibold leading-snug tracking-tight text-slate-800 transition group-hover:text-indigo-600 dark:text-slate-100 dark:group-hover:text-indigo-300">
-                  {course.title}
+                  {series.title}
                 </h3>
                 <p className="relative mt-1.5 line-clamp-2 min-h-[2.5rem] text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">
-                  {course.subtitle || t("home.noSubtitle")}
+                  {series.subtitle || t("home.noSubtitle")}
                 </p>
                 <div className="relative mt-5 flex items-center justify-between border-t border-slate-200/60 pt-3 text-[11px] text-slate-400 dark:border-white/10 dark:text-slate-500">
                   <span className="inline-flex items-center gap-1.5">
                     <BookOpen size={12} />
-                    {course.audience || t("home.genericAudience")}
+                    {series.audience || t("home.genericAudience")}
                   </span>
                   <span className="inline-flex items-center gap-1 text-indigo-500 opacity-0 transition group-hover:opacity-100 dark:text-indigo-300">
                     {t("home.open")}
@@ -400,8 +400,8 @@ export default function HomePage() {
                   </span>
                 </div>
                 <Link
-                  to={`/courses/${course.id}`}
-                  aria-label={course.title}
+                  to={`/series/${series.id}`}
+                  aria-label={series.title}
                   className="absolute inset-0 rounded-3xl"
                 />
               </motion.article>

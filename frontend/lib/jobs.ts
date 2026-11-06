@@ -3,10 +3,10 @@ import { getTenantId, getToken } from "@/lib/session";
 
 export type JobKind =
   | "research"
-  | "longform_create"
-  | "longform_generate"
-  | "longform_rewrite"
-  | "lesson_generate"
+  | "piece_create"
+  | "piece_generate"
+  | "piece_rewrite"
+  | "unit_generate"
   | "blueprint_generate";
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";

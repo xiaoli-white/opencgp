@@ -4,7 +4,7 @@
 （生产）共用同一份实现，切换只改配置。
 
 存储约定：
-- ``threads.lesson_id`` 上建部分唯一索引，保证一讲只有一条讲级线程（幂等建线）。
+- ``threads.unit_id`` 上建部分唯一索引，保证一讲只有一条讲级线程（幂等建线）。
 - 消息只追加；``created_at`` 由 ``_next_timestamp`` 保证同线程内严格递增，
   避免同一秒内的 user/assistant 消息排序抖动。
 - ``citations_json`` 以 JSON 文本落库，换库无需 JSONB 迁移。
@@ -28,16 +28,16 @@ SCHEMA: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS threads (
         id TEXT PRIMARY KEY,
-        course_id TEXT NOT NULL DEFAULT '',
-        lesson_id TEXT NOT NULL DEFAULT '',
+        series_id TEXT NOT NULL DEFAULT '',
+        unit_id TEXT NOT NULL DEFAULT '',
         title TEXT NOT NULL DEFAULT '',
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
     )
     """,
     """
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_threads_lesson_unique
-    ON threads(lesson_id) WHERE lesson_id <> ''
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_threads_unit_unique
+    ON threads(unit_id) WHERE unit_id <> ''
     """,
     """
     CREATE TABLE IF NOT EXISTS messages (
@@ -65,37 +65,37 @@ class DatabaseConversationRepository(ConversationRepository):
             self.database.execute(statement)
         self._schema_ready = True
 
-    def get_or_create_lesson_thread(
-        self, lesson_id: str, course_id: str = "", title: str = ""
+    def get_or_create_unit_thread(
+        self, unit_id: str, series_id: str = "", title: str = ""
     ) -> Thread:
         self.ensure_schema()
-        existing = self.get_lesson_thread(lesson_id)
+        existing = self.get_unit_thread(unit_id)
         if existing is not None:
             return existing
         now = time.time()
         thread = Thread(
             id=_new_id(),
-            course_id=course_id,
-            lesson_id=lesson_id,
+            series_id=series_id,
+            unit_id=unit_id,
             title=title,
             created_at=now,
             updated_at=now,
         )
         try:
             self.database.execute(
-                "INSERT INTO threads (id, course_id, lesson_id, title, created_at, updated_at)"
+                "INSERT INTO threads (id, series_id, unit_id, title, created_at, updated_at)"
                 " VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     thread.id,
-                    thread.course_id,
-                    thread.lesson_id,
+                    thread.series_id,
+                    thread.unit_id,
                     thread.title,
                     thread.created_at,
                     thread.updated_at,
                 ),
             )
         except Exception:
-            raced = self.get_lesson_thread(lesson_id)
+            raced = self.get_unit_thread(unit_id)
             if raced is None:
                 raise
             return raced
@@ -106,19 +106,19 @@ class DatabaseConversationRepository(ConversationRepository):
         row = self.database.fetchone("SELECT * FROM threads WHERE id = ?", (thread_id,))
         return _to_thread(row) if row else None
 
-    def get_lesson_thread(self, lesson_id: str) -> Thread | None:
+    def get_unit_thread(self, unit_id: str) -> Thread | None:
         self.ensure_schema()
         row = self.database.fetchone(
-            "SELECT * FROM threads WHERE lesson_id = ? ORDER BY created_at ASC LIMIT 1",
-            (lesson_id,),
+            "SELECT * FROM threads WHERE unit_id = ? ORDER BY created_at ASC LIMIT 1",
+            (unit_id,),
         )
         return _to_thread(row) if row else None
 
-    def list_lesson_threads(self, lesson_id: str) -> list[Thread]:
+    def list_unit_threads(self, unit_id: str) -> list[Thread]:
         self.ensure_schema()
         rows = self.database.fetchall(
-            "SELECT * FROM threads WHERE lesson_id = ? ORDER BY created_at ASC",
-            (lesson_id,),
+            "SELECT * FROM threads WHERE unit_id = ? ORDER BY created_at ASC",
+            (unit_id,),
         )
         return [_to_thread(row) for row in rows]
 
@@ -183,17 +183,17 @@ class DatabaseConversationRepository(ConversationRepository):
         return int(row["total"])
 
     def list_threads(
-        self, course_ids: Sequence[str] | None = None, limit: int = 200
+        self, series_ids: Sequence[str] | None = None, limit: int = 200
     ) -> list[Thread]:
         self.ensure_schema()
         clauses = ["1 = 1"]
         params: list[Any] = []
-        if course_ids is not None:
-            scoped = [str(item) for item in course_ids if item]
+        if series_ids is not None:
+            scoped = [str(item) for item in series_ids if item]
             if not scoped:
                 return []
             placeholders = ", ".join("?" for _ in scoped)
-            clauses.append(f"course_id IN ({placeholders})")
+            clauses.append(f"series_id IN ({placeholders})")
             params.extend(scoped)
         params.append(max(1, int(limit)))
         rows = self.database.fetchall(
@@ -258,8 +258,8 @@ def _load_list(raw: Any) -> list[Any]:
 def _to_thread(row: Mapping[str, Any]) -> Thread:
     return Thread(
         id=str(row["id"]),
-        course_id=str(row["course_id"] or ""),
-        lesson_id=str(row["lesson_id"] or ""),
+        series_id=str(row["series_id"] or ""),
+        unit_id=str(row["unit_id"] or ""),
         title=str(row["title"] or ""),
         created_at=float(row["created_at"]),
         updated_at=float(row["updated_at"]),

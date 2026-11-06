@@ -12,17 +12,17 @@ import {
 import clsx from "clsx";
 import {
   api,
-  type CourseProgress,
-  type Lesson,
-  type LessonReview,
+  type SeriesProgress,
+  type Unit,
+  type UnitReview,
 } from "@/lib/api";
 import { formatRelative } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
 
 type ReviewControlsProps = {
-  lesson: Lesson;
-  progress: CourseProgress | null;
+  unit: Unit;
+  progress: SeriesProgress | null;
   onReviewed: () => Promise<void> | void;
   onNotice: (message: string) => void;
   onError: (message: string) => void;
@@ -31,7 +31,7 @@ type ReviewControlsProps = {
 };
 
 export default function ReviewControls({
-  lesson,
+  unit,
   progress,
   onReviewed,
   onNotice,
@@ -43,12 +43,12 @@ export default function ReviewControls({
   const { t } = useI18n();
   const readOnly = !can("review");
   const writeTitle = readOnly
-    ? t("course.guardReadOnly")
+    ? t("series.guardReadOnly")
     : locked
-      ? lockedReason || t("course.review.lockedDefault")
+      ? lockedReason || t("series.review.lockedDefault")
       : "";
   const writeBlocked = readOnly || locked;
-  const [reviews, setReviews] = useState<LessonReview[]>([]);
+  const [reviews, setReviews] = useState<UnitReview[]>([]);
   const [busy, setBusy] = useState<"approve" | "request_revision" | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState("");
@@ -57,20 +57,20 @@ export default function ReviewControls({
   const loadReviews = useCallback(async () => {
     setReviewsLoading(true);
     try {
-      const data = await api.listLessonReviews(lesson.id);
+      const data = await api.listUnitReviews(unit.id);
       setReviews(data.reviews);
     } catch {
       setReviews([]);
     } finally {
       setReviewsLoading(false);
     }
-  }, [lesson.id]);
+  }, [unit.id]);
 
   useEffect(() => {
     void loadReviews();
-  }, [loadReviews, lesson.status, lesson.current_version]);
+  }, [loadReviews, unit.status, unit.current_version]);
 
-  const hasContent = Boolean(lesson.content);
+  const hasContent = Boolean(unit.content);
   const total = progress?.total ?? 0;
   const approved = progress?.approved ?? 0;
   const ratio = total > 0 ? Math.round((approved / total) * 100) : 0;
@@ -81,8 +81,8 @@ export default function ReviewControls({
     setBusy(action);
     onError("");
     try {
-      await api.reviewLesson(
-        lesson.id,
+      await api.reviewUnit(
+        unit.id,
         action,
         action === "request_revision" ? note.trim() : "",
       );
@@ -90,13 +90,13 @@ export default function ReviewControls({
       setNoteOpen(false);
       onNotice(
         action === "approve"
-          ? t("course.review.toastApproved", { title: lesson.title })
-          : t("course.review.toastRevision", { title: lesson.title }),
+          ? t("series.review.toastApproved", { title: unit.title })
+          : t("series.review.toastRevision", { title: unit.title }),
       );
       await loadReviews();
       await onReviewed();
     } catch (err) {
-      onError(err instanceof Error ? err.message : t("course.review.failed"));
+      onError(err instanceof Error ? err.message : t("series.review.failed"));
     } finally {
       setBusy(null);
     }
@@ -115,14 +115,14 @@ export default function ReviewControls({
             />
           </div>
           <span className="shrink-0 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-            {t("course.progress.reviewApproved", {
+            {t("series.progress.reviewApproved", {
               approved,
               total: total || 0,
             })}
           </span>
           {progress ? (
             <span className="hidden shrink-0 text-[10px] text-slate-400 dark:text-slate-500 sm:inline">
-              {t("course.progress.reviewPending", {
+              {t("series.progress.reviewPending", {
                 pending: progress.pending_review,
               })}
             </span>
@@ -137,8 +137,8 @@ export default function ReviewControls({
             title={
               writeTitle ||
               (hasContent
-                ? t("course.review.approveTitle")
-                : t("course.review.approveBlocked"))
+                ? t("series.review.approveTitle")
+                : t("series.review.approveBlocked"))
             }
             className={clsx(
               "inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[11.5px] font-medium ring-1 transition",
@@ -152,7 +152,7 @@ export default function ReviewControls({
             ) : (
               <Check size={12} />
             )}
-            {t("course.review.approve")}
+            {t("series.review.approve")}
           </button>
           <button
             type="button"
@@ -162,7 +162,7 @@ export default function ReviewControls({
             className="inline-flex items-center gap-1 rounded-full bg-amber-400/18 px-3 py-1.5 text-[11.5px] font-medium text-amber-700 ring-1 ring-amber-500/30 transition hover:bg-amber-400/26 disabled:opacity-50 dark:bg-amber-300/14 dark:text-amber-300 dark:ring-amber-300/25 dark:hover:bg-amber-300/20"
           >
             <MessageSquareWarning size={12} />
-            {t("course.review.requestRevision")}
+            {t("series.review.requestRevision")}
           </button>
         </div>
       </div>
@@ -170,7 +170,7 @@ export default function ReviewControls({
       {!hasContent ? (
         <p className="mt-2 flex items-center gap-1.5 text-[10.5px] text-slate-400 dark:text-slate-500">
           <CircleSlash size={11} />
-          {t("course.review.noContent")}
+          {t("series.review.noContent")}
         </p>
       ) : null}
 
@@ -188,7 +188,7 @@ export default function ReviewControls({
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
                 rows={2}
-                placeholder={t("course.review.notePlaceholder")}
+                placeholder={t("series.review.notePlaceholder")}
                 className="input resize-none text-[12px] leading-relaxed"
               />
               <div className="flex items-center justify-end gap-1.5">
@@ -215,7 +215,7 @@ export default function ReviewControls({
                   ) : (
                     <Send size={12} />
                   )}
-                  {t("course.review.confirmRevision")}
+                  {t("series.review.confirmRevision")}
                 </button>
               </div>
             </div>
@@ -223,14 +223,14 @@ export default function ReviewControls({
         ) : null}
       </AnimatePresence>
 
-      {lesson.status === "needs_revision" ? (
+      {unit.status === "needs_revision" ? (
         <div className="mt-2.5 flex items-start gap-2 rounded-2xl border border-amber-400/40 bg-amber-400/12 px-3 py-2 text-[11px] leading-relaxed text-amber-800 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-200">
           <AlertTriangle size={12} className="mt-0.5 shrink-0" />
           <span className="min-w-0">
-            <span className="font-semibold">{t("course.review.needsRevision")}</span>
+            <span className="font-semibold">{t("series.review.needsRevision")}</span>
             {reviewsLoading ? (
               <span className="ml-1.5 text-amber-600/70 dark:text-amber-300/70">
-                {t("course.review.loadingNote")}
+                {t("series.review.loadingNote")}
               </span>
             ) : latest?.note ? (
               <span className="ml-1.5">
@@ -240,16 +240,16 @@ export default function ReviewControls({
                 </span>
               </span>
             ) : (
-              <span className="ml-1.5">· {t("course.review.noNote")}</span>
+              <span className="ml-1.5">· {t("series.review.noNote")}</span>
             )}
           </span>
         </div>
       ) : null}
 
-      {lesson.status === "approved" ? (
+      {unit.status === "approved" ? (
         <p className="mt-2 flex items-center gap-1.5 text-[10.5px] text-emerald-600 dark:text-emerald-400">
           <Check size={11} />
-          {t("course.review.approvedDone")}
+          {t("series.review.approvedDone")}
           {latest?.created_at ? ` · ${formatRelative(latest.created_at)}` : ""}
         </p>
       ) : null}

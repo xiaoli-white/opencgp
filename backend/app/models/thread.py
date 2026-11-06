@@ -7,8 +7,8 @@ from app.models.citation import Citation
 
 class Thread(BaseModel):
     id: str
-    course_id: str = ""
-    lesson_id: str = ""
+    series_id: str = ""
+    unit_id: str = ""
     title: str = ""
     created_at: float
     updated_at: float
@@ -23,8 +23,8 @@ class Message(BaseModel):
     created_at: float
 
 
-class LessonThreadView(BaseModel):
-    lesson_id: str
+class UnitThreadView(BaseModel):
+    unit_id: str
     thread_id: str
     title: str
     message_count: int
@@ -32,7 +32,7 @@ class LessonThreadView(BaseModel):
 
 
 class AskResult(BaseModel):
-    lesson_id: str
+    unit_id: str
     thread_id: str
     question: str
     answer: str
@@ -45,7 +45,7 @@ class AskResult(BaseModel):
 
 
 class AmendResult(BaseModel):
-    lesson_id: str
+    unit_id: str
     instruction: str
     target: str = ""
     version: int
@@ -59,7 +59,7 @@ class AmendResult(BaseModel):
 
 
 class DrilldownResult(BaseModel):
-    lesson_id: str
+    unit_id: str
     thread_id: str
     source_message_id: str
     version: int

@@ -5,8 +5,8 @@ import re
 from typing import Any, Iterable, Sequence
 
 from app.models.auth import AuthContext
-from app.models.course import Course
-from app.models.longform import Longform
+from app.models.series import Series
+from app.models.piece import Piece
 from app.models.work_profile import (
     BUILTIN_ID_PREFIX,
     PROFILE_SCOPES,
@@ -158,12 +158,12 @@ class ProfileService:
         self._seeded = False
         self._spec_cache: OrderedDict[tuple[str, int], ProfileSpec] = OrderedDict()
 
-    def resolve_for_course(self, course: Course | None) -> ProfileSpec:
-        profile_id = (getattr(course, "profile_id", "") or "").strip()
+    def resolve_for_series(self, series: Series | None) -> ProfileSpec:
+        profile_id = (getattr(series, "profile_id", "") or "").strip()
         return self.resolve(profile_id or BUILTIN_TUTORIAL_ID)
 
-    def resolve_for_longform(self, longform: Longform | None) -> ProfileSpec:
-        profile_id = (getattr(longform, "profile_id", "") or "").strip()
+    def resolve_for_piece(self, piece: Piece | None) -> ProfileSpec:
+        profile_id = (getattr(piece, "profile_id", "") or "").strip()
         return self.resolve(profile_id or BUILTIN_ARTICLE_ID)
 
     def resolve(self, profile_id: str, fallback_id: str = BUILTIN_TUTORIAL_ID) -> ProfileSpec:

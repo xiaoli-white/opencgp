@@ -39,9 +39,9 @@ FORMAT_CONTENT_TYPES: dict[str, str] = {
     FORMAT_PDF: "application/pdf",
 }
 
-SOURCE_COURSE = "course"
-SOURCE_LONGFORM = "longform"
-EXPORT_SOURCE_TYPES: tuple[str, ...] = (SOURCE_COURSE, SOURCE_LONGFORM)
+SOURCE_SERIES = "series"
+SOURCE_PIECE = "piece"
+EXPORT_SOURCE_TYPES: tuple[str, ...] = (SOURCE_SERIES, SOURCE_PIECE)
 
 THEME_LIGHT = "light"
 THEME_DARK = "dark"
@@ -55,7 +55,7 @@ class ExportChapter(BaseModel):
 
 
 class ExportDocument(BaseModel):
-    source_type: str = SOURCE_COURSE
+    source_type: str = SOURCE_SERIES
     source_id: str = ""
     title: str
     subtitle: str = ""

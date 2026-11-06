@@ -4,13 +4,13 @@ import { useSession } from "@/components/auth/SessionProvider";
 import SharePanel, { type ShareMember, type ShareOption } from "@/components/sharing/SharePanel";
 import { useI18n } from "@/i18n/I18nProvider";
 
-export default function CourseGrantsPanel({
-  courseId,
+export default function SeriesGrantsPanel({
+  seriesId,
   open,
   onClose,
   onNotice,
 }: {
-  courseId: string;
+  seriesId: string;
   open: boolean;
   onClose: () => void;
   onNotice?: (message: string) => void;
@@ -31,13 +31,13 @@ export default function CourseGrantsPanel({
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    if (!courseId) return;
+    if (!seriesId) return;
     setLoading(true);
     setError("");
     try {
       const [memberList, grantList] = await Promise.all([
         tenant ? api.listMembers(tenant) : Promise.resolve({ count: 0, members: [] }),
-        api.getCourseGrants(courseId),
+        api.getSeriesGrants(seriesId),
       ]);
       setMembers(memberList.members ?? []);
       const next: Record<string, string | null> = {};
@@ -51,7 +51,7 @@ export default function CourseGrantsPanel({
     } finally {
       setLoading(false);
     }
-  }, [courseId, tenant, t]);
+  }, [seriesId, tenant, t]);
 
   useEffect(() => {
     if (open) void load();
@@ -77,8 +77,8 @@ export default function CourseGrantsPanel({
       setSaving(true);
       setError("");
       try {
-        await api.saveCourseGrants(
-          courseId,
+        await api.saveSeriesGrants(
+          seriesId,
           entries.map((item) => ({
             user_id: item.user_id,
             level: item.level === "write" ? ("write" as const) : ("read" as const),
@@ -92,15 +92,15 @@ export default function CourseGrantsPanel({
         setSaving(false);
       }
     },
-    [courseId, onClose, onNotice, t],
+    [seriesId, onClose, onNotice, t],
   );
 
   return (
     <SharePanel
       open={open}
-      title={t("sharing.courseTitle")}
-      subtitle={t("sharing.courseSubtitle")}
-      note={t("sharing.courseNote")}
+      title={t("sharing.seriesTitle")}
+      subtitle={t("sharing.seriesSubtitle")}
+      note={t("sharing.seriesNote")}
       members={shareMembers}
       value={levels}
       options={options}

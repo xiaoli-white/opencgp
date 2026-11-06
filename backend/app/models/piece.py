@@ -16,7 +16,7 @@ SECTION_GENERATED = "generated"
 MAX_SECTION_WORDS = 1200
 
 
-class LongformProfile(BaseModel):
+class PieceProfile(BaseModel):
     genre: str = "article"
     tone: str = ""
     audience: str = ""
@@ -35,12 +35,12 @@ class OutlineSection(BaseModel):
     status: str = SECTION_PLANNED
 
 
-class Longform(BaseModel):
+class Piece(BaseModel):
     id: str
     tenant_id: str = ""
     user_id: str = ""
     title: str
-    profile: LongformProfile = Field(default_factory=LongformProfile)
+    profile: PieceProfile = Field(default_factory=PieceProfile)
     outline: list[OutlineSection] = Field(default_factory=list)
     content: str = ""
     status: str = STATUS_DRAFT
@@ -55,9 +55,9 @@ class Longform(BaseModel):
     updated_at: float = 0.0
 
 
-class LongformVersion(BaseModel):
+class PieceVersion(BaseModel):
     id: str
-    longform_id: str
+    piece_id: str
     version: int
     content: str
     outline: list[OutlineSection] = Field(default_factory=list)

@@ -15,51 +15,51 @@ import {
 import {
   api,
   type Citation,
-  type CourseProgress,
+  type SeriesProgress,
   type GenerationMode,
-  type Lesson,
+  type Unit,
 } from "@/lib/api";
 import { contentLength } from "@/lib/format";
 import { modeLabel } from "@/i18n/labels";
 import { useI18n } from "@/i18n/I18nProvider";
 import MarkdownReader from "@/components/reader/MarkdownReader";
-import StatusBadge, { statusDotClass } from "@/components/course/StatusBadge";
+import StatusBadge, { statusDotClass } from "@/components/series/StatusBadge";
 
-type LessonMeta = {
+type UnitMeta = {
   citations: Citation[];
   mode: GenerationMode | "";
 };
 
-type CourseReaderProps = {
-  lessons: Lesson[];
-  progress: CourseProgress | null;
-  onOpenLesson: (lessonId: string) => void;
+type SeriesReaderProps = {
+  units: Unit[];
+  progress: SeriesProgress | null;
+  onOpenUnit: (unitId: string) => void;
   onGoReader: () => void;
 };
 
-export default function CourseReader({
-  lessons,
+export default function SeriesReader({
+  units,
   progress,
-  onOpenLesson,
+  onOpenUnit,
   onGoReader,
-}: CourseReaderProps) {
+}: SeriesReaderProps) {
   const { t } = useI18n();
   const readable = useMemo(
     () =>
-      lessons
-        .filter((lesson) => Boolean(lesson.content))
+      units
+        .filter((unit) => Boolean(unit.content))
         .sort((a, b) => a.order_index - b.order_index),
-    [lessons],
+    [units],
   );
 
   const [tocOpen, setTocOpen] = useState(false);
-  const [metaMap, setMetaMap] = useState<Record<string, LessonMeta>>({});
+  const [metaMap, setMetaMap] = useState<Record<string, UnitMeta>>({});
   const [activeId, setActiveId] = useState<string>(readable[0]?.id ?? "");
   const [ratio, setRatio] = useState(0);
   const visibleRef = useRef<Set<string>>(new Set());
 
   const metaKey = readable
-    .map((lesson) => `${lesson.id}:${lesson.current_version}`)
+    .map((unit) => `${unit.id}:${unit.current_version}`)
     .join("|");
 
   useEffect(() => {
@@ -69,24 +69,24 @@ export default function CourseReader({
     }
     let cancelled = false;
     Promise.all(
-      readable.map(async (lesson) => {
+      readable.map(async (unit) => {
         try {
-          const data = await api.listVersions(lesson.id);
+          const data = await api.listVersions(unit.id);
           const current =
             data.versions.find(
-              (version) => version.version === lesson.current_version,
+              (version) => version.version === unit.current_version,
             ) ?? data.versions[0];
-          const meta: LessonMeta = {
+          const meta: UnitMeta = {
             citations: current?.citations ?? [],
-            mode: current?.mode ?? lesson.last_mode ?? "",
+            mode: current?.mode ?? unit.last_mode ?? "",
           };
-          return [lesson.id, meta] as const;
+          return [unit.id, meta] as const;
         } catch {
-          const fallback: LessonMeta = {
+          const fallback: UnitMeta = {
             citations: [],
-            mode: lesson.last_mode ?? "",
+            mode: unit.last_mode ?? "",
           };
-          return [lesson.id, fallback] as const;
+          return [unit.id, fallback] as const;
         }
       }),
     ).then((entries) => {
@@ -129,7 +129,7 @@ export default function CourseReader({
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          const id = entry.target.getAttribute("data-lesson-id");
+          const id = entry.target.getAttribute("data-unit-id");
           if (!id) return;
           if (entry.isIntersecting) {
             visible.add(id);
@@ -137,23 +137,23 @@ export default function CourseReader({
             visible.delete(id);
           }
         });
-        const first = readable.find((lesson) => visible.has(lesson.id));
+        const first = readable.find((unit) => visible.has(unit.id));
         if (first) setActiveId(first.id);
       },
       { rootMargin: "-100px 0px -55% 0px", threshold: 0 },
     );
-    readable.forEach((lesson) => {
-      const element = document.getElementById(`lesson-${lesson.id}`);
+    readable.forEach((unit) => {
+      const element = document.getElementById(`unit-${unit.id}`);
       if (element) observer.observe(element);
     });
     return () => observer.disconnect();
   }, [metaKey, readable]);
 
-  const jumpTo = (lessonId: string) => {
-    const element = document.getElementById(`lesson-${lessonId}`);
+  const jumpTo = (unitId: string) => {
+    const element = document.getElementById(`unit-${unitId}`);
     if (element) {
       element.scrollIntoView({ behavior: "smooth", block: "start" });
-      setActiveId(lessonId);
+      setActiveId(unitId);
     }
   };
 
@@ -248,14 +248,14 @@ export default function CourseReader({
         </div>
 
         <nav className="no-scrollbar mt-3 flex-1 space-y-0.5 overflow-y-auto pr-0.5">
-          {readable.map((lesson) => {
-            const active = lesson.id === activeId;
+          {readable.map((unit) => {
+            const active = unit.id === activeId;
             return (
               <button
-                key={lesson.id}
+                key={unit.id}
                 type="button"
                 onClick={() => {
-                  jumpTo(lesson.id);
+                  jumpTo(unit.id);
                   setTocOpen(false);
                 }}
                 className={clsx(
@@ -268,7 +268,7 @@ export default function CourseReader({
                 <span
                   className={clsx(
                     "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
-                    statusDotClass(lesson.status),
+                    statusDotClass(unit.status),
                   )}
                 />
                 <span className="min-w-0 flex-1">
@@ -280,11 +280,11 @@ export default function CourseReader({
                         : "text-slate-600 dark:text-slate-300",
                     )}
                   >
-                    {lesson.order_index}. {lesson.title}
+                    {unit.order_index}. {unit.title}
                   </span>
                   <span className="mt-0.5 block text-[10px] text-slate-400 dark:text-slate-500">
                     {t("reader.chars", {
-                      count: contentLength(lesson.content),
+                      count: contentLength(unit.content),
                     })}
                   </span>
                 </span>
@@ -299,17 +299,17 @@ export default function CourseReader({
       </aside>
 
       <div className="min-w-0 space-y-5">
-        {readable.map((lesson, index) => {
-          const meta = metaMap[lesson.id];
+        {readable.map((unit, index) => {
+          const meta = metaMap[unit.id];
           const citations = meta?.citations ?? [];
-          const mode = meta?.mode ?? lesson.last_mode ?? "";
+          const mode = meta?.mode ?? unit.last_mode ?? "";
           const previous = readable[index - 1];
           const next = readable[index + 1];
           return (
             <motion.section
-              key={lesson.id}
-              id={`lesson-${lesson.id}`}
-              data-lesson-id={lesson.id}
+              key={unit.id}
+              id={`unit-${unit.id}`}
+              data-unit-id={unit.id}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, ease: "easeOut" }}
@@ -319,11 +319,11 @@ export default function CourseReader({
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500">
                     <span>
-                      {t("reader.lessonNo", { index: lesson.order_index })}
+                      {t("reader.unitNo", { index: unit.order_index })}
                     </span>
                     <span>·</span>
-                    <span>v{lesson.current_version}</span>
-                    <StatusBadge status={lesson.status} />
+                    <span>v{unit.current_version}</span>
+                    <StatusBadge status={unit.status} />
                     <span
                       className={clsx(
                         "rounded-full px-1.5 py-0.5 text-[10px] font-medium",
@@ -336,12 +336,12 @@ export default function CourseReader({
                     </span>
                   </div>
                   <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-[22px]">
-                    {lesson.title}
+                    {unit.title}
                   </h2>
                 </div>
                 <button
                   type="button"
-                  onClick={() => onOpenLesson(lesson.id)}
+                  onClick={() => onOpenUnit(unit.id)}
                   className="btn-quiet"
                 >
                   {t("reader.readAlone")}
@@ -349,9 +349,9 @@ export default function CourseReader({
                 </button>
               </div>
 
-              {lesson.learning_objectives.length > 0 ? (
+              {unit.learning_objectives.length > 0 ? (
                 <ul className="mt-4 flex flex-wrap gap-1.5">
-                  {lesson.learning_objectives.map((objective) => (
+                  {unit.learning_objectives.map((objective) => (
                     <li key={objective} className="chip-muted">
                       {objective}
                     </li>
@@ -361,7 +361,7 @@ export default function CourseReader({
 
               <div className="mt-5">
                 <MarkdownReader
-                  content={lesson.content}
+                  content={unit.content}
                   citations={citations}
                   mode={mode}
                 />
@@ -371,7 +371,7 @@ export default function CourseReader({
                 <span className="flex items-center gap-1.5 text-[10.5px] text-slate-400 dark:text-slate-500">
                   <Clock3 size={11} />
                   {t("reader.charsCites", {
-                    chars: contentLength(lesson.content),
+                    chars: contentLength(unit.content),
                     cites: citations.length,
                   })}
                 </span>
@@ -383,7 +383,7 @@ export default function CourseReader({
                     className="btn btn-ghost !px-3 !py-1.5 text-[11px] disabled:opacity-40"
                   >
                     <ChevronLeft size={12} />
-                    {t("reader.prevLesson")}
+                    {t("reader.prevUnit")}
                   </button>
                   <button
                     type="button"
@@ -391,16 +391,16 @@ export default function CourseReader({
                     disabled={!next}
                     className="btn btn-ghost !px-3 !py-1.5 text-[11px] disabled:opacity-40"
                   >
-                    {t("reader.nextLesson")}
+                    {t("reader.nextUnit")}
                     <ChevronRight size={12} />
                   </button>
                   <button
                     type="button"
-                    onClick={() => onOpenLesson(lesson.id)}
+                    onClick={() => onOpenUnit(unit.id)}
                     className="btn btn-primary !px-3 !py-1.5 text-[11px]"
                   >
                     <BookOpen size={12} />
-                    {t("reader.backToLesson")}
+                    {t("reader.backToUnit")}
                   </button>
                 </div>
               </div>

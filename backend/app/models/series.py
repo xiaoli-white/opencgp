@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from app.models.citation import Citation
 
 
-class Course(BaseModel):
+class Series(BaseModel):
     id: str
     title: str
     subtitle: str = ""
@@ -18,9 +18,9 @@ class Course(BaseModel):
     updated_at: float
 
 
-class Lesson(BaseModel):
+class Unit(BaseModel):
     id: str
-    course_id: str
+    series_id: str
     order_index: int = 0
     title: str
     learning_objectives: list[str] = Field(default_factory=list)
@@ -33,9 +33,9 @@ class Lesson(BaseModel):
     updated_at: float
 
 
-class LessonVersion(BaseModel):
+class UnitVersion(BaseModel):
     id: str
-    lesson_id: str
+    unit_id: str
     version: int
     content: str
     citations: list[Citation] = Field(default_factory=list)

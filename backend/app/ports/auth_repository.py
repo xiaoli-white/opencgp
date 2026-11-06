@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, Sequence, runtime_checkable
 
-from app.models.auth import CourseGrant, LongformGrant, Membership, Role, Tenant, User
+from app.models.auth import SeriesGrant, PieceGrant, Membership, Role, Tenant, User
 
 
 @runtime_checkable
@@ -165,32 +165,32 @@ class AuthRepository(Protocol):
     def count_role_members(self, tenant_id: str, key: str) -> int:
         ...
 
-    def list_grants(self, course_id: str) -> list[CourseGrant]:
+    def list_grants(self, series_id: str) -> list[SeriesGrant]:
         ...
 
-    def get_grant(self, course_id: str, user_id: str) -> CourseGrant | None:
+    def get_grant(self, series_id: str, user_id: str) -> SeriesGrant | None:
         ...
 
-    def list_user_grants(self, tenant_id: str, user_id: str) -> list[CourseGrant]:
+    def list_user_grants(self, tenant_id: str, user_id: str) -> list[SeriesGrant]:
         ...
 
     def replace_grants(
-        self, tenant_id: str, course_id: str, grants: Sequence[tuple[str, str]]
-    ) -> list[CourseGrant]:
+        self, tenant_id: str, series_id: str, grants: Sequence[tuple[str, str]]
+    ) -> list[SeriesGrant]:
         ...
 
-    def list_longform_grants(self, longform_id: str) -> list[LongformGrant]:
+    def list_piece_grants(self, piece_id: str) -> list[PieceGrant]:
         ...
 
-    def get_longform_grant(self, longform_id: str, user_id: str) -> LongformGrant | None:
+    def get_piece_grant(self, piece_id: str, user_id: str) -> PieceGrant | None:
         ...
 
-    def list_user_longform_grants(
+    def list_user_piece_grants(
         self, tenant_id: str, user_id: str
-    ) -> list[LongformGrant]:
+    ) -> list[PieceGrant]:
         ...
 
-    def replace_longform_grants(
-        self, tenant_id: str, longform_id: str, grants: Sequence[tuple[str, str]]
-    ) -> list[LongformGrant]:
+    def replace_piece_grants(
+        self, tenant_id: str, piece_id: str, grants: Sequence[tuple[str, str]]
+    ) -> list[PieceGrant]:
         ...

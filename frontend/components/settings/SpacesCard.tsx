@@ -63,7 +63,7 @@ export default function SpacesCard({
 
   const goTenant = (id: string) => {
     setTenantId(id, false);
-    window.dispatchEvent(new Event("course-studio:refresh"));
+    window.dispatchEvent(new Event("series-studio:refresh"));
     window.location.reload();
   };
 

@@ -8,8 +8,8 @@ export type RoleAction =
   | "manage_quota"
   | "manage_server";
 
-export const SESSION_EVENT = "course-studio:session";
-export const AUTH_REQUIRED_EVENT = "course-studio:auth-required";
+export const SESSION_EVENT = "series-studio:session";
+export const AUTH_REQUIRED_EVENT = "series-studio:auth-required";
 
 const TOKEN_KEY = "cs_token";
 const TENANT_KEY = "cs_tenant";

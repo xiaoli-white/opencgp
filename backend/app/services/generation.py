@@ -21,16 +21,16 @@ from __future__ import annotations
 from typing import Sequence
 
 from app.models.citation import Citation
-from app.models.course import Course, Lesson
+from app.models.series import Series, Unit
 from app.models.factcheck import CheckResult
 from app.models.generation import Evidence, GenerationResult
 from app.models.mode import GenerationMode, with_loose_notice
 from app.models.validation import ValidationReport
 from app.models.work_profile import ProfileSpec
-from app.ports.course_repository import CourseRepository
+from app.ports.series_repository import SeriesRepository
 from app.ports.llm import LLMProvider
 from app.ports.vectorstore import VectorStore
-from app.services.errors import LessonNotFoundError, VersionConflictError
+from app.services.errors import UnitNotFoundError, VersionConflictError
 from app.services.factcheck import FactCheckService
 from app.services.retrieval_providers import RetrievalContext
 from app.services.prompting import (
@@ -71,7 +71,7 @@ def _diversify(citations: Sequence[Citation], limit: int, per_source: int = 3) -
 class GenerationService:
     def __init__(
         self,
-        repository: CourseRepository,
+        repository: SeriesRepository,
         vectorstore: VectorStore,
         llm: LLMProvider,
         default_top_k: int = 5,
@@ -93,9 +93,9 @@ class GenerationService:
         self.factcheck = factcheck
         self.validators = validators
 
-    async def generate_lesson(
+    async def generate_unit(
         self,
-        lesson_id: str,
+        unit_id: str,
         topic: str | None = None,
         top_k: int | None = None,
         note: str = "",
@@ -107,16 +107,16 @@ class GenerationService:
         spec: ProfileSpec | None = None,
         retrieval: RetrievalContext | None = None,
     ) -> GenerationResult:
-        lesson = self.repository.get_lesson(lesson_id)
-        if lesson is None:
-            raise LessonNotFoundError(lesson_id)
-        if expected_version is not None and int(expected_version) != lesson.current_version:
-            raise VersionConflictError(int(expected_version), lesson.current_version)
-        course = self.repository.get_course(lesson.course_id)
+        unit = self.repository.get_unit(unit_id)
+        if unit is None:
+            raise UnitNotFoundError(unit_id)
+        if expected_version is not None and int(expected_version) != unit.current_version:
+            raise VersionConflictError(int(expected_version), unit.current_version)
+        series = self.repository.get_series(unit.series_id)
         resolved_mode = GenerationMode.normalize(mode or self.default_mode)
         policy = policy_of(spec, resolved_mode.value)
 
-        resolved_topic = (topic or lesson.title).strip()
+        resolved_topic = (topic or unit.title).strip()
         resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
         min_score = (
             self.min_score
@@ -128,7 +128,7 @@ class GenerationService:
         elif retrieval is not None:
             citations, _ = await retrieval.search(
                 self.vectorstore,
-                self._build_query(resolved_topic, lesson),
+                self._build_query(resolved_topic, unit),
                 top_k=resolved_top_k,
                 source_ids=source_ids,
                 tenant_id=tenant_id,
@@ -137,7 +137,7 @@ class GenerationService:
             citations = _diversify(citations, self.max_evidence, per_source=3)
         else:
             citations = await self.vectorstore.search(
-                self._build_query(resolved_topic, lesson),
+                self._build_query(resolved_topic, unit),
                 top_k=resolved_top_k,
                 source_ids=source_ids,
                 tenant_id=tenant_id,
@@ -152,19 +152,19 @@ class GenerationService:
         provider = llm or self.llm
         if resolved_mode is GenerationMode.loose and policy != "forbidden":
             content, prompt, provider_name, grounded = await self._write_loose(
-                course, lesson, resolved_topic, evidence, provider, spec
+                series, unit, resolved_topic, evidence, provider, spec
             )
         elif policy == "required":
             content, prompt, provider_name, grounded = await self._write_strict(
-                course, lesson, resolved_topic, evidence, provider, spec
+                series, unit, resolved_topic, evidence, provider, spec
             )
         elif policy == "optional" and evidence:
             content, prompt, provider_name, grounded = await self._write_strict(
-                course, lesson, resolved_topic, evidence, provider, spec
+                series, unit, resolved_topic, evidence, provider, spec
             )
         else:
             content, prompt, provider_name, grounded = await self._write_free(
-                course, lesson, resolved_topic, evidence, provider, spec, resolved_mode
+                series, unit, resolved_topic, evidence, provider, spec, resolved_mode
             )
 
         checks = await self._run_factcheck(
@@ -174,7 +174,7 @@ class GenerationService:
             resolved_mode is GenerationMode.strict and policy != "forbidden",
             retrieval,
         )
-        report = await self._run_validators(spec, content, lesson)
+        report = await self._run_validators(spec, content, unit)
         note_value = note or self._default_note(resolved_mode, evidence)
         if checks:
             note_value = f"{note_value};factcheck:{self.factcheck.summarize(checks)}"
@@ -187,18 +187,18 @@ class GenerationService:
             or policy != "required"
         )
         applied = self.repository.append_version(
-            lesson_id,
+            unit_id,
             content=content,
             citations=citations,
             note=note_value,
-            status="generated" if usable else lesson.status,
+            status="generated" if usable else unit.status,
             mode=resolved_mode.value,
         )
         assert applied is not None
         updated, version = applied
 
         return GenerationResult(
-            lesson_id=lesson_id,
+            unit_id=unit_id,
             version=version.version,
             topic=resolved_topic,
             top_k=resolved_top_k,
@@ -216,7 +216,7 @@ class GenerationService:
         )
 
     async def _run_validators(
-        self, spec: ProfileSpec | None, content: str, lesson: Lesson
+        self, spec: ProfileSpec | None, content: str, unit: Unit
     ) -> ValidationReport | None:
         if self.validators is None or spec is None or not content:
             return None
@@ -225,9 +225,9 @@ class GenerationService:
                 spec,
                 content,
                 {
-                    "lesson_id": lesson.id,
-                    "course_id": lesson.course_id,
-                    "title": lesson.title,
+                    "unit_id": unit.id,
+                    "series_id": unit.series_id,
+                    "title": unit.title,
                     "setting_book": (spec.assets.setting_book),
                 },
             )
@@ -256,8 +256,8 @@ class GenerationService:
 
     async def _write_strict(
         self,
-        course: Course | None,
-        lesson: Lesson,
+        series: Series | None,
+        unit: Unit,
         topic: str,
         evidence: Sequence[Evidence],
         llm: LLMProvider,
@@ -265,45 +265,45 @@ class GenerationService:
     ) -> tuple[str, str, str, bool]:
         if not evidence:
             return NO_EVIDENCE_NOTICE, "", "", False
-        prompt = self._build_strict_prompt(course, lesson, topic, evidence, spec)
+        prompt = self._build_strict_prompt(series, unit, topic, evidence, spec)
         provider_name = type(llm).__name__
         if getattr(llm, "is_placeholder", False):
-            content = self._strict_placeholder_draft(lesson, topic, evidence, spec)
+            content = self._strict_placeholder_draft(unit, topic, evidence, spec)
         else:
             content = await llm.complete(prompt)
         return content, prompt, provider_name, bool(content)
 
     async def _write_loose(
         self,
-        course: Course | None,
-        lesson: Lesson,
+        series: Series | None,
+        unit: Unit,
         topic: str,
         evidence: Sequence[Evidence],
         llm: LLMProvider,
         spec: ProfileSpec | None = None,
     ) -> tuple[str, str, str, bool]:
-        prompt = self._build_loose_prompt(course, lesson, topic, evidence, spec)
+        prompt = self._build_loose_prompt(series, unit, topic, evidence, spec)
         provider_name = type(llm).__name__
         if getattr(llm, "is_placeholder", False):
-            content = self._loose_placeholder_draft(lesson, topic, evidence, spec)
+            content = self._loose_placeholder_draft(unit, topic, evidence, spec)
         else:
             content = await llm.complete(prompt)
         return with_loose_notice(content), prompt, provider_name, False
 
     async def _write_free(
         self,
-        course: Course | None,
-        lesson: Lesson,
+        series: Series | None,
+        unit: Unit,
         topic: str,
         evidence: Sequence[Evidence],
         llm: LLMProvider,
         spec: ProfileSpec | None,
         mode: GenerationMode,
     ) -> tuple[str, str, str, bool]:
-        prompt = self._build_free_prompt(course, lesson, topic, evidence, spec, mode)
+        prompt = self._build_free_prompt(series, unit, topic, evidence, spec, mode)
         provider_name = type(llm).__name__
         if getattr(llm, "is_placeholder", False):
-            content = self._free_placeholder_draft(lesson, topic, evidence, spec)
+            content = self._free_placeholder_draft(unit, topic, evidence, spec)
         else:
             content = await llm.complete(prompt)
         if mode is GenerationMode.loose:
@@ -316,40 +316,40 @@ class GenerationService:
             return "generate:loose"
         return "generate" if evidence else "generate:no-evidence"
 
-    def _build_query(self, topic: str, lesson: Lesson) -> str:
+    def _build_query(self, topic: str, unit: Unit) -> str:
         parts = [topic]
-        if lesson.learning_objectives:
-            parts.append(" ".join(lesson.learning_objectives))
+        if unit.learning_objectives:
+            parts.append(" ".join(unit.learning_objectives))
         return " ".join(part for part in parts if part).strip()
 
     def _prompt_values(
         self,
-        course: Course | None,
-        lesson: Lesson,
+        series: Series | None,
+        unit: Unit,
         topic: str,
         evidence: Sequence[Evidence],
         spec: ProfileSpec | None,
     ) -> dict[str, object]:
         return prompt_values(
             spec,
-            title=(course.title if course else lesson.title) or lesson.title,
+            title=(series.title if series else unit.title) or unit.title,
             unit=unit_name(spec),
-            unit_index=lesson.order_index,
-            audience=(course.audience if course else "") or "",
+            unit_index=unit.order_index,
+            audience=(series.audience if series else "") or "",
             evidence_count=len(evidence),
         )
 
     def _build_strict_prompt(
         self,
-        course: Course | None,
-        lesson: Lesson,
+        series: Series | None,
+        unit: Unit,
         topic: str,
         evidence: Sequence[Evidence],
         spec: ProfileSpec | None = None,
     ) -> str:
         unit = unit_name(spec)
         low, high = word_range(spec, DEFAULT_STRICT_WORDS)
-        values = self._prompt_values(course, lesson, topic, evidence, spec)
+        values = self._prompt_values(series, unit, topic, evidence, spec)
         lines: list[str] = []
         prefix = system_prefix(spec, values)
         if prefix:
@@ -359,12 +359,12 @@ class GenerationService:
                 f"你是严谨的课程作者，负责为一门课程撰写其中一{unit}的正文。",
                 "",
                 "## 讲次信息",
-                f"- 课程：{course.title if course else '未命名课程'}",
-                f"- 第 {lesson.order_index} {unit} · {lesson.title}",
+                f"- 课程：{series.title if series else '未命名课程'}",
+                f"- 第 {unit.order_index} {unit} · {unit.title}",
                 f"- 本{unit}主题：{topic}",
             ]
         )
-        lines.extend(self._lesson_context(lesson, spec))
+        lines.extend(self._unit_context(unit, spec))
 
         lines.extend(
             [
@@ -391,15 +391,15 @@ class GenerationService:
 
     def _build_loose_prompt(
         self,
-        course: Course | None,
-        lesson: Lesson,
+        series: Series | None,
+        unit: Unit,
         topic: str,
         evidence: Sequence[Evidence],
         spec: ProfileSpec | None = None,
     ) -> str:
         unit = unit_name(spec)
         low, high = word_range(spec, DEFAULT_LOOSE_WORDS)
-        values = self._prompt_values(course, lesson, topic, evidence, spec)
+        values = self._prompt_values(series, unit, topic, evidence, spec)
         lines: list[str] = []
         prefix = system_prefix(spec, values)
         if prefix:
@@ -412,12 +412,12 @@ class GenerationService:
                 ),
                 "",
                 "## 讲次信息",
-                f"- 课程：{course.title if course else '未命名课程'}",
-                f"- 第 {lesson.order_index} {unit} · {lesson.title}",
+                f"- 课程：{series.title if series else '未命名课程'}",
+                f"- 第 {unit.order_index} {unit} · {unit.title}",
                 f"- 本{unit}主题：{topic}",
             ]
         )
-        lines.extend(self._lesson_context(lesson, spec))
+        lines.extend(self._unit_context(unit, spec))
 
         lines.extend(
             [
@@ -447,8 +447,8 @@ class GenerationService:
 
     def _build_free_prompt(
         self,
-        course: Course | None,
-        lesson: Lesson,
+        series: Series | None,
+        unit: Unit,
         topic: str,
         evidence: Sequence[Evidence],
         spec: ProfileSpec | None,
@@ -456,7 +456,7 @@ class GenerationService:
     ) -> str:
         unit = unit_name(spec)
         low, high = word_range(spec, DEFAULT_LOOSE_WORDS)
-        values = self._prompt_values(course, lesson, topic, evidence, spec)
+        values = self._prompt_values(series, unit, topic, evidence, spec)
         lines: list[str] = []
         prefix = system_prefix(spec, values)
         if prefix:
@@ -466,12 +466,12 @@ class GenerationService:
                 f"你是经验丰富的作者，负责撰写一门课程中一{unit}的正文。",
                 "",
                 "## 讲次信息",
-                f"- 课程：{course.title if course else '未命名课程'}",
-                f"- 第 {lesson.order_index} {unit} · {lesson.title}",
+                f"- 课程：{series.title if series else '未命名课程'}",
+                f"- 第 {unit.order_index} {unit} · {unit.title}",
                 f"- 本{unit}主题：{topic}",
             ]
         )
-        lines.extend(self._lesson_context(lesson, spec))
+        lines.extend(self._unit_context(unit, spec))
         lines.extend(
             [
                 "",
@@ -500,12 +500,12 @@ class GenerationService:
         return "\n".join(lines)
 
     @staticmethod
-    def _lesson_context(lesson: Lesson, spec: ProfileSpec | None = None) -> list[str]:
+    def _unit_context(unit: Unit, spec: ProfileSpec | None = None) -> list[str]:
         lines: list[str] = []
-        if lesson.learning_objectives:
-            lines.append("- 学习目标：" + "；".join(lesson.learning_objectives))
-        if lesson.prerequisites:
-            lines.append("- 前置知识：" + "；".join(lesson.prerequisites))
+        if unit.learning_objectives:
+            lines.append("- 学习目标：" + "；".join(unit.learning_objectives))
+        if unit.prerequisites:
+            lines.append("- 前置知识：" + "；".join(unit.prerequisites))
         return lines
 
     def _evidence_block(self, evidence: Sequence[Evidence]) -> list[str]:
@@ -522,14 +522,14 @@ class GenerationService:
 
     def _strict_placeholder_draft(
         self,
-        lesson: Lesson,
+        unit: Unit,
         topic: str,
         evidence: Sequence[Evidence],
         spec: ProfileSpec | None = None,
     ) -> str:
         unit = unit_name(spec)
         lines: list[str] = [
-            f"# {lesson.title}",
+            f"# {unit.title}",
             "",
             "> 占位草稿（未配置 LLM API key，严格模式）：正文由检索证据直接编排，用于验证带引用的写作链路。",
             "",
@@ -537,9 +537,9 @@ class GenerationService:
             topic,
             "",
         ]
-        if lesson.learning_objectives:
+        if unit.learning_objectives:
             lines.append("## 学习目标")
-            lines.extend(f"- {item}" for item in lesson.learning_objectives)
+            lines.extend(f"- {item}" for item in unit.learning_objectives)
             lines.append("")
 
         lines.append("## 证据要点")
@@ -568,14 +568,14 @@ class GenerationService:
 
     def _loose_placeholder_draft(
         self,
-        lesson: Lesson,
+        unit: Unit,
         topic: str,
         evidence: Sequence[Evidence],
         spec: ProfileSpec | None = None,
     ) -> str:
         unit = unit_name(spec)
         lines: list[str] = [
-            f"# {lesson.title}",
+            f"# {unit.title}",
             "",
             "> 占位草稿（未配置 LLM API key，非严格模式）：本节允许模型基于自身知识自由写作，"
             "因此不承诺逐段引用；配置真实模型后将由模型生成完整正文。",
@@ -589,13 +589,13 @@ class GenerationService:
             "- 对时效性或争议性结论标注「建议核实」。",
             "",
         ]
-        if lesson.learning_objectives:
+        if unit.learning_objectives:
             lines.append("## 学习目标")
-            lines.extend(f"- {item}" for item in lesson.learning_objectives)
+            lines.extend(f"- {item}" for item in unit.learning_objectives)
             lines.append("")
-        if lesson.prerequisites:
+        if unit.prerequisites:
             lines.append("## 前置知识")
-            lines.extend(f"- {item}" for item in lesson.prerequisites)
+            lines.extend(f"- {item}" for item in unit.prerequisites)
             lines.append("")
 
         lines.append("## 可选参考证据")
@@ -618,7 +618,7 @@ class GenerationService:
 
     def _free_placeholder_draft(
         self,
-        lesson: Lesson,
+        unit: Unit,
         topic: str,
         evidence: Sequence[Evidence],
         spec: ProfileSpec | None = None,
@@ -626,7 +626,7 @@ class GenerationService:
         unit = unit_name(spec)
         profile_name = (spec.meta.name if spec is not None else "") or "自由写作"
         lines: list[str] = [
-            f"# {lesson.title}",
+            f"# {unit.title}",
             "",
             f"> 占位草稿（未配置 LLM API key）：按创作配置「{profile_name}」自由写作，"
             "不引用知识库证据，也不输出来源标记。",
@@ -640,13 +640,13 @@ class GenerationService:
             "- 以可执行的步骤收束，并提示需要核实的事实性细节。",
             "",
         ]
-        if lesson.learning_objectives:
+        if unit.learning_objectives:
             lines.append("## 学习目标")
-            lines.extend(f"- {item}" for item in lesson.learning_objectives)
+            lines.extend(f"- {item}" for item in unit.learning_objectives)
             lines.append("")
-        if lesson.prerequisites:
+        if unit.prerequisites:
             lines.append("## 前置知识")
-            lines.extend(f"- {item}" for item in lesson.prerequisites)
+            lines.extend(f"- {item}" for item in unit.prerequisites)
             lines.append("")
         lines.append("## 延伸阅读建议")
         lines.append("- 查阅该主题的官方文档与规范原文。")

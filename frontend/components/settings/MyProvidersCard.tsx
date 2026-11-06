@@ -76,7 +76,7 @@ function toForm(item: UserProvider): FormState {
 }
 
 function notifyChanged() {
-  window.dispatchEvent(new CustomEvent("course-studio:providers-changed"));
+  window.dispatchEvent(new CustomEvent("series-studio:providers-changed"));
 }
 
 export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) {

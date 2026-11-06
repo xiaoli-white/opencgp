@@ -7,12 +7,12 @@ import { ConfirmDialog, PromptDialog } from "@/components/common/Dialogs";
 import { useI18n } from "@/i18n/I18nProvider";
 
 export default function ThreadsPanel({
-  courseId,
+  seriesId,
   canWrite,
   onNotice,
   onError,
 }: {
-  courseId: string;
+  seriesId: string;
   canWrite: boolean;
   onNotice: (message: string) => void;
   onError: (message: string) => void;
@@ -30,13 +30,13 @@ export default function ThreadsPanel({
     setLoading(true);
     try {
       const data = await api.listThreads();
-      setItems(data.threads.filter((item) => !courseId || item.course_id === courseId));
+      setItems(data.threads.filter((item) => !seriesId || item.series_id === seriesId));
     } catch (err) {
-      onError(err instanceof Error ? err.message : t("course.threads.loadFailed"));
+      onError(err instanceof Error ? err.message : t("series.threads.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [courseId, onError]);
+  }, [seriesId, onError]);
 
   useEffect(() => {
     if (open) void load();
@@ -49,10 +49,10 @@ export default function ThreadsPanel({
     try {
       await api.renameThread(renaming.id, title);
       setRenaming(null);
-      onNotice(t("course.threads.renamed"));
+      onNotice(t("series.threads.renamed"));
       await load();
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : t("course.errors.rename"));
+      setDialogError(err instanceof Error ? err.message : t("series.errors.rename"));
     } finally {
       setBusy(false);
     }
@@ -65,10 +65,10 @@ export default function ThreadsPanel({
     try {
       await api.deleteThread(removing.id);
       setRemoving(null);
-      onNotice(t("course.threads.deleted"));
+      onNotice(t("series.threads.deleted"));
       await load();
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : t("course.errors.delete"));
+      setDialogError(err instanceof Error ? err.message : t("series.errors.delete"));
     } finally {
       setBusy(false);
     }
@@ -83,13 +83,13 @@ export default function ThreadsPanel({
       >
         <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
           <MessagesSquare size={12} />
-          {t("course.threads.title")}
+          {t("series.threads.title")}
         </span>
         <span className="flex items-center gap-1.5 text-[10px] text-slate-400 dark:text-slate-500">
           {loading ? (
             <Loader2 size={11} className="animate-spin" />
           ) : (
-            t("course.threads.count", { count: items.length })
+            t("series.threads.count", { count: items.length })
           )}
           <ChevronDown
             size={13}
@@ -101,7 +101,7 @@ export default function ThreadsPanel({
         <div className="mt-2.5 space-y-1.5">
           {items.length === 0 ? (
             <p className="px-1 py-2 text-[11px] text-slate-400 dark:text-slate-500">
-              {t("course.threads.empty")}
+              {t("series.threads.empty")}
             </p>
           ) : (
             items.map((thread) => (
@@ -114,7 +114,7 @@ export default function ThreadsPanel({
                     {thread.title}
                   </p>
                   <p className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
-                    {t("course.threads.messages", {
+                    {t("series.threads.messages", {
                       count: thread.message_count ?? 0,
                     })}{" "}
                     · {formatRelative(thread.updated_at)}
@@ -129,7 +129,7 @@ export default function ThreadsPanel({
                         setRenaming(thread);
                       }}
                       className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 transition hover:bg-white/70 hover:text-indigo-600 dark:hover:bg-white/10 dark:hover:text-indigo-300"
-                      aria-label={t("course.threads.renameTitle")}
+                      aria-label={t("series.threads.renameTitle")}
                     >
                       <Pencil size={12} />
                     </button>
@@ -140,7 +140,7 @@ export default function ThreadsPanel({
                         setRemoving(thread);
                       }}
                       className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-600"
-                      aria-label={t("course.threads.deleteTitle")}
+                      aria-label={t("series.threads.deleteTitle")}
                     >
                       <Trash2 size={12} />
                     </button>
@@ -154,8 +154,8 @@ export default function ThreadsPanel({
 
       <PromptDialog
         open={Boolean(renaming)}
-        title={t("course.threads.renameTitle")}
-        label={t("course.threads.nameLabel")}
+        title={t("series.threads.renameTitle")}
+        label={t("series.threads.nameLabel")}
         initial={renaming?.title ?? ""}
         busy={busy}
         error={dialogError}
@@ -164,8 +164,8 @@ export default function ThreadsPanel({
       />
       <ConfirmDialog
         open={Boolean(removing)}
-        title={t("course.threads.deleteTitle")}
-        description={t("course.threads.deleteDesc", {
+        title={t("series.threads.deleteTitle")}
+        description={t("series.threads.deleteDesc", {
           title: removing?.title ?? "",
         })}
         busy={busy}

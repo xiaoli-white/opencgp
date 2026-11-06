@@ -28,12 +28,12 @@ class OutlineNode(BaseModel):
     objectives: list[str] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
     estimated_minutes: int = 0
-    lesson_id: str | None = None
+    unit_id: str | None = None
     status: str = "planned"
 
 
-class CourseBlueprint(BaseModel):
-    course_id: str = ""
+class SeriesBlueprint(BaseModel):
+    series_id: str = ""
     version: int = 0
     overview: str = ""
     mode: str = "strict"
@@ -48,9 +48,9 @@ class CourseBlueprint(BaseModel):
     updated_at: float = 0.0
 
 
-class LessonReview(BaseModel):
+class UnitReview(BaseModel):
     id: str
-    lesson_id: str
+    unit_id: str
     action: str
     note: str = ""
     version: int = 0

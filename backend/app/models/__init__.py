@@ -1,13 +1,13 @@
 from app.models.blueprint import (
-    CourseBlueprint,
+    SeriesBlueprint,
     GlossaryTerm,
     LearningStage,
-    LessonReview,
+    UnitReview,
     OutlineNode,
 )
 from app.models.chunk import Chunk
 from app.models.citation import Citation
-from app.models.course import Course, Lesson, LessonVersion
+from app.models.series import Series, Unit, UnitVersion
 from app.models.generation import Evidence, GenerationResult
 from app.models.ingest import IngestResult
 from app.models.mode import LOOSE_NOTICE, GenerationMode, with_loose_notice
@@ -15,7 +15,7 @@ from app.models.thread import (
     AmendResult,
     AskResult,
     DrilldownResult,
-    LessonThreadView,
+    UnitThreadView,
     Message,
     Thread,
 )
@@ -25,8 +25,8 @@ __all__ = [
     "AskResult",
     "Chunk",
     "Citation",
-    "Course",
-    "CourseBlueprint",
+    "Series",
+    "SeriesBlueprint",
     "DrilldownResult",
     "Evidence",
     "GenerationMode",
@@ -35,10 +35,10 @@ __all__ = [
     "IngestResult",
     "LOOSE_NOTICE",
     "LearningStage",
-    "Lesson",
-    "LessonReview",
-    "LessonThreadView",
-    "LessonVersion",
+    "Unit",
+    "UnitReview",
+    "UnitThreadView",
+    "UnitVersion",
     "Message",
     "OutlineNode",
     "Thread",

@@ -630,7 +630,7 @@ Chart 不做数据迁移，步骤如下：
    aws --endpoint-url http://127.0.0.1:9000 s3 sync s3://<旧bucket> s3://opencgp --profile local
    ```
 5. 用第 5 节的 HA values 执行 `helm upgrade --install`（`mode=ha` + 外部依赖）。
-6. 校验：`/health` 200、登录可用、旧课程能打开、队列能消化。
+6. 校验：`/health` 200、登录可用、旧系列能打开、队列能消化。
 
 ---
 

@@ -95,10 +95,10 @@ class Role(BaseModel):
     created_at: float = 0.0
 
 
-class CourseGrant(BaseModel):
+class SeriesGrant(BaseModel):
     id: str = ""
     tenant_id: str = ""
-    course_id: str = ""
+    series_id: str = ""
     user_id: str = ""
     level: str = "read"
     created_at: float = 0.0
@@ -106,10 +106,10 @@ class CourseGrant(BaseModel):
     user_display_name: str = ""
 
 
-class LongformGrant(BaseModel):
+class PieceGrant(BaseModel):
     id: str = ""
     tenant_id: str = ""
-    longform_id: str = ""
+    piece_id: str = ""
     user_id: str = ""
     level: str = "read"
     created_at: float = 0.0

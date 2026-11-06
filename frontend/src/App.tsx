@@ -1,19 +1,19 @@
 import { lazy, Suspense } from "react";
-import { Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { SessionProvider } from "@/components/auth/SessionProvider";
 import { I18nProvider } from "@/i18n/I18nProvider";
 
 const HomePage = lazy(() => import("./pages/HomePage"));
-const CoursePage = lazy(() => import("./pages/CoursePage"));
+const SeriesPage = lazy(() => import("./pages/SeriesPage"));
 const KbPage = lazy(() => import("./pages/KbPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const ProfileSettingsPage = lazy(() => import("./pages/settings/ProfileSettingsPage"));
 const ServerSettingsPage = lazy(() => import("./pages/settings/ServerSettingsPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const ResearchPage = lazy(() => import("./pages/ResearchPage"));
-const LongformsPage = lazy(() => import("./pages/LongformsPage"));
-const LongformEditorPage = lazy(() => import("./pages/LongformEditorPage"));
+const PiecesPage = lazy(() => import("./pages/PiecesPage"));
+const PieceEditorPage = lazy(() => import("./pages/PieceEditorPage"));
 const JobsPage = lazy(() => import("./pages/JobsPage"));
 const MediaPage = lazy(() => import("./pages/MediaPage"));
 const ReaderModePage = lazy(() => import("./pages/ReaderModePage"));
@@ -63,11 +63,15 @@ function AppRoutes() {
         <Suspense fallback={<GlassSkeleton />}>
           <Routes>
             <Route path="/" element={<HomePage />} />
-            <Route path="/courses/:id" element={<CoursePage />} />
+            <Route path="/series/:id" element={<SeriesPage />} />
+            <Route path="/courses/:id" element={<LegacyRedirect prefix="/series" />} />
+            <Route path="/courses" element={<LegacyRedirect prefix="/" />} />
             <Route path="/kb" element={<KbPage />} />
             <Route path="/research" element={<ResearchPage />} />
-            <Route path="/longforms" element={<LongformsPage />} />
-            <Route path="/longforms/:id" element={<LongformEditorPage />} />
+            <Route path="/pieces" element={<PiecesPage />} />
+            <Route path="/pieces/:id" element={<PieceEditorPage />} />
+            <Route path="/longforms" element={<LegacyRedirect prefix="/pieces" />} />
+            <Route path="/longforms/:id" element={<LegacyRedirect prefix="/pieces" />} />
             <Route path="/jobs" element={<JobsPage />} />
             <Route path="/media" element={<MediaPage />} />
             <Route path="/login" element={<LoginPage />} />
@@ -80,6 +84,12 @@ function AppRoutes() {
       </AppShell>
     </SessionProvider>
   );
+}
+
+function LegacyRedirect({ prefix }: { prefix: string }) {
+  const rest = useLocation().pathname.replace(/^\/(courses|longforms)/, "");
+  const target = rest ? `${prefix}${rest}` : prefix;
+  return <Navigate to={target} replace />;
 }
 
 export default function App() {

@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { useCallback, useEffect, useState } from "react";
-import { API_BASE, api, type Course } from "@/lib/api";
+import { API_BASE, api, type Series } from "@/lib/api";
 import { difficultyLabel } from "@/lib/format";
 import { ROLE_LABEL, type Role } from "@/lib/session";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -47,7 +47,7 @@ const NAV_ITEMS: NavItem[] = [
     exact: false,
     requireWrite: true,
   },
-  { href: "/longforms", labelKey: "nav.longform", icon: PenLine, exact: false },
+  { href: "/pieces", labelKey: "nav.piece", icon: PenLine, exact: false },
   { href: "/jobs", labelKey: "nav.jobs", icon: ListChecks, exact: false },
   { href: "/media", labelKey: "nav.media", icon: ImageIcon, exact: false },
   { href: "/settings", labelKey: "nav.settings", icon: IdCard, exact: true },
@@ -78,13 +78,13 @@ const DIFFICULTY_EN: Record<string, string> = {
 type Status = "checking" | "online" | "degraded" | "offline";
 
 type SidebarProps = {
-  courses: Course[];
+  series: Series[];
   pathname: string;
   status: Status;
   onNavigate?: () => void;
 };
 
-function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
+function SidebarBody({ series, pathname, status, onNavigate }: SidebarProps) {
   const { me, role, roleName, tenant, tenantName, tenants, avatarUrl, switchTenant, logout, can } =
     useSession();
   const { t, tm } = useI18n();
@@ -173,25 +173,25 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
 
       <div className="mt-6 flex items-center justify-between px-2">
         <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-          {t("nav.myCourses")}
+          {t("nav.mySeries")}
         </span>
         <span className="text-[10px] text-slate-400 dark:text-slate-500">
-          {courses.length}
+          {series.length}
         </span>
       </div>
 
       <div className="no-scrollbar mt-2 flex-1 space-y-1 overflow-y-auto pr-1">
-        {courses.length === 0 ? (
+        {series.length === 0 ? (
           <p className="px-2 py-3 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-            {t("nav.noCourses")}
+            {t("nav.noSeries")}
           </p>
         ) : (
-          courses.map((course) => {
-            const active = pathname === `/courses/${course.id}`;
+          series.map((series) => {
+            const active = pathname === `/series/${series.id}`;
             return (
               <Link
-                key={course.id}
-                to={`/courses/${course.id}`}
+                key={series.id}
+                to={`/series/${series.id}`}
                 onClick={onNavigate}
                 className={clsx(
                   "group flex items-start gap-2 rounded-xl px-2.5 py-2 transition",
@@ -211,14 +211,14 @@ function SidebarBody({ courses, pathname, status, onNavigate }: SidebarProps) {
                 />
                 <span className="min-w-0">
                   <span className="block truncate text-[13px] font-medium">
-                    {course.title}
+                    {series.title}
                   </span>
                   <span className="mt-0.5 block truncate text-[10px] text-slate-400 dark:text-slate-500">
                     {tm({
-                      zh: difficultyLabel(course.difficulty),
-                      en: DIFFICULTY_EN[course.difficulty] ?? difficultyLabel(course.difficulty),
+                      zh: difficultyLabel(series.difficulty),
+                      en: DIFFICULTY_EN[series.difficulty] ?? difficultyLabel(series.difficulty),
                     })}
-                    {course.audience ? ` · ${course.audience}` : ""}
+                    {series.audience ? ` · ${series.audience}` : ""}
                   </span>
                 </span>
               </Link>
@@ -308,16 +308,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const { authMode } = useSession();
   const { t } = useI18n();
-  const [courses, setCourses] = useState<Course[]>([]);
+  const [series, setSeries] = useState<Series[]>([]);
   const [status, setStatus] = useState<Status>("checking");
   const [drawer, setDrawer] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      const data = await api.listCourses();
-      setCourses(data.courses);
+      const data = await api.listSeries();
+      setSeries(data.series);
     } catch {
-      setCourses([]);
+      setSeries([]);
     }
     try {
       const health = await api.health();
@@ -335,8 +335,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const handler = () => {
       refresh();
     };
-    window.addEventListener("course-studio:refresh", handler);
-    return () => window.removeEventListener("course-studio:refresh", handler);
+    window.addEventListener("series-studio:refresh", handler);
+    return () => window.removeEventListener("series-studio:refresh", handler);
   }, [refresh]);
 
   useEffect(() => {
@@ -347,9 +347,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const handler = () => {
       if (authMode === "required") navigate("/login");
     };
-    window.addEventListener("course-studio:auth-required", handler);
+    window.addEventListener("series-studio:auth-required", handler);
     return () =>
-      window.removeEventListener("course-studio:auth-required", handler);
+      window.removeEventListener("series-studio:auth-required", handler);
   }, [authMode, navigate]);
 
 
@@ -360,8 +360,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [drawer]);
 
-  const activeCourse = courses.find(
-    (course) => pathname === `/courses/${course.id}`,
+  const activeSeries = series.find(
+    (series) => pathname === `/series/${series.id}`,
   );
 
   const title =
@@ -371,8 +371,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         ? t("nav.kb")
         : pathname === "/research"
           ? t("nav.research")
-          : pathname.startsWith("/longforms")
-            ? t("nav.longform")
+          : pathname.startsWith("/pieces")
+            ? t("nav.piece")
             : pathname === "/jobs"
               ? t("nav.jobs")
               : pathname === "/media"
@@ -381,7 +381,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   ? t("nav.settings")
                   : pathname === "/settings/server"
                     ? t("nav.server")
-                    : activeCourse?.title ?? t("nav.course");
+                    : activeSeries?.title ?? t("nav.series");
 
   if (pathname === "/login") {
     return <main className="min-h-screen px-4 py-6">{children}</main>;
@@ -391,7 +391,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <div className="mx-auto flex min-h-screen w-full max-w-[1680px]">
       <aside className="hidden w-[292px] shrink-0 px-4 py-4 lg:block">
         <div className="sticky top-4 h-[calc(100vh-2rem)]">
-          <SidebarBody courses={courses} pathname={pathname} status={status} />
+          <SidebarBody series={series} pathname={pathname} status={status} />
         </div>
       </aside>
 
@@ -440,7 +440,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             >
               <div className="relative h-full">
                 <SidebarBody
-                  courses={courses}
+                  series={series}
                   pathname={pathname}
                   status={status}
                   onNavigate={() => setDrawer(false)}

@@ -6,7 +6,7 @@
 
 from app.ports.conversation_repository import ConversationRepository
 from app.ports.blueprint_repository import BlueprintRepository
-from app.ports.course_repository import CourseRepository
+from app.ports.series_repository import SeriesRepository
 from app.ports.database import Database
 from app.ports.embedding import EmbeddingProvider
 from app.ports.exporter import Exporter
@@ -18,7 +18,7 @@ from app.ports.vectorstore import VectorStore
 __all__ = [
     "BlueprintRepository",
     "ConversationRepository",
-    "CourseRepository",
+    "SeriesRepository",
     "Database",
     "StorageBackend",
     "LLMProvider",

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { api, type Course } from "@/lib/api";
+import { api, type Series } from "@/lib/api";
 import { Modal } from "@/components/common/Dialogs";
 import ProfileSelect, { useWorkProfiles } from "@/components/profiles/ProfileSelect";
 import { useI18n } from "@/i18n/I18nProvider";
@@ -12,16 +12,16 @@ const LANGUAGES: { value: string; label: { zh: string; en: string } }[] = [
   { value: "en", label: { zh: "English", en: "English" } },
 ];
 
-export default function CourseEditDialog({
+export default function SeriesEditDialog({
   open,
-  course,
+  series,
   onClose,
   onSaved,
 }: {
   open: boolean;
-  course: Course | null;
+  series: Series | null;
   onClose: () => void;
-  onSaved: (course: Course) => void;
+  onSaved: (series: Series) => void;
 }) {
   const { t, tm } = useI18n();
   const { profiles } = useWorkProfiles();
@@ -35,22 +35,22 @@ export default function CourseEditDialog({
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!open || !course) return;
-    setTitle(course.title);
-    setSubtitle(course.subtitle ?? "");
-    setAudience(course.audience ?? "");
-    setDifficulty(course.difficulty || "beginner");
-    setLanguage(course.language || "zh");
-    setProfileId(course.profile_id ?? "");
+    if (!open || !series) return;
+    setTitle(series.title);
+    setSubtitle(series.subtitle ?? "");
+    setAudience(series.audience ?? "");
+    setDifficulty(series.difficulty || "beginner");
+    setLanguage(series.language || "zh");
+    setProfileId(series.profile_id ?? "");
     setError("");
-  }, [open, course]);
+  }, [open, series]);
 
   const submit = async () => {
-    if (!course) return;
+    if (!series) return;
     setBusy(true);
     setError("");
     try {
-      const updated = await api.updateCourse(course.id, {
+      const updated = await api.updateSeries(series.id, {
         title: title.trim(),
         subtitle: subtitle.trim(),
         audience: audience.trim(),
@@ -61,7 +61,7 @@ export default function CourseEditDialog({
       onSaved(updated);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("course.edit.saveFailed"));
+      setError(err instanceof Error ? err.message : t("series.edit.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -70,41 +70,41 @@ export default function CourseEditDialog({
   return (
     <Modal
       open={open}
-      title={t("course.edit.title")}
-      subtitle={t("course.edit.subtitle")}
+      title={t("series.edit.title")}
+      subtitle={t("series.edit.subtitle")}
       onClose={onClose}
     >
       <div className="space-y-3">
         <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-          {t("course.edit.courseTitle")}
+          {t("series.edit.seriesTitle")}
           <input
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             className="input mt-1"
-            placeholder={t("course.edit.courseTitlePlaceholder")}
+            placeholder={t("series.edit.seriesTitlePlaceholder")}
           />
         </label>
         <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-          {t("course.edit.subtitleLabel")}
+          {t("series.edit.subtitleLabel")}
           <input
             value={subtitle}
             onChange={(event) => setSubtitle(event.target.value)}
             className="input mt-1"
-            placeholder={t("course.edit.subtitlePlaceholder")}
+            placeholder={t("series.edit.subtitlePlaceholder")}
           />
         </label>
         <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-          {t("course.edit.audienceLabel")}
+          {t("series.edit.audienceLabel")}
           <input
             value={audience}
             onChange={(event) => setAudience(event.target.value)}
             className="input mt-1"
-            placeholder={t("course.edit.audiencePlaceholder")}
+            placeholder={t("series.edit.audiencePlaceholder")}
           />
         </label>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-            {t("course.edit.difficulty")}
+            {t("series.edit.difficulty")}
             <select
               value={difficulty}
               onChange={(event) => setDifficulty(event.target.value)}
@@ -118,7 +118,7 @@ export default function CourseEditDialog({
             </select>
           </label>
           <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-            {t("course.edit.language")}
+            {t("series.edit.language")}
             <select
               value={language}
               onChange={(event) => setLanguage(event.target.value)}
@@ -133,7 +133,7 @@ export default function CourseEditDialog({
           </label>
         </div>
         <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-          {t("profiles.courseProfileLabel")}
+          {t("profiles.seriesProfileLabel")}
           <ProfileSelect value={profileId} profiles={profiles} onChange={setProfileId} />
         </label>
         {error ? (

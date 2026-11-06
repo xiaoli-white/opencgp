@@ -10,10 +10,10 @@ from app.models.job import (
     JOB_KINDS,
     KIND_BLUEPRINT_GENERATE,
     KIND_KB_EMBED_BACKFILL,
-    KIND_LESSON_GENERATE,
-    KIND_LONGFORM_CREATE,
-    KIND_LONGFORM_GENERATE,
-    KIND_LONGFORM_REWRITE,
+    KIND_UNIT_GENERATE,
+    KIND_PIECE_CREATE,
+    KIND_PIECE_GENERATE,
+    KIND_PIECE_REWRITE,
     KIND_RESEARCH,
     QUOTA_KIND_BY_JOB_KIND,
     STATUS_CANCELED,
@@ -70,7 +70,7 @@ class JobService:
     repository: Any
     queue: Any = None
     research: Any = None
-    longform: Any = None
+    piece: Any = None
     generation: Any = None
     blueprint: Any = None
     quota: Any = None
@@ -90,10 +90,10 @@ class JobService:
     def __post_init__(self) -> None:
         self.runners = {
             KIND_RESEARCH: self._run_research,
-            KIND_LONGFORM_CREATE: self._run_longform_create,
-            KIND_LONGFORM_GENERATE: self._run_longform_generate,
-            KIND_LONGFORM_REWRITE: self._run_longform_rewrite,
-            KIND_LESSON_GENERATE: self._run_lesson_generate,
+            KIND_PIECE_CREATE: self._run_piece_create,
+            KIND_PIECE_GENERATE: self._run_piece_generate,
+            KIND_PIECE_REWRITE: self._run_piece_rewrite,
+            KIND_UNIT_GENERATE: self._run_unit_generate,
             KIND_BLUEPRINT_GENERATE: self._run_blueprint_generate,
             KIND_KB_EMBED_BACKFILL: self._run_kb_embed_backfill,
         }
@@ -370,20 +370,20 @@ class JobService:
             "stages": stages,
         }
 
-    async def _run_longform_create(
+    async def _run_piece_create(
         self, job: Job, payload: dict[str, Any], ctx: JobContext
     ) -> dict[str, Any]:
         ctx.ensure_active()
         ctx.report(0.2)
-        from app.models.longform import LongformProfile
+        from app.models.piece import PieceProfile
 
         profile_raw = payload.get("profile") or {}
         profile = (
             profile_raw
-            if isinstance(profile_raw, LongformProfile)
-            else LongformProfile(**profile_raw)
+            if isinstance(profile_raw, PieceProfile)
+            else PieceProfile(**profile_raw)
         )
-        longform = await self.longform.create(
+        piece = await self.piece.create(
             payload.get("title", ""),
             profile=profile,
             target_words=int(payload.get("target_words") or 3000),
@@ -395,29 +395,29 @@ class JobService:
         )
         ctx.report(0.9)
         return {
-            "longform_id": longform.id,
-            "title": longform.title,
-            "sections": len(longform.outline),
-            "current_version": longform.current_version,
-            "warnings": list(longform.warnings),
-            "retrieval": dict(longform.retrieval),
+            "piece_id": piece.id,
+            "title": piece.title,
+            "sections": len(piece.outline),
+            "current_version": piece.current_version,
+            "warnings": list(piece.warnings),
+            "retrieval": dict(piece.retrieval),
         }
 
-    async def _run_longform_generate(
+    async def _run_piece_generate(
         self, job: Job, payload: dict[str, Any], ctx: JobContext
     ) -> dict[str, Any]:
         ctx.ensure_active()
         ctx.report(0.1)
-        longform_id = str(payload.get("longform_id") or "").strip()
-        if not longform_id:
-            raise ValueError("缺少 longform_id")
+        piece_id = str(payload.get("piece_id") or "").strip()
+        if not piece_id:
+            raise ValueError("缺少 piece_id")
 
         def on_progress(done: int, total: int) -> None:
             ctx.report(0.1 + 0.8 * (done / max(1, total)))
             ctx.ensure_active()
 
-        longform = await self.longform.generate_all(
-            longform_id,
+        piece = await self.piece.generate_all(
+            piece_id,
             mode=payload.get("mode") or self.default_mode,
             top_k=payload.get("top_k"),
             tenant_id=ctx.tenant_id,
@@ -428,25 +428,25 @@ class JobService:
         ctx.report(0.9)
         ctx.ensure_active()
         return {
-            "longform_id": longform.id,
-            "title": longform.title,
-            "current_version": longform.current_version,
-            "words": len(longform.content),
-            "sections": len(longform.outline),
-            "warnings": list(longform.warnings),
-            "retrieval": dict(longform.retrieval),
+            "piece_id": piece.id,
+            "title": piece.title,
+            "current_version": piece.current_version,
+            "words": len(piece.content),
+            "sections": len(piece.outline),
+            "warnings": list(piece.warnings),
+            "retrieval": dict(piece.retrieval),
         }
 
-    async def _run_longform_rewrite(
+    async def _run_piece_rewrite(
         self, job: Job, payload: dict[str, Any], ctx: JobContext
     ) -> dict[str, Any]:
         ctx.ensure_active()
         ctx.report(0.3)
-        longform_id = str(payload.get("longform_id") or "").strip()
-        if not longform_id:
-            raise ValueError("缺少 longform_id")
-        longform = await self.longform.rewrite(
-            longform_id,
+        piece_id = str(payload.get("piece_id") or "").strip()
+        if not piece_id:
+            raise ValueError("缺少 piece_id")
+        piece = await self.piece.rewrite(
+            piece_id,
             str(payload.get("instruction") or "润色"),
             mode=payload.get("mode") or self.default_mode,
             expected_version=payload.get("expected_version"),
@@ -454,21 +454,21 @@ class JobService:
         )
         ctx.report(0.9)
         return {
-            "longform_id": longform.id,
-            "current_version": longform.current_version,
-            "words": len(longform.content),
+            "piece_id": piece.id,
+            "current_version": piece.current_version,
+            "words": len(piece.content),
         }
 
-    async def _run_lesson_generate(
+    async def _run_unit_generate(
         self, job: Job, payload: dict[str, Any], ctx: JobContext
     ) -> dict[str, Any]:
         ctx.ensure_active()
         ctx.report(0.2)
-        lesson_id = str(payload.get("lesson_id") or "").strip()
-        if not lesson_id:
-            raise ValueError("缺少 lesson_id")
-        result = await self.generation.generate_lesson(
-            lesson_id,
+        unit_id = str(payload.get("unit_id") or "").strip()
+        if not unit_id:
+            raise ValueError("缺少 unit_id")
+        result = await self.generation.generate_unit(
+            unit_id,
             topic=payload.get("topic"),
             top_k=payload.get("top_k"),
             mode=payload.get("mode"),
@@ -479,7 +479,7 @@ class JobService:
         )
         ctx.report(0.9)
         return {
-            "lesson_id": result.lesson_id,
+            "unit_id": result.unit_id,
             "version": result.version,
             "mode": result.mode,
             "grounded": result.grounded,
@@ -494,11 +494,11 @@ class JobService:
     ) -> dict[str, Any]:
         ctx.ensure_active()
         ctx.report(0.2)
-        course_id = str(payload.get("course_id") or "").strip()
-        if not course_id:
-            raise ValueError("缺少 course_id")
+        series_id = str(payload.get("series_id") or "").strip()
+        if not series_id:
+            raise ValueError("缺少 series_id")
         blueprint = await self.blueprint.generate(
-            course_id,
+            series_id,
             mode=payload.get("mode"),
             top_k=payload.get("top_k"),
             source_ids=payload.get("source_ids"),
@@ -509,7 +509,7 @@ class JobService:
         )
         ctx.report(0.9)
         return {
-            "course_id": blueprint.course_id,
+            "series_id": blueprint.series_id,
             "version": blueprint.version,
             "stages": len(blueprint.learning_path),
             "nodes": len(blueprint.outline),

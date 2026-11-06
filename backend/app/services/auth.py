@@ -27,8 +27,8 @@ from app.models.auth import (
     USER_STATUS_REJECTED,
     USER_STATUSES,
     AuthContext,
-    CourseGrant,
-    LongformGrant,
+    SeriesGrant,
+    PieceGrant,
     Membership,
     Role,
     Tenant,
@@ -537,70 +537,70 @@ class AuthService:
             return True
         return action in set(ctx.actions or ())
 
-    def visible_course_ids(self, ctx: AuthContext | None) -> set[str] | None:
+    def visible_series_ids(self, ctx: AuthContext | None) -> set[str] | None:
         if ctx is None or self.mode != "required":
             return None
         if normalize_scope(ctx.scope) != SCOPE_ASSIGNED:
             return None
         grants = self.repository.list_user_grants(ctx.tenant.id, ctx.user.id)
-        return {grant.course_id for grant in grants}
+        return {grant.series_id for grant in grants}
 
-    def can_access_course(
-        self, ctx: AuthContext | None, course_id: str, level: str = "read"
+    def can_access_series(
+        self, ctx: AuthContext | None, series_id: str, level: str = "read"
     ) -> bool:
-        if ctx is None or not course_id:
+        if ctx is None or not series_id:
             return False
         if self.mode != "required":
             return True
         if normalize_scope(ctx.scope) != SCOPE_ASSIGNED:
             return True
-        grant = self.repository.get_grant(course_id, ctx.user.id)
+        grant = self.repository.get_grant(series_id, ctx.user.id)
         if grant is None:
             return False
         if level == "write":
             return grant.level == "write"
         return grant.level in ("read", "write")
 
-    def visible_longform_ids(
-        self, ctx: AuthContext | None, longform_ids: list[str]
+    def visible_piece_ids(
+        self, ctx: AuthContext | None, piece_ids: list[str]
     ) -> list[str] | None:
         if ctx is None or self.mode != "required":
             return None
         if normalize_scope(ctx.scope) != SCOPE_ASSIGNED:
             return None
         granted = {
-            grant.longform_id
-            for grant in self.repository.list_user_longform_grants(
+            grant.piece_id
+            for grant in self.repository.list_user_piece_grants(
                 ctx.tenant.id, ctx.user.id
             )
         }
-        return [item for item in longform_ids if item in granted]
+        return [item for item in piece_ids if item in granted]
 
-    def can_access_longform(
-        self, ctx: AuthContext | None, longform_id: str, level: str = "read"
+    def can_access_piece(
+        self, ctx: AuthContext | None, piece_id: str, level: str = "read"
     ) -> bool:
-        if ctx is None or not longform_id:
+        if ctx is None or not piece_id:
             return False
         if self.mode != "required":
             return True
         if normalize_scope(ctx.scope) != SCOPE_ASSIGNED:
             return True
-        grant = self.repository.get_longform_grant(longform_id, ctx.user.id)
+        grant = self.repository.get_piece_grant(piece_id, ctx.user.id)
         if grant is None:
             return False
         if level == "write":
             return grant.level == "write"
         return grant.level in ("read", "write")
 
-    def list_longform_grants(
-        self, tenant_id: str, longform_id: str
-    ) -> list[LongformGrant]:
-        grants = self.repository.list_longform_grants(longform_id)
+    def list_piece_grants(
+        self, tenant_id: str, piece_id: str
+    ) -> list[PieceGrant]:
+        grants = self.repository.list_piece_grants(piece_id)
         return [grant for grant in grants if grant.tenant_id == tenant_id]
 
-    def replace_longform_grants(
-        self, tenant_id: str, longform_id: str, grants: list[tuple[str, str]]
-    ) -> list[LongformGrant]:
+    def replace_piece_grants(
+        self, tenant_id: str, piece_id: str, grants: list[tuple[str, str]]
+    ) -> list[PieceGrant]:
         cleaned: list[tuple[str, str]] = []
         seen: set[str] = set()
         for user_id, level in grants:
@@ -611,8 +611,8 @@ class AuthService:
                 raise MembershipNotFoundError(f"成员不存在: {target}")
             seen.add(target)
             cleaned.append((target, "write" if level == "write" else "read"))
-        return self.repository.replace_longform_grants(
-            tenant_id, longform_id, cleaned
+        return self.repository.replace_piece_grants(
+            tenant_id, piece_id, cleaned
         )
 
     def list_roles(self, tenant_id: str) -> list[dict[str, Any]]:
@@ -691,13 +691,13 @@ class AuthService:
             raise RoleInUseError("仍有成员使用该角色，无法删除")
         return self.repository.delete_role(role_id)
 
-    def list_grants(self, tenant_id: str, course_id: str) -> list[CourseGrant]:
-        grants = self.repository.list_grants(course_id)
+    def list_grants(self, tenant_id: str, series_id: str) -> list[SeriesGrant]:
+        grants = self.repository.list_grants(series_id)
         return [grant for grant in grants if grant.tenant_id == tenant_id]
 
     def replace_grants(
-        self, tenant_id: str, course_id: str, grants: list[tuple[str, str]]
-    ) -> list[CourseGrant]:
+        self, tenant_id: str, series_id: str, grants: list[tuple[str, str]]
+    ) -> list[SeriesGrant]:
         cleaned: list[tuple[str, str]] = []
         seen: set[str] = set()
         for user_id, level in grants:
@@ -708,10 +708,10 @@ class AuthService:
                 raise MembershipNotFoundError(f"成员不存在: {target}")
             seen.add(target)
             cleaned.append((target, "write" if level == "write" else "read"))
-        return self.repository.replace_grants(tenant_id, course_id, cleaned)
+        return self.repository.replace_grants(tenant_id, series_id, cleaned)
 
     def capabilities(self, ctx: AuthContext) -> dict[str, Any]:
-        visible = self.visible_course_ids(ctx)
+        visible = self.visible_series_ids(ctx)
         return {
             "user_id": ctx.user.id,
             "tenant_id": ctx.tenant.id,
@@ -724,7 +724,7 @@ class AuthService:
             "avatar_url": ctx.user.avatar_url(),
             "role": ctx.role_payload(),
             "can": {action: self.can(ctx, action) for action in ALL_ACTIONS},
-            "visible_course_ids": "all" if visible is None else sorted(visible),
+            "visible_series_ids": "all" if visible is None else sorted(visible),
         }
 
     def tenants_payload(self, user: User) -> list[dict[str, Any]]:

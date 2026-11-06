@@ -7,8 +7,8 @@ from typing import Any, Mapping, Sequence
 
 from app.models.auth import (
     DEFAULT_TENANT_ID,
-    CourseGrant,
-    LongformGrant,
+    SeriesGrant,
+    PieceGrant,
     Membership,
     Role,
     Tenant,
@@ -71,35 +71,35 @@ SCHEMA: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_tenant_roles_tenant ON tenant_roles(tenant_id)",
     """
-    CREATE TABLE IF NOT EXISTS course_grants (
+    CREATE TABLE IF NOT EXISTS series_grants (
         id TEXT PRIMARY KEY,
         tenant_id TEXT NOT NULL,
-        course_id TEXT NOT NULL,
+        series_id TEXT NOT NULL,
         user_id TEXT NOT NULL,
         level TEXT NOT NULL DEFAULT 'read',
         created_at REAL NOT NULL,
-        UNIQUE (course_id, user_id)
+        UNIQUE (series_id, user_id)
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_course_grants_course ON course_grants(course_id)",
-    "CREATE INDEX IF NOT EXISTS idx_course_grants_user ON course_grants(tenant_id, user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_series_grants_series ON series_grants(series_id)",
+    "CREATE INDEX IF NOT EXISTS idx_series_grants_user ON series_grants(tenant_id, user_id)",
     """
-    CREATE TABLE IF NOT EXISTS longform_grants (
+    CREATE TABLE IF NOT EXISTS piece_grants (
         id TEXT PRIMARY KEY,
         tenant_id TEXT NOT NULL,
-        longform_id TEXT NOT NULL,
+        piece_id TEXT NOT NULL,
         user_id TEXT NOT NULL,
         level TEXT NOT NULL DEFAULT 'read',
         created_at REAL NOT NULL,
-        UNIQUE (longform_id, user_id)
+        UNIQUE (piece_id, user_id)
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_longform_grants_lf ON longform_grants(longform_id)",
-    "CREATE INDEX IF NOT EXISTS idx_longform_grants_user ON longform_grants(tenant_id, user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_piece_grants_lf ON piece_grants(piece_id)",
+    "CREATE INDEX IF NOT EXISTS idx_piece_grants_user ON piece_grants(tenant_id, user_id)",
 )
 
 COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
-    ("courses", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
+    ("series", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
     ("users", "status", "TEXT NOT NULL DEFAULT 'active'"),
     ("users", "avatar_key", "TEXT NOT NULL DEFAULT ''"),
     ("users", "updated_at", "REAL NOT NULL DEFAULT 0"),
@@ -276,9 +276,9 @@ class DatabaseAuthRepository(AuthRepository):
         )
         removed = int(rows[0]["total"]) if rows and rows[0]["total"] is not None else 0
         self.database.execute("DELETE FROM memberships WHERE user_id = ?", (user_id,))
-        self.database.execute("DELETE FROM course_grants WHERE user_id = ?", (user_id,))
+        self.database.execute("DELETE FROM series_grants WHERE user_id = ?", (user_id,))
         self.database.execute(
-            "DELETE FROM longform_grants WHERE user_id = ?", (user_id,)
+            "DELETE FROM piece_grants WHERE user_id = ?", (user_id,)
         )
         return removed
 
@@ -595,104 +595,104 @@ class DatabaseAuthRepository(AuthRepository):
         )
         return int(row["n"]) if row else 0
 
-    def list_grants(self, course_id: str) -> list[CourseGrant]:
+    def list_grants(self, series_id: str) -> list[SeriesGrant]:
         self.ensure_schema()
         rows = self.database.fetchall(
             "SELECT g.*, u.email AS user_email, u.display_name AS user_display_name, u.avatar_key AS user_avatar_key"
-            " FROM course_grants g LEFT JOIN users u ON u.id = g.user_id"
-            " WHERE g.course_id = ? ORDER BY g.created_at ASC",
-            (course_id,),
+            " FROM series_grants g LEFT JOIN users u ON u.id = g.user_id"
+            " WHERE g.series_id = ? ORDER BY g.created_at ASC",
+            (series_id,),
         )
         return [_to_grant(row) for row in rows]
 
-    def get_grant(self, course_id: str, user_id: str) -> CourseGrant | None:
+    def get_grant(self, series_id: str, user_id: str) -> SeriesGrant | None:
         self.ensure_schema()
         row = self.database.fetchone(
             "SELECT g.*, u.email AS user_email, u.display_name AS user_display_name, u.avatar_key AS user_avatar_key"
-            " FROM course_grants g LEFT JOIN users u ON u.id = g.user_id"
-            " WHERE g.course_id = ? AND g.user_id = ?",
-            (course_id, user_id),
+            " FROM series_grants g LEFT JOIN users u ON u.id = g.user_id"
+            " WHERE g.series_id = ? AND g.user_id = ?",
+            (series_id, user_id),
         )
         return _to_grant(row) if row else None
 
-    def list_user_grants(self, tenant_id: str, user_id: str) -> list[CourseGrant]:
+    def list_user_grants(self, tenant_id: str, user_id: str) -> list[SeriesGrant]:
         self.ensure_schema()
         rows = self.database.fetchall(
-            "SELECT * FROM course_grants WHERE tenant_id = ? AND user_id = ?",
+            "SELECT * FROM series_grants WHERE tenant_id = ? AND user_id = ?",
             (tenant_id, user_id),
         )
         return [_to_grant(row) for row in rows]
 
     def replace_grants(
-        self, tenant_id: str, course_id: str, grants: Sequence[tuple[str, str]]
-    ) -> list[CourseGrant]:
+        self, tenant_id: str, series_id: str, grants: Sequence[tuple[str, str]]
+    ) -> list[SeriesGrant]:
         self.ensure_schema()
         self.database.execute(
-            "DELETE FROM course_grants WHERE course_id = ?", (course_id,)
+            "DELETE FROM series_grants WHERE series_id = ?", (series_id,)
         )
         now = time.time()
         for user_id, level in grants:
             self.database.execute(
-                "INSERT INTO course_grants (id, tenant_id, course_id, user_id, level,"
+                "INSERT INTO series_grants (id, tenant_id, series_id, user_id, level,"
                 " created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (_new_id("grant"), tenant_id, course_id, user_id, level, now),
+                (_new_id("grant"), tenant_id, series_id, user_id, level, now),
             )
-        return self.list_grants(course_id)
+        return self.list_grants(series_id)
 
-    def list_longform_grants(self, longform_id: str) -> list[LongformGrant]:
+    def list_piece_grants(self, piece_id: str) -> list[PieceGrant]:
         self.ensure_schema()
         rows = self.database.fetchall(
             "SELECT g.*, u.email AS user_email, u.display_name AS user_display_name"
-            " FROM longform_grants g LEFT JOIN users u ON u.id = g.user_id"
-            " WHERE g.longform_id = ? ORDER BY g.created_at ASC",
-            (longform_id,),
+            " FROM piece_grants g LEFT JOIN users u ON u.id = g.user_id"
+            " WHERE g.piece_id = ? ORDER BY g.created_at ASC",
+            (piece_id,),
         )
-        return [_to_longform_grant(row) for row in rows]
+        return [_to_piece_grant(row) for row in rows]
 
-    def get_longform_grant(
-        self, longform_id: str, user_id: str
-    ) -> LongformGrant | None:
+    def get_piece_grant(
+        self, piece_id: str, user_id: str
+    ) -> PieceGrant | None:
         self.ensure_schema()
         row = self.database.fetchone(
             "SELECT g.*, u.email AS user_email, u.display_name AS user_display_name"
-            " FROM longform_grants g LEFT JOIN users u ON u.id = g.user_id"
-            " WHERE g.longform_id = ? AND g.user_id = ?",
-            (longform_id, user_id),
+            " FROM piece_grants g LEFT JOIN users u ON u.id = g.user_id"
+            " WHERE g.piece_id = ? AND g.user_id = ?",
+            (piece_id, user_id),
         )
-        return _to_longform_grant(row) if row else None
+        return _to_piece_grant(row) if row else None
 
-    def list_user_longform_grants(
+    def list_user_piece_grants(
         self, tenant_id: str, user_id: str
-    ) -> list[LongformGrant]:
+    ) -> list[PieceGrant]:
         self.ensure_schema()
         rows = self.database.fetchall(
-            "SELECT * FROM longform_grants WHERE tenant_id = ? AND user_id = ?",
+            "SELECT * FROM piece_grants WHERE tenant_id = ? AND user_id = ?",
             (tenant_id, user_id),
         )
-        return [_to_longform_grant(row) for row in rows]
+        return [_to_piece_grant(row) for row in rows]
 
-    def replace_longform_grants(
-        self, tenant_id: str, longform_id: str, grants: Sequence[tuple[str, str]]
-    ) -> list[LongformGrant]:
+    def replace_piece_grants(
+        self, tenant_id: str, piece_id: str, grants: Sequence[tuple[str, str]]
+    ) -> list[PieceGrant]:
         self.ensure_schema()
         self.database.execute(
-            "DELETE FROM longform_grants WHERE longform_id = ?", (longform_id,)
+            "DELETE FROM piece_grants WHERE piece_id = ?", (piece_id,)
         )
         now = time.time()
         for user_id, level in grants:
             self.database.execute(
-                "INSERT INTO longform_grants (id, tenant_id, longform_id, user_id,"
+                "INSERT INTO piece_grants (id, tenant_id, piece_id, user_id,"
                 " level, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     _new_id("lfgrant"),
                     tenant_id,
-                    longform_id,
+                    piece_id,
                     user_id,
                     level,
                     now,
                 ),
             )
-        return self.list_longform_grants(longform_id)
+        return self.list_piece_grants(piece_id)
 
 
 def _new_id(prefix: str) -> str:
@@ -718,12 +718,12 @@ def _to_role(row: Mapping[str, Any]) -> Role:
     )
 
 
-def _to_grant(row: Mapping[str, Any]) -> CourseGrant:
+def _to_grant(row: Mapping[str, Any]) -> SeriesGrant:
     keys = set(row.keys())
-    return CourseGrant(
+    return SeriesGrant(
         id=str(row["id"]),
         tenant_id=str(row["tenant_id"]),
-        course_id=str(row["course_id"]),
+        series_id=str(row["series_id"]),
         user_id=str(row["user_id"]),
         level=str(row["level"] or "read"),
         created_at=float(row["created_at"] or 0.0),
@@ -734,12 +734,12 @@ def _to_grant(row: Mapping[str, Any]) -> CourseGrant:
     )
 
 
-def _to_longform_grant(row: Mapping[str, Any]) -> LongformGrant:
+def _to_piece_grant(row: Mapping[str, Any]) -> PieceGrant:
     keys = set(row.keys())
-    return LongformGrant(
+    return PieceGrant(
         id=str(row["id"]),
         tenant_id=str(row["tenant_id"]),
-        longform_id=str(row["longform_id"]),
+        piece_id=str(row["piece_id"]),
         user_id=str(row["user_id"]),
         level=str(row["level"] or "read"),
         created_at=float(row["created_at"] or 0.0),

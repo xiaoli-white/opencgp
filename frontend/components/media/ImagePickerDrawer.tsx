@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Loader2, X } from "lucide-react";
-import { api, type Longform, type MediaAsset } from "@/lib/api";
+import { api, type Piece, type MediaAsset } from "@/lib/api";
 import { assetMarkdown, assetSrc, formatBytes } from "@/lib/media";
 import { useI18n } from "@/i18n/I18nProvider";
 
 type ImagePickerDrawerProps = {
   open: boolean;
-  longform: Longform | null;
+  piece: Piece | null;
   onClose: () => void;
   onInserted: (message: string) => void;
 };
 
 export default function ImagePickerDrawer({
   open,
-  longform,
+  piece,
   onClose,
   onInserted,
 }: ImagePickerDrawerProps) {
@@ -28,7 +28,7 @@ export default function ImagePickerDrawer({
   useEffect(() => {
     if (!open) return;
     setError("");
-    setSectionId(longform?.outline[longform.outline.length - 1]?.id ?? "");
+    setSectionId(piece?.outline[piece.outline.length - 1]?.id ?? "");
     setLoading(true);
     let alive = true;
     void api
@@ -46,19 +46,19 @@ export default function ImagePickerDrawer({
     return () => {
       alive = false;
     };
-  }, [open, longform]);
+  }, [open, piece]);
 
   const insert = useCallback(
     async (asset: MediaAsset) => {
-      if (!longform || !sectionId) return;
+      if (!piece || !sectionId) return;
       setBusyId(asset.id);
       setError("");
       try {
-        const fresh = await api.getLongform(longform.id);
+        const fresh = await api.getPiece(piece.id);
         const section = fresh.outline.find((item) => item.id === sectionId);
         if (!section) throw new Error(t("media.sectionMissing"));
         const merged = `${section.content ?? ""}\n\n${assetMarkdown(asset)}\n`.trim();
-        await api.updateLongformSection(fresh.id, sectionId, { content: merged });
+        await api.updatePieceSection(fresh.id, sectionId, { content: merged });
         onInserted(t("media.insertedSection", { section: section.title }));
         onClose();
       } catch (err) {
@@ -67,7 +67,7 @@ export default function ImagePickerDrawer({
         setBusyId("");
       }
     },
-    [longform, sectionId, onInserted, onClose, t],
+    [piece, sectionId, onInserted, onClose, t],
   );
 
   return (
@@ -116,10 +116,10 @@ export default function ImagePickerDrawer({
                 onChange={(event) => setSectionId(event.target.value)}
                 className="select w-full"
               >
-                {longform?.outline.length ? null : (
+                {piece?.outline.length ? null : (
                   <option value="">{t("media.noSections")}</option>
                 )}
-                {longform?.outline.map((section, index) => (
+                {piece?.outline.map((section, index) => (
                   <option key={section.id} value={section.id}>
                     {index + 1}. {section.title}
                   </option>

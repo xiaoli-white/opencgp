@@ -41,8 +41,8 @@ from app.models.auth import (
     AuthContext,
 )
 from app.models.citation import Citation
-from app.models.blueprint import CourseBlueprint, GlossaryTerm
-from app.models.course import Course, Lesson
+from app.models.blueprint import SeriesBlueprint, GlossaryTerm
+from app.models.series import Series, Unit
 from app.models.export import (
     EXPORT_FORMATS,
     EXPORT_SOURCE_TYPES,
@@ -51,13 +51,13 @@ from app.models.export import (
     FORMAT_EXTENSIONS,
     FORMAT_LABELS,
     FORMAT_MARKDOWN,
-    SOURCE_COURSE,
+    SOURCE_SERIES,
     THEME_LIGHT,
 )
 from app.models.exec import LANGUAGES, ExecResult
 from app.models.mode import GenerationMode
-from app.models.thread import LessonThreadView
-from app.models.longform import LongformProfile
+from app.models.thread import UnitThreadView
+from app.models.piece import PieceProfile
 from app.models.research import ResearchRun
 from app.models.job import JOB_KINDS, JOB_STATUSES, KIND_KB_EMBED_BACKFILL, Job
 from app.models.factcheck import FactCheckReport
@@ -94,14 +94,14 @@ from app.services.errors import (
     TenantNotFoundError,
     BlueprintParseError,
     EmptyLLMResponseError,
-    LessonContentEmptyError,
-    LessonNotFoundError,
+    UnitContentEmptyError,
+    UnitNotFoundError,
     MessageNotFoundError,
     NoEvidenceError,
     QuotaExceededError,
     VersionConflictError,
-    LessonLockedError,
-    LessonLockLostError,
+    UnitLockedError,
+    UnitLockLostError,
     LockTokenMismatchError,
     RoleNotFoundError,
     RoleInUseError,
@@ -112,8 +112,8 @@ from app.services.errors import (
     ProviderNotFoundError,
     ResearchNotFoundError,
     ResearchParseError,
-    LongformNotFoundError,
-    LongformSectionNotFoundError,
+    PieceNotFoundError,
+    PieceSectionNotFoundError,
     JobNotFoundError,
     TenantInUseError,
     TenantKindError,
@@ -360,10 +360,10 @@ def _charge(ctx: AuthContext, kind: str, units: int = 1, ref_id: str = "") -> No
         raise HTTPException(status_code=429, detail=str(exc)) from exc
 
 
-def _guard_lock(lesson_id: str, ctx: AuthContext) -> None:
+def _guard_lock(unit_id: str, ctx: AuthContext) -> None:
     try:
-        container.lock_service().guard(lesson_id, ctx.user.id)
-    except LessonLockedError as exc:
+        container.lock_service().guard(unit_id, ctx.user.id)
+    except UnitLockedError as exc:
         raise HTTPException(
             status_code=409,
             detail=f"该讲正被 {exc.name} 编辑，请先协商或接管",
@@ -1270,7 +1270,7 @@ async def kb_delete_source(
     return {"source_id": source_id, "deleted_chunks": removed}
 
 
-class CourseCreateRequest(BaseModel):
+class SeriesCreateRequest(BaseModel):
     title: str = Field(min_length=1)
     subtitle: str = ""
     audience: str = ""
@@ -1279,7 +1279,7 @@ class CourseCreateRequest(BaseModel):
     profile_id: str = ""
 
 
-class LessonCreateRequest(BaseModel):
+class UnitCreateRequest(BaseModel):
     title: str = Field(min_length=1)
     order_index: int | None = Field(default=None, ge=1)
     learning_objectives: list[str] = Field(default_factory=list)
@@ -1288,7 +1288,7 @@ class LessonCreateRequest(BaseModel):
     note: str = "create"
 
 
-class LessonGenerateRequest(BaseModel):
+class UnitGenerateRequest(BaseModel):
     topic: str | None = None
     top_k: int | None = Field(default=None, ge=1, le=20)
     note: str = ""
@@ -1297,44 +1297,44 @@ class LessonGenerateRequest(BaseModel):
     expected_version: int | None = None
 
 
-class LessonRevertRequest(BaseModel):
+class UnitRevertRequest(BaseModel):
     version: int = Field(ge=1)
     note: str = ""
     expected_version: int | None = None
 
 
-class LessonAskRequest(BaseModel):
+class UnitAskRequest(BaseModel):
     question: str = Field(min_length=1)
     selection: str | None = None
 
 
-class LessonAmendRequest(BaseModel):
+class UnitAmendRequest(BaseModel):
     instruction: str = Field(min_length=1)
     target: str | None = None
     mode: GenerationMode = GenerationMode.strict
     expected_version: int | None = None
 
 
-class LessonDrilldownRequest(BaseModel):
+class UnitDrilldownRequest(BaseModel):
     message_id: str | None = None
     question: str | None = None
 
 
-class LessonFactCheckRequest(BaseModel):
+class UnitFactCheckRequest(BaseModel):
     top_k: int | None = Field(default=None, ge=1, le=10)
     claims: list[str] | None = None
 
 
-def _require_course(
-    course_id: str, ctx: AuthContext | None = None, level: str = "read"
-) -> Course:
+def _require_series(
+    series_id: str, ctx: AuthContext | None = None, level: str = "read"
+) -> Series:
     tenant_id = _tenant_of(ctx) if ctx is not None else None
-    course = container.course_repository().get_course(course_id, tenant_id)
-    if course is None:
-        raise HTTPException(status_code=404, detail=f"课程不存在: {course_id}")
-    if ctx is not None and not container.auth_service().can_access_course(ctx, course_id, level):
-        raise HTTPException(status_code=404, detail=f"课程不存在: {course_id}")
-    return course
+    series = container.series_repository().get_series(series_id, tenant_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail=f"课程不存在: {series_id}")
+    if ctx is not None and not container.auth_service().can_access_series(ctx, series_id, level):
+        raise HTTPException(status_code=404, detail=f"课程不存在: {series_id}")
+    return series
 
 
 def _version_summary(version: Any, extra: dict[str, Any], include_content: bool) -> dict[str, Any]:
@@ -1347,10 +1347,10 @@ def _version_summary(version: Any, extra: dict[str, Any], include_content: bool)
         "content_length": len(version.content or ""),
         **extra,
     }
-    if hasattr(version, "lesson_id"):
-        payload["lesson_id"] = version.lesson_id
-    if hasattr(version, "longform_id"):
-        payload["longform_id"] = version.longform_id
+    if hasattr(version, "unit_id"):
+        payload["unit_id"] = version.unit_id
+    if hasattr(version, "piece_id"):
+        payload["piece_id"] = version.piece_id
     if include_content:
         payload["content"] = version.content
     return payload
@@ -1375,27 +1375,27 @@ def _version_diff(
     }
 
 
-def _require_lesson(
-    lesson_id: str, ctx: AuthContext | None = None, level: str = "read"
-) -> Lesson:
-    lesson = container.course_repository().get_lesson(lesson_id)
-    if lesson is None:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}")
+def _require_unit(
+    unit_id: str, ctx: AuthContext | None = None, level: str = "read"
+) -> Unit:
+    unit = container.series_repository().get_unit(unit_id)
+    if unit is None:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}")
     if ctx is not None:
-        _require_course(lesson.course_id, ctx, level)
-    return lesson
+        _require_series(unit.series_id, ctx, level)
+    return unit
 
 
-def _course_spec(course: Course | None) -> Any:
+def _series_spec(series: Series | None) -> Any:
     try:
-        return container.profiles().resolve_for_course(course)
+        return container.profiles().resolve_for_series(series)
     except Exception:
         return None
 
 
-def _longform_spec(longform: Any) -> Any:
+def _piece_spec(piece: Any) -> Any:
     try:
-        return container.profiles().resolve_for_longform(longform)
+        return container.profiles().resolve_for_piece(piece)
     except Exception:
         return None
 
@@ -1409,12 +1409,12 @@ async def _validation_report(spec: Any, content: str, extra: dict[str, Any]) -> 
         return None
 
 
-@app.post("/api/v1/courses", status_code=201)
-def create_course(
-    req: CourseCreateRequest, ctx: AuthContext = Depends(get_auth_context)
+@app.post("/api/v1/series", status_code=201)
+def create_series(
+    req: SeriesCreateRequest, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    course = container.course_repository().create_course(
+    series = container.series_repository().create_series(
         title=req.title,
         subtitle=req.subtitle,
         audience=req.audience,
@@ -1424,45 +1424,45 @@ def create_course(
         user_id=ctx.user.id,
         profile_id=req.profile_id,
     )
-    return course.model_dump()
+    return series.model_dump()
 
 
-@app.get("/api/v1/courses")
-def list_courses(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+@app.get("/api/v1/series")
+def list_series(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
     _enforce(ctx, "read")
-    courses = container.course_repository().list_courses(_tenant_of(ctx))
-    visible = container.auth_service().visible_course_ids(ctx)
+    series = container.series_repository().list_series(_tenant_of(ctx))
+    visible = container.auth_service().visible_series_ids(ctx)
     if visible is not None:
-        courses = [course for course in courses if course.id in visible]
-    return {"count": len(courses), "courses": [course.model_dump() for course in courses]}
+        series = [series for series in series if series.id in visible]
+    return {"count": len(series), "series": [series.model_dump() for series in series]}
 
 
-@app.get("/api/v1/courses/{course_id}")
-def get_course(
-    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.get("/api/v1/series/{series_id}")
+def get_series(
+    series_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    course = _require_course(course_id, ctx)
-    lessons = container.course_repository().list_lessons(course_id)
+    series = _require_series(series_id, ctx)
+    units = container.series_repository().list_units(series_id)
     return {
-        "course": course.model_dump(),
-        "lesson_count": len(lessons),
-        "lessons": [lesson.model_dump() for lesson in lessons],
-        "progress": container.blueprint().progress(course_id),
+        "series": series.model_dump(),
+        "unit_count": len(units),
+        "units": [unit.model_dump() for unit in units],
+        "progress": container.blueprint().progress(series_id),
     }
 
 
-@app.post("/api/v1/courses/{course_id}/lessons", status_code=201)
-def create_lesson(
-    course_id: str,
-    req: LessonCreateRequest,
+@app.post("/api/v1/series/{series_id}/units", status_code=201)
+def create_unit(
+    series_id: str,
+    req: UnitCreateRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_course(course_id, ctx, "write")
-    repository = container.course_repository()
-    lesson = repository.create_lesson(
-        course_id=course_id,
+    _require_series(series_id, ctx, "write")
+    repository = container.series_repository()
+    unit = repository.create_unit(
+        series_id=series_id,
         title=req.title,
         order_index=req.order_index,
         learning_objectives=req.learning_objectives,
@@ -1471,55 +1471,55 @@ def create_lesson(
     version = 0
     if req.content.strip():
         applied = repository.append_version(
-            lesson.id,
+            unit.id,
             content=req.content,
             citations=[],
             note=req.note,
             status="draft",
         )
         if applied is not None:
-            lesson, record = applied
+            unit, record = applied
             version = record.version
-    return {"lesson": lesson.model_dump(), "version": version}
+    return {"unit": unit.model_dump(), "version": version}
 
 
-@app.get("/api/v1/courses/{course_id}/lessons")
-def list_lessons(
-    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.get("/api/v1/series/{series_id}/units")
+def list_units(
+    series_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_course(course_id, ctx)
-    lessons = container.course_repository().list_lessons(course_id)
+    _require_series(series_id, ctx)
+    units = container.series_repository().list_units(series_id)
     return {
-        "course_id": course_id,
-        "count": len(lessons),
-        "lessons": [lesson.model_dump() for lesson in lessons],
+        "series_id": series_id,
+        "count": len(units),
+        "units": [unit.model_dump() for unit in units],
     }
 
 
-@app.get("/api/v1/lessons/{lesson_id}")
-def get_lesson(
-    lesson_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.get("/api/v1/units/{unit_id}")
+def get_unit(
+    unit_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    lesson = _require_lesson(lesson_id, ctx)
-    return lesson.model_dump()
+    unit = _require_unit(unit_id, ctx)
+    return unit.model_dump()
 
 
-@app.post("/api/v1/lessons/{lesson_id}/generate")
-async def generate_lesson(
-    lesson_id: str,
-    req: LessonGenerateRequest | None = None,
+@app.post("/api/v1/units/{unit_id}/generate")
+async def generate_unit(
+    unit_id: str,
+    req: UnitGenerateRequest | None = None,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    lesson = _require_lesson(lesson_id, ctx, "write")
-    _guard_lock(lesson_id, ctx)
-    payload = req or LessonGenerateRequest()
-    _charge(ctx, "generate", 1, ref_id=lesson_id)
+    unit = _require_unit(unit_id, ctx, "write")
+    _guard_lock(unit_id, ctx)
+    payload = req or UnitGenerateRequest()
+    _charge(ctx, "generate", 1, ref_id=unit_id)
     try:
-        result = await container.generation().generate_lesson(
-            lesson_id,
+        result = await container.generation().generate_unit(
+            unit_id,
             topic=payload.topic,
             top_k=payload.top_k,
             note=payload.note,
@@ -1528,32 +1528,32 @@ async def generate_lesson(
             expected_version=payload.expected_version,
             tenant_id=_tenant_of(ctx),
             llm=container.llm_for(ctx.user.id),
-            spec=_course_spec(container.course_repository().get_course(lesson.course_id)),
+            spec=_series_spec(container.series_repository().get_series(unit.series_id)),
             retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
         )
-    except LessonNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
+    except UnitNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}") from exc
     except VersionConflictError as exc:
         return _conflict(exc)
     return result.model_dump()
 
 
-class LessonValidateRequest(BaseModel):
+class UnitValidateRequest(BaseModel):
     profile_id: str = ""
     validators: list[str] | None = None
 
 
-@app.post("/api/v1/lessons/{lesson_id}/validate")
-async def validate_lesson(
-    lesson_id: str,
-    req: LessonValidateRequest | None = None,
+@app.post("/api/v1/units/{unit_id}/validate")
+async def validate_unit(
+    unit_id: str,
+    req: UnitValidateRequest | None = None,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    lesson = _require_lesson(lesson_id, ctx)
-    payload = req or LessonValidateRequest()
-    course = container.course_repository().get_course(lesson.course_id)
-    spec = _course_spec(course)
+    unit = _require_unit(unit_id, ctx)
+    payload = req or UnitValidateRequest()
+    series = container.series_repository().get_series(unit.series_id)
+    spec = _series_spec(series)
     if payload.profile_id:
         resolved = container.profiles().resolve(payload.profile_id)
         if resolved is not None:
@@ -1567,34 +1567,34 @@ async def validate_lesson(
         )
     report = await container.validators().run(
         spec,
-        lesson.content or "",
+        unit.content or "",
         {
-            "lesson_id": lesson.id,
-            "course_id": lesson.course_id,
-            "title": lesson.title,
+            "unit_id": unit.id,
+            "series_id": unit.series_id,
+            "title": unit.title,
             "setting_book": spec.assets.setting_book,
         },
     )
     return {
-        "lesson_id": lesson_id,
-        "profile_id": (course.profile_id if course else "") or "",
-        "length": len(lesson.content or ""),
+        "unit_id": unit_id,
+        "profile_id": (series.profile_id if series else "") or "",
+        "length": len(unit.content or ""),
         **report.model_dump(),
     }
 
 
-@app.post("/api/v1/lessons/{lesson_id}/factcheck")
-async def factcheck_lesson(
-    lesson_id: str,
-    req: LessonFactCheckRequest | None = None,
+@app.post("/api/v1/units/{unit_id}/factcheck")
+async def factcheck_unit(
+    unit_id: str,
+    req: UnitFactCheckRequest | None = None,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    lesson = _require_lesson(lesson_id, ctx)
-    payload = req or LessonFactCheckRequest()
+    unit = _require_unit(unit_id, ctx)
+    payload = req or UnitFactCheckRequest()
     service = container.factcheck()
     explicit = [item.strip() for item in (payload.claims or []) if item and item.strip()]
-    claims = explicit or service.extract_claims(lesson.content or "")
+    claims = explicit or service.extract_claims(unit.content or "")
     retrieval_ctx = container.retrieval_context(_tenant_of(ctx), ctx.user.id)
     results = await service.check(
         claims,
@@ -1604,54 +1604,54 @@ async def factcheck_lesson(
         retrieval=retrieval_ctx,
     )
     return FactCheckReport.build(
-        results, lesson_id, retrieval=retrieval_ctx.summary()
+        results, unit_id, retrieval=retrieval_ctx.summary()
     ).model_dump()
 
 
-@app.get("/api/v1/lessons/{lesson_id}/versions/diff")
-def diff_lesson_versions(
-    lesson_id: str,
+@app.get("/api/v1/units/{unit_id}/versions/diff")
+def diff_unit_versions(
+    unit_id: str,
     from_version: int = Query(alias="from", ge=1),
     to_version: int = Query(alias="to", ge=1),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_lesson(lesson_id, ctx)
-    repository = container.course_repository()
+    _require_unit(unit_id, ctx)
+    repository = container.series_repository()
     return _version_diff(
-        lesson_id,
+        unit_id,
         from_version,
         to_version,
-        lambda item: repository.get_version(lesson_id, item),
+        lambda item: repository.get_version(unit_id, item),
     )
 
 
-@app.get("/api/v1/lessons/{lesson_id}/versions/{version}")
-def get_lesson_version(
-    lesson_id: str,
+@app.get("/api/v1/units/{unit_id}/versions/{version}")
+def get_unit_version(
+    unit_id: str,
     version: int,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_lesson(lesson_id, ctx)
-    record = container.course_repository().get_version(lesson_id, version)
+    _require_unit(unit_id, ctx)
+    record = container.series_repository().get_version(unit_id, version)
     if record is None:
         raise HTTPException(status_code=404, detail=f"版本不存在: {version}")
-    return {"lesson_id": lesson_id, "version": record.model_dump()}
+    return {"unit_id": unit_id, "version": record.model_dump()}
 
 
-@app.get("/api/v1/lessons/{lesson_id}/versions")
-def list_lesson_versions(
-    lesson_id: str,
+@app.get("/api/v1/units/{unit_id}/versions")
+def list_unit_versions(
+    unit_id: str,
     include_content: bool = Query(default=False),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    lesson = _require_lesson(lesson_id, ctx)
-    versions = container.course_repository().list_versions(lesson_id)
+    unit = _require_unit(unit_id, ctx)
+    versions = container.series_repository().list_versions(unit_id)
     return {
-        "lesson_id": lesson_id,
-        "current_version": lesson.current_version,
+        "unit_id": unit_id,
+        "current_version": unit.current_version,
         "count": len(versions),
         "versions": [
             _version_summary(
@@ -1667,77 +1667,77 @@ def list_lesson_versions(
     }
 
 
-@app.post("/api/v1/lessons/{lesson_id}/revert")
-def revert_lesson(
-    lesson_id: str,
-    req: LessonRevertRequest,
+@app.post("/api/v1/units/{unit_id}/revert")
+def revert_unit(
+    unit_id: str,
+    req: UnitRevertRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    lesson_now = _require_lesson(lesson_id, ctx, "write")
-    _guard_lock(lesson_id, ctx)
-    if req.expected_version is not None and int(req.expected_version) != lesson_now.current_version:
+    unit_now = _require_unit(unit_id, ctx, "write")
+    _guard_lock(unit_id, ctx)
+    if req.expected_version is not None and int(req.expected_version) != unit_now.current_version:
         return _conflict(
-            VersionConflictError(int(req.expected_version), lesson_now.current_version)
+            VersionConflictError(int(req.expected_version), unit_now.current_version)
         )
-    repository = container.course_repository()
-    if repository.get_version(lesson_id, req.version) is None:
+    repository = container.series_repository()
+    if repository.get_version(unit_id, req.version) is None:
         raise HTTPException(
-            status_code=404, detail=f"版本不存在: {lesson_id} v{req.version}"
+            status_code=404, detail=f"版本不存在: {unit_id} v{req.version}"
         )
-    applied = repository.revert_to_version(lesson_id, req.version, note=req.note)
+    applied = repository.revert_to_version(unit_id, req.version, note=req.note)
     if applied is None:
-        raise HTTPException(status_code=404, detail=f"版本不存在: {lesson_id} v{req.version}")
-    lesson, record = applied
+        raise HTTPException(status_code=404, detail=f"版本不存在: {unit_id} v{req.version}")
+    unit, record = applied
     return {
-        "lesson": lesson.model_dump(),
+        "unit": unit.model_dump(),
         "version": record.version,
         "reverted_from": req.version,
         "note": record.note,
     }
 
 
-@app.post("/api/v1/lessons/{lesson_id}/ask")
-async def ask_lesson(
-    lesson_id: str, req: LessonAskRequest, ctx: AuthContext = Depends(get_auth_context)
+@app.post("/api/v1/units/{unit_id}/ask")
+async def ask_unit(
+    unit_id: str, req: UnitAskRequest, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_lesson(lesson_id, ctx, "write")
+    _require_unit(unit_id, ctx, "write")
     question = req.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
-    _charge(ctx, "ask", 1, ref_id=lesson_id)
+    _charge(ctx, "ask", 1, ref_id=unit_id)
     selection = (req.selection or "").strip() or None
     try:
         result = await container.conversation().ask(
-            lesson_id,
+            unit_id,
             question,
             selection=selection,
             llm=container.llm_for(ctx.user.id),
         )
-    except LessonNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
+    except UnitNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}") from exc
     except EmptyLLMResponseError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return result.model_dump()
 
 
-@app.post("/api/v1/lessons/{lesson_id}/amend")
-async def amend_lesson(
-    lesson_id: str,
-    req: LessonAmendRequest,
+@app.post("/api/v1/units/{unit_id}/amend")
+async def amend_unit(
+    unit_id: str,
+    req: UnitAmendRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_lesson(lesson_id, ctx, "write")
+    _require_unit(unit_id, ctx, "write")
     instruction = req.instruction.strip()
     if not instruction:
         raise HTTPException(status_code=400, detail="修改指令不能为空")
-    _guard_lock(lesson_id, ctx)
-    _charge(ctx, "amend", 1, ref_id=lesson_id)
+    _guard_lock(unit_id, ctx)
+    _charge(ctx, "amend", 1, ref_id=unit_id)
     try:
         result = await container.conversation().amend(
-            lesson_id,
+            unit_id,
             instruction,
             target=req.target,
             mode=req.mode.value,
@@ -1746,71 +1746,71 @@ async def amend_lesson(
         )
     except VersionConflictError as exc:
         return _conflict(exc)
-    except LessonNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
-    except LessonContentEmptyError as exc:
+    except UnitNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}") from exc
+    except UnitContentEmptyError as exc:
         raise HTTPException(
-            status_code=400, detail=f"该讲尚无正文，无法局部修改: {lesson_id}"
+            status_code=400, detail=f"该讲尚无正文，无法局部修改: {unit_id}"
         ) from exc
     except EmptyLLMResponseError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return result.model_dump()
 
 
-@app.post("/api/v1/lessons/{lesson_id}/drilldown")
-async def drilldown_lesson(
-    lesson_id: str,
-    req: LessonDrilldownRequest | None = None,
+@app.post("/api/v1/units/{unit_id}/drilldown")
+async def drilldown_unit(
+    unit_id: str,
+    req: UnitDrilldownRequest | None = None,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_lesson(lesson_id, ctx, "write")
-    payload = req or LessonDrilldownRequest()
+    _require_unit(unit_id, ctx, "write")
+    payload = req or UnitDrilldownRequest()
     try:
         result = await container.conversation().drilldown(
-            lesson_id,
+            unit_id,
             message_id=payload.message_id,
             question=payload.question,
             llm=container.llm_for(ctx.user.id),
         )
-    except LessonNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
+    except UnitNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}") from exc
     except MessageNotFoundError as exc:
         raise HTTPException(
             status_code=404,
             detail=(
                 "未找到可沉淀的追问回答，请先调用 ask 或指定有效的 message_id: "
-                f"{payload.message_id or payload.question or lesson_id}"
+                f"{payload.message_id or payload.question or unit_id}"
             ),
         ) from exc
     return result.model_dump()
 
 
-@app.get("/api/v1/lessons/{lesson_id}/thread")
-def get_lesson_thread(
-    lesson_id: str,
+@app.get("/api/v1/units/{unit_id}/thread")
+def get_unit_thread(
+    unit_id: str,
     limit: int | None = Query(default=None, ge=1, le=200),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_lesson(lesson_id, ctx)
+    _require_unit(unit_id, ctx)
     conversations = container.conversation_repository()
-    thread = conversations.get_lesson_thread(lesson_id)
+    thread = conversations.get_unit_thread(unit_id)
     if thread is None:
-        empty = LessonThreadView(
-            lesson_id=lesson_id, thread_id="", title="", message_count=0, messages=[]
+        empty = UnitThreadView(
+            unit_id=unit_id, thread_id="", title="", message_count=0, messages=[]
         )
         return empty.model_dump()
     messages = conversations.list_messages(thread.id, limit=limit)
-    view = LessonThreadView(
-        lesson_id=lesson_id,
+    view = UnitThreadView(
+        unit_id=unit_id,
         thread_id=thread.id,
         title=thread.title,
         message_count=conversations.count_messages(thread.id),
         messages=messages,
     )
     payload = view.model_dump()
-    payload["course_id"] = thread.course_id
+    payload["series_id"] = thread.series_id
     payload["returned_count"] = len(messages)
     payload["created_at"] = thread.created_at
     payload["updated_at"] = thread.updated_at
@@ -1828,7 +1828,7 @@ def get_thread(
     thread = conversations.get_thread(thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail=f"对话线不存在: {thread_id}")
-    _require_course(thread.course_id, ctx)
+    _require_series(thread.series_id, ctx)
     messages = conversations.list_messages(thread.id, limit=limit)
     return {
         "thread": thread.model_dump(),
@@ -1844,14 +1844,14 @@ def list_threads(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    courses = container.course_repository().list_courses(_tenant_of(ctx))
-    visible = container.auth_service().visible_course_ids(ctx)
-    course_ids = [course.id for course in courses]
+    series = container.series_repository().list_series(_tenant_of(ctx))
+    visible = container.auth_service().visible_series_ids(ctx)
+    series_ids = [series.id for series in series]
     if visible is not None:
         allowed = set(visible)
-        course_ids = [course_id for course_id in course_ids if course_id in allowed]
+        series_ids = [series_id for series_id in series_ids if series_id in allowed]
     conversations = container.conversation_repository()
-    threads = conversations.list_threads(course_ids, limit)
+    threads = conversations.list_threads(series_ids, limit)
     payload = []
     for thread in threads:
         item = thread.model_dump()
@@ -1868,8 +1868,8 @@ def _require_thread(thread_id: str, ctx: AuthContext, level: str = "read"):
     thread = container.conversation_repository().get_thread(thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail=f"对话线不存在: {thread_id}")
-    if thread.course_id:
-        _require_course(thread.course_id, ctx, level)
+    if thread.series_id:
+        _require_series(thread.series_id, ctx, level)
     return thread
 
 
@@ -1907,7 +1907,7 @@ class BlueprintGenerateRequest(BaseModel):
 
 
 class BlueprintSaveRequest(BaseModel):
-    blueprint: CourseBlueprint
+    blueprint: SeriesBlueprint
     expected_version: int | None = None
 
 
@@ -1915,53 +1915,53 @@ class GlossaryUpdateRequest(BaseModel):
     terms: list[GlossaryTerm] = Field(default_factory=list)
 
 
-class LessonReviewRequest(BaseModel):
+class UnitReviewRequest(BaseModel):
     action: Literal["approve", "request_revision"]
     note: str = ""
 
 
-def _glossary_payload(course_id: str, blueprint: CourseBlueprint | None) -> dict[str, Any]:
+def _glossary_payload(series_id: str, blueprint: SeriesBlueprint | None) -> dict[str, Any]:
     terms = blueprint.glossary if blueprint else []
     return {
-        "course_id": course_id,
+        "series_id": series_id,
         "count": len(terms),
         "glossary": [term.model_dump() for term in terms],
     }
 
 
-@app.get("/api/v1/courses/{course_id}/blueprint")
-def get_course_blueprint(
-    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.get("/api/v1/series/{series_id}/blueprint")
+def get_series_blueprint(
+    series_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_course(course_id, ctx)
-    blueprint = container.blueprint().get_blueprint(course_id)
+    _require_series(series_id, ctx)
+    blueprint = container.blueprint().get_blueprint(series_id)
     return {
         "exists": blueprint is not None,
         "blueprint": blueprint.model_dump() if blueprint else None,
     }
 
 
-@app.post("/api/v1/courses/{course_id}/blueprint/generate")
-async def generate_course_blueprint(
-    course_id: str,
+@app.post("/api/v1/series/{series_id}/blueprint/generate")
+async def generate_series_blueprint(
+    series_id: str,
     req: BlueprintGenerateRequest | None = None,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
     payload = req or BlueprintGenerateRequest()
-    course = _require_course(course_id, ctx, "write")
-    _charge(ctx, "blueprint", 1, ref_id=course_id)
+    series = _require_series(series_id, ctx, "write")
+    _charge(ctx, "blueprint", 1, ref_id=series_id)
     try:
         blueprint = await container.blueprint().generate(
-            course_id,
+            series_id,
             mode=payload.mode.value,
             top_k=payload.top_k,
             source_ids=payload.source_ids,
             focus=payload.focus,
             tenant_id=_tenant_of(ctx),
             llm=container.llm_for(ctx.user.id),
-            spec=_course_spec(course),
+            spec=_series_spec(series),
             retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
         )
     except NoEvidenceError as exc:
@@ -1973,17 +1973,17 @@ async def generate_course_blueprint(
     return blueprint.model_dump()
 
 
-@app.put("/api/v1/courses/{course_id}/blueprint")
-def save_course_blueprint(
-    course_id: str,
+@app.put("/api/v1/series/{series_id}/blueprint")
+def save_series_blueprint(
+    series_id: str,
     req: BlueprintSaveRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_course(course_id, ctx, "write")
+    _require_series(series_id, ctx, "write")
     try:
         saved = container.blueprint().save_blueprint(
-            course_id, req.blueprint, expected_version=req.expected_version
+            series_id, req.blueprint, expected_version=req.expected_version
         )
     except BlueprintNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1992,95 +1992,95 @@ def save_course_blueprint(
     return saved.model_dump()
 
 
-@app.post("/api/v1/courses/{course_id}/blueprint/apply")
-def apply_course_blueprint(
-    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.post("/api/v1/series/{series_id}/blueprint/apply")
+def apply_series_blueprint(
+    series_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_course(course_id, ctx, "write")
+    _require_series(series_id, ctx, "write")
     try:
-        blueprint, created = container.blueprint().apply(course_id)
+        blueprint, created = container.blueprint().apply(series_id)
     except BlueprintNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
-        "created_lessons": [lesson.model_dump() for lesson in created],
+        "created_units": [unit.model_dump() for unit in created],
         "blueprint": blueprint.model_dump(),
         "created_count": len(created),
     }
 
 
-@app.get("/api/v1/courses/{course_id}/glossary")
-def get_course_glossary(
-    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.get("/api/v1/series/{series_id}/glossary")
+def get_series_glossary(
+    series_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_course(course_id, ctx)
-    blueprint = container.blueprint().get_blueprint(course_id)
-    return _glossary_payload(course_id, blueprint)
+    _require_series(series_id, ctx)
+    blueprint = container.blueprint().get_blueprint(series_id)
+    return _glossary_payload(series_id, blueprint)
 
 
-@app.put("/api/v1/courses/{course_id}/glossary")
-def update_course_glossary(
-    course_id: str,
+@app.put("/api/v1/series/{series_id}/glossary")
+def update_series_glossary(
+    series_id: str,
     req: GlossaryUpdateRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_course(course_id, ctx, "write")
+    _require_series(series_id, ctx, "write")
     try:
-        blueprint = container.blueprint().set_glossary(course_id, req.terms)
+        blueprint = container.blueprint().set_glossary(series_id, req.terms)
     except BlueprintNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return _glossary_payload(course_id, blueprint)
+    return _glossary_payload(series_id, blueprint)
 
 
-@app.get("/api/v1/courses/{course_id}/progress")
-def get_course_progress(
-    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.get("/api/v1/series/{series_id}/progress")
+def get_series_progress(
+    series_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_course(course_id, ctx)
-    return container.blueprint().progress(course_id)
+    _require_series(series_id, ctx)
+    return container.blueprint().progress(series_id)
 
 
-@app.post("/api/v1/lessons/{lesson_id}/review")
-def review_lesson(
-    lesson_id: str,
-    req: LessonReviewRequest,
+@app.post("/api/v1/units/{unit_id}/review")
+def review_unit(
+    unit_id: str,
+    req: UnitReviewRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "review")
-    _require_lesson(lesson_id, ctx)
-    _guard_lock(lesson_id, ctx)
+    _require_unit(unit_id, ctx)
+    _guard_lock(unit_id, ctx)
     try:
-        lesson, review = container.blueprint().review_lesson(
-            lesson_id, req.action, note=req.note
+        unit, review = container.blueprint().review_unit(
+            unit_id, req.action, note=req.note
         )
-    except LessonNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}") from exc
-    except LessonContentEmptyError as exc:
+    except UnitNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}") from exc
+    except UnitContentEmptyError as exc:
         raise HTTPException(
-            status_code=400, detail=f"该讲尚无正文，无法通过审核: {lesson_id}"
+            status_code=400, detail=f"该讲尚无正文，无法通过审核: {unit_id}"
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    progress = container.blueprint().progress(lesson.course_id)
+    progress = container.blueprint().progress(unit.series_id)
     return {
-        "lesson": lesson.model_dump(),
+        "unit": unit.model_dump(),
         "review": review.model_dump(),
-        "course_progress": progress,
+        "series_progress": progress,
     }
 
 
-@app.get("/api/v1/lessons/{lesson_id}/reviews")
-def list_lesson_reviews(
-    lesson_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.get("/api/v1/units/{unit_id}/reviews")
+def list_unit_reviews(
+    unit_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_lesson(lesson_id, ctx)
-    reviews = container.blueprint().list_reviews(lesson_id)
+    _require_unit(unit_id, ctx)
+    reviews = container.blueprint().list_reviews(unit_id)
     return {
-        "lesson_id": lesson_id,
+        "unit_id": unit_id,
         "count": len(reviews),
         "reviews": [review.model_dump() for review in reviews],
     }
@@ -2483,8 +2483,8 @@ def delete_tenant(
             scoped = service.context_for_tenant(ctx.user, tenant_id)
             if "owner" not in (scoped.role_key, scoped.role):
                 raise PermissionDeniedError("只有空间所有者可以删除空间")
-        courses = container.course_repository().list_courses(tenant_id)
-        if courses:
+        series = container.series_repository().list_series(tenant_id)
+        if series:
             raise TenantInUseError("该空间下仍有课程，无法删除")
         service.delete_tenant(tenant_id)
     except (
@@ -2593,11 +2593,11 @@ def remove_tenant_member(
     return {"ok": True}
 
 
-class LessonLockRequest(BaseModel):
+class UnitLockRequest(BaseModel):
     force: bool = False
 
 
-class LessonHeartbeatRequest(BaseModel):
+class UnitHeartbeatRequest(BaseModel):
     token: str = Field(min_length=1)
 
 
@@ -2709,36 +2709,36 @@ def update_quota(
     return _quota_payload(tenant_id)
 
 
-@app.get("/api/v1/lessons/{lesson_id}/lock")
-def get_lesson_lock(
-    lesson_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.get("/api/v1/units/{unit_id}/lock")
+def get_unit_lock(
+    unit_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_lesson(lesson_id, ctx)
-    lock = container.lock_service().get(lesson_id)
+    _require_unit(unit_id, ctx)
+    lock = container.lock_service().get(unit_id)
     return {"lock": lock.model_dump() if lock else None}
 
 
-@app.post("/api/v1/lessons/{lesson_id}/lock")
-def acquire_lesson_lock(
-    lesson_id: str,
-    req: LessonLockRequest | None = None,
+@app.post("/api/v1/units/{unit_id}/lock")
+def acquire_unit_lock(
+    unit_id: str,
+    req: UnitLockRequest | None = None,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> Any:
     _enforce(ctx, "write")
-    _require_lesson(lesson_id, ctx, "write")
-    payload = req or LessonLockRequest()
+    _require_unit(unit_id, ctx, "write")
+    payload = req or UnitLockRequest()
     if payload.force and not _is_privileged(ctx):
         raise HTTPException(status_code=403, detail="仅管理员或所有者可强制接管编辑锁")
     try:
         lock = container.lock_service().acquire(
-            lesson_id,
+            unit_id,
             _tenant_of(ctx),
             ctx.user.id,
             ctx.user.display_name or ctx.user.email,
             force=payload.force,
         )
-    except LessonLockedError as exc:
+    except UnitLockedError as exc:
         current = exc.lock
         return JSONResponse(
             status_code=409,
@@ -2750,31 +2750,31 @@ def acquire_lesson_lock(
     return {"acquired": True, "lock": lock.model_dump()}
 
 
-@app.post("/api/v1/lessons/{lesson_id}/lock/heartbeat")
-def heartbeat_lesson_lock(
-    lesson_id: str,
-    req: LessonHeartbeatRequest,
+@app.post("/api/v1/units/{unit_id}/lock/heartbeat")
+def heartbeat_unit_lock(
+    unit_id: str,
+    req: UnitHeartbeatRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_lesson(lesson_id, ctx, "write")
+    _require_unit(unit_id, ctx, "write")
     try:
-        lock = container.lock_service().heartbeat(lesson_id, req.token)
-    except LessonLockLostError as exc:
+        lock = container.lock_service().heartbeat(unit_id, req.token)
+    except UnitLockLostError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"lock": lock.model_dump()}
 
 
-@app.delete("/api/v1/lessons/{lesson_id}/lock")
-def release_lesson_lock(
-    lesson_id: str,
+@app.delete("/api/v1/units/{unit_id}/lock")
+def release_unit_lock(
+    unit_id: str,
     token: str = Query(default=""),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_lesson(lesson_id, ctx, "write")
+    _require_unit(unit_id, ctx, "write")
     try:
-        container.lock_service().release(lesson_id, token)
+        container.lock_service().release(unit_id, token)
     except LockTokenMismatchError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     return {"ok": True}
@@ -2824,9 +2824,9 @@ def _role_payload(role) -> dict[str, Any]:
     }
 
 
-def _grants_payload(course_id: str, grants) -> dict[str, Any]:
+def _grants_payload(series_id: str, grants) -> dict[str, Any]:
     return {
-        "course_id": course_id,
+        "series_id": series_id,
         "count": len(grants),
         "grants": [
             {
@@ -2892,36 +2892,36 @@ def delete_role(
     return {"ok": True}
 
 
-@app.get("/api/v1/courses/{course_id}/grants")
-def list_course_grants(
-    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.get("/api/v1/series/{series_id}/grants")
+def list_series_grants(
+    series_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     service = container.auth_service()
     manage = service.can(ctx, "manage_members")
     if not manage:
         _enforce(ctx, "write")
-    _require_course(course_id, ctx, "read" if manage else "write")
-    grants = service.list_grants(_tenant_of(ctx), course_id)
-    return _grants_payload(course_id, grants)
+    _require_series(series_id, ctx, "read" if manage else "write")
+    grants = service.list_grants(_tenant_of(ctx), series_id)
+    return _grants_payload(series_id, grants)
 
 
-@app.put("/api/v1/courses/{course_id}/grants")
-def replace_course_grants(
-    course_id: str,
+@app.put("/api/v1/series/{series_id}/grants")
+def replace_series_grants(
+    series_id: str,
     req: GrantReplaceRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "manage_members")
-    _require_course(course_id, ctx)
+    _require_series(series_id, ctx)
     try:
         grants = container.auth_service().replace_grants(
             _tenant_of(ctx),
-            course_id,
+            series_id,
             [(item.user_id, item.level) for item in req.grants],
         )
     except (MembershipNotFoundError, ValueError) as exc:
         raise _role_error(exc) from exc
-    return _grants_payload(course_id, grants)
+    return _grants_payload(series_id, grants)
 
 
 @app.get("/api/v1/me/capabilities")
@@ -3307,13 +3307,13 @@ class ResearchCreateRequest(BaseModel):
 
 
 class ResearchBlueprintRequest(BaseModel):
-    course_id: str = ""
-    create_course: bool = False
-    course_title: str = ""
+    series_id: str = ""
+    create_series: bool = False
+    series_title: str = ""
     mode: str = "loose"
 
 
-class LongformCreateRequest(BaseModel):
+class PieceCreateRequest(BaseModel):
     title: str = Field(min_length=1)
     genre: str | None = None
     tone: str | None = None
@@ -3325,24 +3325,24 @@ class LongformCreateRequest(BaseModel):
     profile_id: str = ""
 
 
-class LongformSectionRequest(BaseModel):
+class PieceSectionRequest(BaseModel):
     mode: str | None = None
     top_k: int | None = Field(default=None, ge=1, le=20)
 
 
-class LongformGenerateRequest(BaseModel):
+class PieceGenerateRequest(BaseModel):
     mode: str | None = None
     top_k: int | None = Field(default=None, ge=1, le=20)
     expected_version: int | None = None
 
 
-class LongformRewriteRequest(BaseModel):
+class PieceRewriteRequest(BaseModel):
     instruction: str = Field(min_length=1)
     mode: str | None = None
     expected_version: int | None = None
 
 
-class LongformRevertRequest(BaseModel):
+class PieceRevertRequest(BaseModel):
     version: int = Field(ge=1)
 
 
@@ -3430,27 +3430,27 @@ async def research_to_blueprint(
     run = container.research().get(run_id, _tenant_of(ctx))
     if run is None:
         raise HTTPException(status_code=404, detail=f"研究不存在: {run_id}")
-    course_id = (payload.course_id or "").strip()
-    if course_id:
-        _require_course(course_id, ctx, "write")
-    elif payload.create_course:
-        course = container.course_repository().create_course(
-            title=(payload.course_title or run.topic).strip(),
+    series_id = (payload.series_id or "").strip()
+    if series_id:
+        _require_series(series_id, ctx, "write")
+    elif payload.create_series:
+        series = container.series_repository().create_series(
+            title=(payload.series_title or run.topic).strip(),
             subtitle=run.brief.summary[:200],
             tenant_id=_tenant_of(ctx),
             user_id=ctx.user.id,
         )
-        course_id = course.id
+        series_id = series.id
     else:
-        raise HTTPException(status_code=400, detail="请提供 course_id 或设置 create_course=true")
-    _charge(ctx, "blueprint", 1, ref_id=course_id)
+        raise HTTPException(status_code=400, detail="请提供 series_id 或设置 create_series=true")
+    _charge(ctx, "blueprint", 1, ref_id=series_id)
     focus = " ".join(
         [run.topic, run.brief.summary]
         + [finding.title for finding in run.brief.findings[:6]]
     ).strip()
     try:
         blueprint = await container.blueprint().generate(
-            course_id,
+            series_id,
             mode=payload.mode or "loose",
             focus=focus,
             tenant_id=_tenant_of(ctx),
@@ -3465,29 +3465,29 @@ async def research_to_blueprint(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
         "research_id": run.id,
-        "course_id": course_id,
+        "series_id": series_id,
         "blueprint": blueprint.model_dump(),
     }
 
 
-def _require_longform(longform_id: str, ctx: AuthContext, level: str = "read"):
-    longform = container.longform().get(longform_id, _tenant_of(ctx))
+def _require_piece(piece_id: str, ctx: AuthContext, level: str = "read"):
+    piece = container.piece().get(piece_id, _tenant_of(ctx))
     service = container.auth_service()
-    if longform is None or not service.can_access_longform(ctx, longform_id, "read"):
-        raise HTTPException(status_code=404, detail=f"长篇不存在: {longform_id}")
-    if level == "write" and not service.can_access_longform(
-        ctx, longform_id, "write"
+    if piece is None or not service.can_access_piece(ctx, piece_id, "read"):
+        raise HTTPException(status_code=404, detail=f"长篇不存在: {piece_id}")
+    if level == "write" and not service.can_access_piece(
+        ctx, piece_id, "write"
     ):
         raise HTTPException(status_code=403, detail="缺少该长篇的编辑授权")
-    return longform
+    return piece
 
 
-@app.post("/api/v1/longforms", status_code=201)
-async def create_longform(
-    req: LongformCreateRequest, ctx: AuthContext = Depends(get_auth_context)
+@app.post("/api/v1/pieces", status_code=201)
+async def create_piece(
+    req: PieceCreateRequest, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _charge(ctx, "longform", 1, ref_id=req.title[:40])
+    _charge(ctx, "piece", 1, ref_id=req.title[:40])
     template = None
     work_spec = None
     if req.profile_id:
@@ -3538,7 +3538,7 @@ async def create_longform(
         if work_spec is not None
         else (template.target_words if template else 3000)
     )
-    profile = LongformProfile(
+    profile = PieceProfile(
         genre=genre,
         tone=tone,
         audience=audience,
@@ -3546,7 +3546,7 @@ async def create_longform(
         citation_policy=citation_policy,
         unit_name=work_spec.unit.name if work_spec is not None else "节",
     )
-    longform = await container.longform().create(
+    piece = await container.piece().create(
         req.title,
         profile=profile,
         target_words=target_words,
@@ -3558,44 +3558,44 @@ async def create_longform(
         spec=work_spec,
         retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
     )
-    return longform.model_dump()
+    return piece.model_dump()
 
 
-@app.get("/api/v1/longforms")
-def list_longforms(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+@app.get("/api/v1/pieces")
+def list_pieces(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
     _enforce(ctx, "read")
-    items = container.longform().list(_tenant_of(ctx), 50)
-    visible = container.auth_service().visible_longform_ids(
+    items = container.piece().list(_tenant_of(ctx), 50)
+    visible = container.auth_service().visible_piece_ids(
         ctx, [item.id for item in items]
     )
     if visible is not None:
         allowed = set(visible)
         items = [item for item in items if item.id in allowed]
-    return {"count": len(items), "longforms": [item.model_dump() for item in items]}
+    return {"count": len(items), "pieces": [item.model_dump() for item in items]}
 
 
-@app.get("/api/v1/longforms/{longform_id}")
-def get_longform(
-    longform_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.get("/api/v1/pieces/{piece_id}")
+def get_piece(
+    piece_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    return _require_longform(longform_id, ctx).model_dump()
+    return _require_piece(piece_id, ctx).model_dump()
 
 
-@app.post("/api/v1/longforms/{longform_id}/sections/{section_id}/generate")
-async def generate_longform_section(
-    longform_id: str,
+@app.post("/api/v1/pieces/{piece_id}/sections/{section_id}/generate")
+async def generate_piece_section(
+    piece_id: str,
     section_id: str,
-    req: LongformSectionRequest | None = None,
+    req: PieceSectionRequest | None = None,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx, "write")
-    payload = req or LongformSectionRequest()
-    _charge(ctx, "longform", 1, ref_id=longform_id)
+    _require_piece(piece_id, ctx, "write")
+    payload = req or PieceSectionRequest()
+    _charge(ctx, "piece", 1, ref_id=piece_id)
     try:
-        section, longform = await container.longform().generate_section(
-            longform_id,
+        section, piece = await container.piece().generate_section(
+            piece_id,
             section_id,
             mode=payload.mode,
             top_k=payload.top_k,
@@ -3603,37 +3603,37 @@ async def generate_longform_section(
             llm=container.llm_for(ctx.user.id),
             retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
         )
-    except LongformSectionNotFoundError as exc:
+    except PieceSectionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
-    except LongformNotFoundError as exc:
+    except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     report = await _validation_report(
-        _longform_spec(longform),
-        longform.content,
-        {"longform_id": longform_id, "section_id": section.id, "title": longform.title},
+        _piece_spec(piece),
+        piece.content,
+        {"piece_id": piece_id, "section_id": section.id, "title": piece.title},
     )
     return {
         "section_id": section.id,
         "content": section.content,
-        "longform": longform.model_dump(),
+        "piece": piece.model_dump(),
         "validation": report.model_dump() if report else None,
     }
 
 
-@app.post("/api/v1/longforms/{longform_id}/generate")
-async def generate_longform(
-    longform_id: str,
-    req: LongformGenerateRequest | None = None,
+@app.post("/api/v1/pieces/{piece_id}/generate")
+async def generate_piece(
+    piece_id: str,
+    req: PieceGenerateRequest | None = None,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    longform = _require_longform(longform_id, ctx, "write")
-    payload = req or LongformGenerateRequest()
-    if payload.expected_version is not None and int(payload.expected_version) != longform.current_version:
-        return _conflict(VersionConflictError(int(payload.expected_version), longform.current_version))
-    _charge(ctx, "longform", 1, ref_id=longform_id)
-    updated = await container.longform().generate_all(
-        longform_id,
+    piece = _require_piece(piece_id, ctx, "write")
+    payload = req or PieceGenerateRequest()
+    if payload.expected_version is not None and int(payload.expected_version) != piece.current_version:
+        return _conflict(VersionConflictError(int(payload.expected_version), piece.current_version))
+    _charge(ctx, "piece", 1, ref_id=piece_id)
+    updated = await container.piece().generate_all(
+        piece_id,
         mode=payload.mode,
         top_k=payload.top_k,
         tenant_id=_tenant_of(ctx),
@@ -3641,78 +3641,78 @@ async def generate_longform(
         retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
     )
     report = await _validation_report(
-        _longform_spec(updated),
+        _piece_spec(updated),
         updated.content,
-        {"longform_id": longform_id, "title": updated.title},
+        {"piece_id": piece_id, "title": updated.title},
     )
     return {**updated.model_dump(), "validation": report.model_dump() if report else None}
 
 
-@app.post("/api/v1/longforms/{longform_id}/rewrite")
-async def rewrite_longform(
-    longform_id: str,
-    req: LongformRewriteRequest,
+@app.post("/api/v1/pieces/{piece_id}/rewrite")
+async def rewrite_piece(
+    piece_id: str,
+    req: PieceRewriteRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx, "write")
-    _charge(ctx, "longform", 1, ref_id=longform_id)
+    _require_piece(piece_id, ctx, "write")
+    _charge(ctx, "piece", 1, ref_id=piece_id)
     try:
-        updated = await container.longform().rewrite(
-            longform_id,
+        updated = await container.piece().rewrite(
+            piece_id,
             req.instruction,
             mode=req.mode,
             expected_version=req.expected_version,
             llm=container.llm_for(ctx.user.id),
-            spec=_longform_spec(container.longform().get(longform_id)),
+            spec=_piece_spec(container.piece().get(piece_id)),
         )
     except VersionConflictError as exc:
         return _conflict(exc)
-    except LongformNotFoundError as exc:
+    except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     report = await _validation_report(
-        _longform_spec(updated),
+        _piece_spec(updated),
         updated.content,
-        {"longform_id": longform_id, "title": updated.title},
+        {"piece_id": piece_id, "title": updated.title},
     )
     return {**updated.model_dump(), "validation": report.model_dump() if report else None}
 
 
-@app.get("/api/v1/longforms/{longform_id}/versions/diff")
-def diff_longform_versions(
-    longform_id: str,
+@app.get("/api/v1/pieces/{piece_id}/versions/diff")
+def diff_piece_versions(
+    piece_id: str,
     from_version: int = Query(alias="from", ge=1),
     to_version: int = Query(alias="to", ge=1),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_longform(longform_id, ctx)
+    _require_piece(piece_id, ctx)
     return _version_diff(
-        longform_id,
+        piece_id,
         from_version,
         to_version,
-        lambda item: container.longform().get_version(longform_id, item),
+        lambda item: container.piece().get_version(piece_id, item),
     )
 
 
-@app.get("/api/v1/longforms/{longform_id}/versions/{version}")
-def get_longform_version(
-    longform_id: str,
+@app.get("/api/v1/pieces/{piece_id}/versions/{version}")
+def get_piece_version(
+    piece_id: str,
     version: int,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_longform(longform_id, ctx)
-    record = container.longform().get_version(longform_id, version)
+    _require_piece(piece_id, ctx)
+    record = container.piece().get_version(piece_id, version)
     if record is None:
         raise HTTPException(status_code=404, detail=f"版本不存在: {version}")
     return {
-        "longform_id": longform_id,
+        "piece_id": piece_id,
         "version": {
             "id": record.id,
-            "longform_id": record.longform_id,
+            "piece_id": record.piece_id,
             "version": record.version,
             "content": record.content,
             "outline": [item.model_dump() for item in record.outline],
@@ -3724,15 +3724,15 @@ def get_longform_version(
     }
 
 
-@app.get("/api/v1/longforms/{longform_id}/versions")
-def list_longform_versions(
-    longform_id: str,
+@app.get("/api/v1/pieces/{piece_id}/versions")
+def list_piece_versions(
+    piece_id: str,
     include_content: bool = Query(default=False),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_longform(longform_id, ctx)
-    versions = container.longform().list_versions(longform_id)
+    _require_piece(piece_id, ctx)
+    versions = container.piece().list_versions(piece_id)
     return {
         "count": len(versions),
         "versions": [
@@ -3744,24 +3744,24 @@ def list_longform_versions(
     }
 
 
-@app.post("/api/v1/longforms/{longform_id}/revert")
-def revert_longform(
-    longform_id: str,
-    req: LongformRevertRequest,
+@app.post("/api/v1/pieces/{piece_id}/revert")
+def revert_piece(
+    piece_id: str,
+    req: PieceRevertRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx, "write")
+    _require_piece(piece_id, ctx, "write")
     try:
-        longform, version = container.longform().revert(longform_id, req.version)
-    except LongformNotFoundError as exc:
+        piece, version = container.piece().revert(piece_id, req.version)
+    except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"longform": longform.model_dump(), "version": version.version}
+    return {"piece": piece.model_dump(), "version": version.version}
 
 
-def _longform_grants_payload(longform_id: str, grants) -> dict[str, Any]:
+def _piece_grants_payload(piece_id: str, grants) -> dict[str, Any]:
     return {
-        "longform_id": longform_id,
+        "piece_id": piece_id,
         "count": len(grants),
         "grants": [
             {
@@ -3775,55 +3775,55 @@ def _longform_grants_payload(longform_id: str, grants) -> dict[str, Any]:
     }
 
 
-class LongformGrantItem(BaseModel):
+class PieceGrantItem(BaseModel):
     user_id: str = Field(min_length=1)
     level: Literal["read", "write"] = "read"
 
 
-class LongformGrantReplaceRequest(BaseModel):
-    grants: list[LongformGrantItem] = Field(default_factory=list)
+class PieceGrantReplaceRequest(BaseModel):
+    grants: list[PieceGrantItem] = Field(default_factory=list)
 
 
-@app.get("/api/v1/longforms/{longform_id}/grants")
-def list_longform_grants(
-    longform_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.get("/api/v1/pieces/{piece_id}/grants")
+def list_piece_grants(
+    piece_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     service = container.auth_service()
     manage = service.can(ctx, "manage_members")
     if not manage:
         _enforce(ctx, "write")
-    _require_longform(longform_id, ctx, "read" if manage else "write")
-    grants = service.list_longform_grants(_tenant_of(ctx), longform_id)
-    return _longform_grants_payload(longform_id, grants)
+    _require_piece(piece_id, ctx, "read" if manage else "write")
+    grants = service.list_piece_grants(_tenant_of(ctx), piece_id)
+    return _piece_grants_payload(piece_id, grants)
 
 
-@app.put("/api/v1/longforms/{longform_id}/grants")
-def replace_longform_grants(
-    longform_id: str,
-    req: LongformGrantReplaceRequest,
+@app.put("/api/v1/pieces/{piece_id}/grants")
+def replace_piece_grants(
+    piece_id: str,
+    req: PieceGrantReplaceRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "manage_members")
-    _require_longform(longform_id, ctx)
+    _require_piece(piece_id, ctx)
     try:
-        grants = container.auth_service().replace_longform_grants(
+        grants = container.auth_service().replace_piece_grants(
             _tenant_of(ctx),
-            longform_id,
+            piece_id,
             [(item.user_id, item.level) for item in req.grants],
         )
     except (MembershipNotFoundError, ValueError) as exc:
         raise _role_error(exc) from exc
-    return _longform_grants_payload(longform_id, grants)
+    return _piece_grants_payload(piece_id, grants)
 
 
-@app.delete("/api/v1/longforms/{longform_id}")
-def delete_longform(
-    longform_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.delete("/api/v1/pieces/{piece_id}")
+def delete_piece(
+    piece_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx, "write")
-    if not container.longform().delete(longform_id, _tenant_of(ctx)):
-        raise HTTPException(status_code=404, detail=f"长篇不存在: {longform_id}")
+    _require_piece(piece_id, ctx, "write")
+    if not container.piece().delete(piece_id, _tenant_of(ctx)):
+        raise HTTPException(status_code=404, detail=f"长篇不存在: {piece_id}")
     return {"ok": True}
 
 
@@ -4060,7 +4060,7 @@ def storage_info(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]
     return info
 
 
-class CourseUpdateRequest(BaseModel):
+class SeriesUpdateRequest(BaseModel):
     title: str | None = None
     subtitle: str | None = None
     audience: str | None = None
@@ -4069,16 +4069,16 @@ class CourseUpdateRequest(BaseModel):
     profile_id: str | None = None
 
 
-@app.patch("/api/v1/courses/{course_id}")
-def update_course(
-    course_id: str,
-    req: CourseUpdateRequest,
+@app.patch("/api/v1/series/{series_id}")
+def update_series(
+    series_id: str,
+    req: SeriesUpdateRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_course(course_id, ctx, "write")
-    course = container.course_repository().update_course(
-        course_id,
+    _require_series(series_id, ctx, "write")
+    series = container.series_repository().update_series(
+        series_id,
         title=req.title,
         subtitle=req.subtitle,
         audience=req.audience,
@@ -4086,24 +4086,24 @@ def update_course(
         language=req.language,
         profile_id=req.profile_id,
     )
-    if course is None:
-        raise HTTPException(status_code=404, detail=f"课程不存在: {course_id}")
-    return course.model_dump()
+    if series is None:
+        raise HTTPException(status_code=404, detail=f"课程不存在: {series_id}")
+    return series.model_dump()
 
 
-@app.delete("/api/v1/courses/{course_id}")
-def delete_course(
-    course_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.delete("/api/v1/series/{series_id}")
+def delete_series(
+    series_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_course(course_id, ctx, "write")
-    deleted = container.course_repository().delete_course(course_id, _tenant_of(ctx))
+    _require_series(series_id, ctx, "write")
+    deleted = container.series_repository().delete_series(series_id, _tenant_of(ctx))
     if deleted is None:
-        raise HTTPException(status_code=404, detail=f"课程不存在: {course_id}")
-    return {"course_id": course_id, "deleted": deleted}
+        raise HTTPException(status_code=404, detail=f"课程不存在: {series_id}")
+    return {"series_id": series_id, "deleted": deleted}
 
 
-class LessonUpdateRequest(BaseModel):
+class UnitUpdateRequest(BaseModel):
     title: str | None = None
     learning_objectives: list[str] | None = None
     prerequisites: list[str] | None = None
@@ -4112,16 +4112,16 @@ class LessonUpdateRequest(BaseModel):
     content: str | None = None
 
 
-@app.patch("/api/v1/lessons/{lesson_id}")
-def update_lesson(
-    lesson_id: str,
-    req: LessonUpdateRequest,
+@app.patch("/api/v1/units/{unit_id}")
+def update_unit(
+    unit_id: str,
+    req: UnitUpdateRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_lesson(lesson_id, ctx, "write")
-    lesson = container.course_repository().update_lesson(
-        lesson_id,
+    _require_unit(unit_id, ctx, "write")
+    unit = container.series_repository().update_unit(
+        unit_id,
         title=req.title,
         learning_objectives=req.learning_objectives,
         prerequisites=req.prerequisites,
@@ -4129,211 +4129,211 @@ def update_lesson(
         order_index=req.order_index,
         content=req.content,
     )
-    if lesson is None:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}")
-    return lesson.model_dump()
+    if unit is None:
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}")
+    return unit.model_dump()
 
 
-@app.delete("/api/v1/lessons/{lesson_id}")
-def delete_lesson(
-    lesson_id: str, ctx: AuthContext = Depends(get_auth_context)
+@app.delete("/api/v1/units/{unit_id}")
+def delete_unit(
+    unit_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_lesson(lesson_id, ctx, "write")
-    deleted = container.course_repository().delete_lesson(lesson_id)
+    _require_unit(unit_id, ctx, "write")
+    deleted = container.series_repository().delete_unit(unit_id)
     if deleted is None:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {lesson_id}")
+        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}")
     return {
-        "lesson_id": lesson_id,
+        "unit_id": unit_id,
         "deleted_versions": deleted["deleted_versions"],
         "deleted_threads": deleted["deleted_threads"],
     }
 
 
-class LessonReorderRequest(BaseModel):
-    lesson_ids: list[str] = Field(default_factory=list)
+class UnitReorderRequest(BaseModel):
+    unit_ids: list[str] = Field(default_factory=list)
 
 
-@app.post("/api/v1/courses/{course_id}/lessons/reorder")
-def reorder_lessons(
-    course_id: str,
-    req: LessonReorderRequest,
+@app.post("/api/v1/series/{series_id}/units/reorder")
+def reorder_units(
+    series_id: str,
+    req: UnitReorderRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_course(course_id, ctx, "write")
-    repository = container.course_repository()
-    known = {lesson.id for lesson in repository.list_lessons(course_id)}
-    unknown = [item for item in req.lesson_ids if item not in known]
+    _require_series(series_id, ctx, "write")
+    repository = container.series_repository()
+    known = {unit.id for unit in repository.list_units(series_id)}
+    unknown = [item for item in req.unit_ids if item not in known]
     if unknown:
         raise HTTPException(
             status_code=400, detail=f"讲次不属于该课程: {', '.join(unknown[:3])}"
         )
-    lessons = repository.reorder_lessons(course_id, req.lesson_ids)
+    units = repository.reorder_units(series_id, req.unit_ids)
     return {
-        "course_id": course_id,
-        "count": len(lessons),
-        "lessons": [lesson.model_dump() for lesson in lessons],
+        "series_id": series_id,
+        "count": len(units),
+        "units": [unit.model_dump() for unit in units],
     }
 
 
-class LongformUpdateRequest(BaseModel):
+class PieceUpdateRequest(BaseModel):
     title: str | None = None
     profile: dict[str, Any] | None = None
     target_words: int | None = Field(default=None, ge=200, le=50000)
     profile_id: str | None = None
 
 
-@app.patch("/api/v1/longforms/{longform_id}")
-def update_longform(
-    longform_id: str,
-    req: LongformUpdateRequest,
+@app.patch("/api/v1/pieces/{piece_id}")
+def update_piece(
+    piece_id: str,
+    req: PieceUpdateRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx, "write")
+    _require_piece(piece_id, ctx, "write")
     try:
-        updated = container.longform().update_meta(
-            longform_id,
+        updated = container.piece().update_meta(
+            piece_id,
             title=req.title,
             profile=req.profile,
             target_words=req.target_words,
             profile_id=req.profile_id,
         )
-    except LongformNotFoundError as exc:
+    except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return updated.model_dump()
 
 
-class LongformContentRequest(BaseModel):
+class PieceContentRequest(BaseModel):
     content: str = ""
     note: str | None = None
     expected_version: int | None = None
 
 
-@app.post("/api/v1/longforms/{longform_id}/content")
-def save_longform_content(
-    longform_id: str,
-    req: LongformContentRequest,
+@app.post("/api/v1/pieces/{piece_id}/content")
+def save_piece_content(
+    piece_id: str,
+    req: PieceContentRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx, "write")
+    _require_piece(piece_id, ctx, "write")
     try:
-        longform, version = container.longform().save_content(
-            longform_id,
+        piece, version = container.piece().save_content(
+            piece_id,
             req.content,
             note=req.note,
             expected_version=req.expected_version,
         )
     except VersionConflictError as exc:
         return _conflict(exc)
-    except LongformNotFoundError as exc:
+    except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
-        "longform": longform.model_dump(),
+        "piece": piece.model_dump(),
         "version": version.version,
         "note": version.note,
         "mode": version.mode,
     }
 
 
-class LongformSectionCreateRequest(BaseModel):
+class PieceSectionCreateRequest(BaseModel):
     title: str = Field(min_length=1)
     summary: str = ""
     target_words: int = Field(default=0, ge=0, le=1200)
     after_id: str | None = None
 
 
-class LongformSectionUpdateRequest(BaseModel):
+class PieceSectionUpdateRequest(BaseModel):
     title: str | None = None
     summary: str | None = None
     target_words: int | None = Field(default=None, ge=0, le=1200)
     content: str | None = None
 
 
-class LongformSectionReorderRequest(BaseModel):
+class PieceSectionReorderRequest(BaseModel):
     section_ids: list[str] = Field(default_factory=list)
 
 
-@app.post("/api/v1/longforms/{longform_id}/sections/reorder")
-def reorder_longform_sections(
-    longform_id: str,
-    req: LongformSectionReorderRequest,
+@app.post("/api/v1/pieces/{piece_id}/sections/reorder")
+def reorder_piece_sections(
+    piece_id: str,
+    req: PieceSectionReorderRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx, "write")
+    _require_piece(piece_id, ctx, "write")
     try:
-        updated = container.longform().reorder_sections(longform_id, req.section_ids)
-    except LongformNotFoundError as exc:
+        updated = container.piece().reorder_sections(piece_id, req.section_ids)
+    except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return updated.model_dump()
 
 
-@app.post("/api/v1/longforms/{longform_id}/sections", status_code=201)
-def add_longform_section(
-    longform_id: str,
-    req: LongformSectionCreateRequest,
+@app.post("/api/v1/pieces/{piece_id}/sections", status_code=201)
+def add_piece_section(
+    piece_id: str,
+    req: PieceSectionCreateRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx, "write")
+    _require_piece(piece_id, ctx, "write")
     try:
-        section, longform = container.longform().add_section(
-            longform_id,
+        section, piece = container.piece().add_section(
+            piece_id,
             req.title,
             summary=req.summary,
             target_words=req.target_words,
             after_id=req.after_id,
         )
-    except LongformSectionNotFoundError as exc:
+    except PieceSectionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
-    except LongformNotFoundError as exc:
+    except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"section": section.model_dump(), "longform": longform.model_dump()}
+    return {"section": section.model_dump(), "piece": piece.model_dump()}
 
 
-@app.patch("/api/v1/longforms/{longform_id}/sections/{section_id}")
-def update_longform_section(
-    longform_id: str,
+@app.patch("/api/v1/pieces/{piece_id}/sections/{section_id}")
+def update_piece_section(
+    piece_id: str,
     section_id: str,
-    req: LongformSectionUpdateRequest,
+    req: PieceSectionUpdateRequest,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx, "write")
+    _require_piece(piece_id, ctx, "write")
     try:
-        updated = container.longform().update_section(
-            longform_id,
+        updated = container.piece().update_section(
+            piece_id,
             section_id,
             title=req.title,
             summary=req.summary,
             target_words=req.target_words,
             content=req.content,
         )
-    except LongformSectionNotFoundError as exc:
+    except PieceSectionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
-    except LongformNotFoundError as exc:
+    except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return updated.model_dump()
 
 
-@app.delete("/api/v1/longforms/{longform_id}/sections/{section_id}")
-def delete_longform_section(
-    longform_id: str,
+@app.delete("/api/v1/pieces/{piece_id}/sections/{section_id}")
+def delete_piece_section(
+    piece_id: str,
     section_id: str,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    _require_longform(longform_id, ctx, "write")
+    _require_piece(piece_id, ctx, "write")
     try:
-        updated = container.longform().delete_section(longform_id, section_id)
-    except LongformSectionNotFoundError as exc:
+        updated = container.piece().delete_section(piece_id, section_id)
+    except PieceSectionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
-    except LongformNotFoundError as exc:
+    except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -4783,10 +4783,10 @@ def export_document(
             status_code=400,
             detail=f"不支持的主题: {theme}（支持 {', '.join(EXPORT_THEMES)}）",
         )
-    if source_type == SOURCE_COURSE:
-        _require_course(source_id, ctx, "write")
+    if source_type == SOURCE_SERIES:
+        _require_series(source_id, ctx, "write")
     else:
-        _require_longform(source_id, ctx, "write")
+        _require_piece(source_id, ctx, "write")
     try:
         document = container.export_service().build_document(
             source_type,
@@ -5023,19 +5023,19 @@ def exec_code(
     return result.model_dump()
 
 
-@app.post("/api/v1/lessons/{lesson_id}/code-check")
-def lesson_code_check(
-    lesson_id: str,
+@app.post("/api/v1/units/{unit_id}/code-check")
+def unit_code_check(
+    unit_id: str,
     req: CodeCheckRequest | None = None,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
     ctx = _enforce(ctx, "write")
-    lesson = _require_lesson(lesson_id, ctx, "write")
+    unit = _require_unit(unit_id, ctx, "write")
     executor = container.executor()
     if not executor.available():
         raise HTTPException(status_code=503, detail="未配置代码执行后端")
     service = CodeCheckService(executor)
-    payload = service.check(lesson.content or "", (req or CodeCheckRequest()).language)
+    payload = service.check(unit.content or "", (req or CodeCheckRequest()).language)
     for block in payload["blocks"]:
         if block.get("exit_code") is None:
             continue
@@ -5043,7 +5043,7 @@ def lesson_code_check(
             "ok" if block.get("ok") else "error"
         )
         get_metrics().inc_exec(getattr(executor, "name", ""), label)
-    return {"lesson_id": lesson_id, **payload}
+    return {"unit_id": unit_id, **payload}
 
 
 def _metrics_snapshot_sync() -> dict[str, Any]:
@@ -5121,7 +5121,7 @@ def metrics_endpoint() -> PlainTextResponse:
 
 
 class ShareCreateRequest(BaseModel):
-    resource_type: Literal["course", "longform"]
+    resource_type: Literal["series", "piece"]
     resource_id: str = Field(min_length=1)
     expires_in_days: int = Field(default=7, ge=0, le=365)
 
@@ -5135,10 +5135,10 @@ def create_share_link(
     req: ShareCreateRequest, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "write")
-    if req.resource_type == "course":
-        _require_course(req.resource_id, ctx, "write")
+    if req.resource_type == "series":
+        _require_series(req.resource_id, ctx, "write")
     else:
-        _require_longform(req.resource_id, ctx, "write")
+        _require_piece(req.resource_id, ctx, "write")
     try:
         return container.shares().create(
             _tenant_of(ctx),

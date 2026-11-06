@@ -13,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 import clsx from "clsx";
-import { api, type Longform } from "@/lib/api";
+import { api, type Piece } from "@/lib/api";
 import { formatChars, formatDateTime } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
 import ProfileSelect, {
@@ -30,29 +30,29 @@ function isKnownGenre(value: string): boolean {
   return (GENRE_VALUES as readonly string[]).includes(value);
 }
 
-export default function LongformsPage() {
+export default function PiecesPage() {
   const navigate = useNavigate();
   const { can, roleName } = useSession();
   const { t } = useI18n();
   const writable = can("write");
 
   const genreLabel = (value: string) =>
-    isKnownGenre(value) ? t(`longform.genre.${value}`) : value || t("longform.genre.article");
+    isKnownGenre(value) ? t(`piece.genre.${value}`) : value || t("piece.genre.article");
   const genreOptions = GENRE_VALUES.map((value) => ({
     value,
-    label: t(`longform.genre.${value}`),
+    label: t(`piece.genre.${value}`),
   }));
   const citationOptions = CITATION_VALUES.map((value) => ({
     value,
-    label: t(`longform.citation.${value}`),
+    label: t(`piece.citation.${value}`),
   }));
   const modeOptions = MODE_VALUES.map((value) => ({
     value,
-    label: t(value === "strict" ? "longform.modeStrictOption" : "longform.modeLooseOption"),
+    label: t(value === "strict" ? "piece.modeStrictOption" : "piece.modeLooseOption"),
   }));
   const { profiles } = useWorkProfiles();
 
-  const [items, setItems] = useState<Longform[]>([]);
+  const [items, setItems] = useState<Piece[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -73,10 +73,10 @@ export default function LongformsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.listLongforms();
-      setItems(data.longforms);
+      const data = await api.listPieces();
+      setItems(data.pieces);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("longform.loadListFailed"));
+      setError(err instanceof Error ? err.message : t("piece.loadListFailed"));
     } finally {
       setLoading(false);
     }
@@ -90,13 +90,13 @@ export default function LongformsPage() {
     const name = title.trim();
     if (!name || creating) return;
     if (!writable) {
-      setError(t("longform.readOnlyCreate"));
+      setError(t("piece.readOnlyCreate"));
       return;
     }
     setCreating(true);
     setError("");
     try {
-      const created = await api.createLongform({
+      const created = await api.createPiece({
         title: name,
         genre,
         tone: tone.trim(),
@@ -111,10 +111,10 @@ export default function LongformsPage() {
       setOpen(false);
       setTitle("");
       setToneless();
-      setNotice(t("longform.createdNotice"));
-      navigate(`/longforms/${created.id}`);
+      setNotice(t("piece.createdNotice"));
+      navigate(`/pieces/${created.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("longform.createFailed"));
+      setError(err instanceof Error ? err.message : t("piece.createFailed"));
     } finally {
       setCreating(false);
     }
@@ -130,18 +130,18 @@ export default function LongformsPage() {
     setGenre("article");
   }
 
-  const remove = async (item: Longform) => {
+  const remove = async (item: Piece) => {
     if (!writable || deleting) return;
-    const confirmed = window.confirm(t("longform.confirmDelete", { title: item.title }));
+    const confirmed = window.confirm(t("piece.confirmDelete", { title: item.title }));
     if (!confirmed) return;
     setDeleting(item.id);
     setError("");
     try {
-      await api.deleteLongform(item.id);
+      await api.deletePiece(item.id);
       setItems((prev) => prev.filter((row) => row.id !== item.id));
-      setNotice(t("longform.deleted"));
+      setNotice(t("piece.deleted"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("longform.deleteFailed"));
+      setError(err instanceof Error ? err.message : t("piece.deleteFailed"));
     } finally {
       setDeleting(null);
     }
@@ -151,7 +151,7 @@ export default function LongformsPage() {
     <div className="space-y-5">
       {!writable ? (
         <div className="rounded-2xl border border-amber-300/50 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-300">
-          {t("longform.readOnlyView", { role: roleName || t("common.readOnly") })}
+          {t("piece.readOnlyView", { role: roleName || t("common.readOnly") })}
         </div>
       ) : null}
 
@@ -166,13 +166,13 @@ export default function LongformsPage() {
           <div className="min-w-0 flex-1">
             <span className="chip">
               <PenLine size={11} />
-              {t("longform.singlePage")}
+              {t("piece.singlePage")}
             </span>
             <h1 className="mt-3 text-xl font-semibold tracking-tight text-slate-800 dark:text-slate-100 sm:text-2xl">
-              {t("longform.heroTitle")}
+              {t("piece.heroTitle")}
             </h1>
             <p className="mt-2 max-w-xl text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-              {t("longform.heroDesc")}
+              {t("piece.heroDesc")}
             </p>
           </div>
           <button
@@ -183,7 +183,7 @@ export default function LongformsPage() {
             title={!writable ? t("common.readOnlyRole") : undefined}
           >
             <FilePlus2 size={14} />
-            {t("longform.newTitle")}
+            {t("piece.newTitle")}
           </button>
         </div>
 
@@ -211,10 +211,10 @@ export default function LongformsPage() {
             <Layers size={20} />
           </div>
           <p className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">
-            {t("longform.emptyTitle")}
+            {t("piece.emptyTitle")}
           </p>
           <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-            {t("longform.emptyDesc")}
+            {t("piece.emptyDesc")}
           </p>
           <button
             type="button"
@@ -223,7 +223,7 @@ export default function LongformsPage() {
             className="btn btn-quiet mx-auto mt-4"
           >
             <FilePlus2 size={13} />
-            {t("longform.createFirst")}
+            {t("piece.createFirst")}
           </button>
         </div>
       ) : (
@@ -244,7 +244,7 @@ export default function LongformsPage() {
                         : "bg-emerald-500/12 text-emerald-700 ring-emerald-500/25 dark:bg-emerald-400/15 dark:text-emerald-300 dark:ring-emerald-300/25",
                     )}
                   >
-                    {item.last_mode === "loose" ? t("longform.loose") : t("longform.strict")}
+                    {item.last_mode === "loose" ? t("piece.loose") : t("piece.strict")}
                   </span>
                 ) : null}
                 <button
@@ -262,7 +262,7 @@ export default function LongformsPage() {
                 </button>
               </div>
 
-              <Link to={`/longforms/${item.id}`} className="mt-2.5 block">
+              <Link to={`/pieces/${item.id}`} className="mt-2.5 block">
                 <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-slate-800 transition group-hover:text-indigo-600 dark:text-slate-100 dark:group-hover:text-indigo-300">
                   {item.title}
                 </h3>
@@ -270,14 +270,14 @@ export default function LongformsPage() {
 
               <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
                 <span className="chip-muted">
-                  {t("longform.charsOfTarget", {
+                  {t("piece.charsOfTarget", {
                     current: formatChars(item.content ? item.content.length : 0),
                     target: formatChars(item.target_words),
                   })}
                 </span>
                 <span className="chip-muted">v{item.current_version}</span>
                 <span className="chip-muted">
-                  {t("longform.sectionCount", { count: item.outline.length })}
+                  {t("piece.sectionCount", { count: item.outline.length })}
                 </span>
               </div>
 
@@ -286,10 +286,10 @@ export default function LongformsPage() {
                   {formatDateTime(item.updated_at || item.created_at)}
                 </span>
                 <Link
-                  to={`/longforms/${item.id}`}
+                  to={`/pieces/${item.id}`}
                   className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 dark:text-indigo-300"
                 >
-                  {t("longform.openEditor")}
+                  {t("piece.openEditor")}
                   <ArrowRight size={11} />
                 </Link>
               </div>
@@ -316,10 +316,10 @@ export default function LongformsPage() {
                 <div>
                   <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-800 dark:text-slate-100">
                     <Sparkles size={14} className="text-indigo-500" />
-                    {t("longform.newTitle")}
+                    {t("piece.newTitle")}
                   </h3>
                   <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                    {t("longform.newDesc")}
+                    {t("piece.newDesc")}
                   </p>
                 </div>
                 <button
@@ -334,19 +334,19 @@ export default function LongformsPage() {
               <div className="mt-4 space-y-3">
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                    {t("longform.fieldTitle")}
+                    {t("piece.fieldTitle")}
                   </span>
                   <input
                     value={title}
                     onChange={(event) => setTitle(event.target.value)}
                     className="input"
-                    placeholder={t("longform.titlePlaceholder")}
+                    placeholder={t("piece.titlePlaceholder")}
                   />
                 </label>
 
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                    {t("profiles.longformProfileLabel")}
+                    {t("profiles.pieceProfileLabel")}
                   </span>
                   <ProfileSelect
                     value={profileId}
@@ -378,7 +378,7 @@ export default function LongformsPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      {t("longform.fieldGenre")}
+                      {t("piece.fieldGenre")}
                     </span>
                     <select
                       value={genre}
@@ -394,7 +394,7 @@ export default function LongformsPage() {
                   </label>
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      {t("longform.fieldCitation")}
+                      {t("piece.fieldCitation")}
                     </span>
                     <select
                       value={citationPolicy}
@@ -413,35 +413,35 @@ export default function LongformsPage() {
                 <div className="grid gap-3 sm:grid-cols-3">
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      {t("longform.fieldTone")}
+                      {t("piece.fieldTone")}
                     </span>
                     <input
                       value={tone}
                       onChange={(event) => setTone(event.target.value)}
                       className="input"
-                      placeholder={t("longform.tonePlaceholder")}
+                      placeholder={t("piece.tonePlaceholder")}
                     />
                   </label>
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      {t("longform.fieldAudience")}
+                      {t("piece.fieldAudience")}
                     </span>
                     <input
                       value={audience}
                       onChange={(event) => setAudience(event.target.value)}
                       className="input"
-                      placeholder={t("longform.audiencePlaceholder")}
+                      placeholder={t("piece.audiencePlaceholder")}
                     />
                   </label>
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      {t("longform.fieldPov")}
+                      {t("piece.fieldPov")}
                     </span>
                     <input
                       value={pov}
                       onChange={(event) => setPov(event.target.value)}
                       className="input"
-                      placeholder={t("longform.povPlaceholder")}
+                      placeholder={t("piece.povPlaceholder")}
                     />
                   </label>
                 </div>
@@ -449,7 +449,7 @@ export default function LongformsPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      {t("longform.fieldTargetWords")}
+                      {t("piece.fieldTargetWords")}
                     </span>
                     <input
                       type="number"
@@ -463,7 +463,7 @@ export default function LongformsPage() {
                   </label>
                   <label className="block">
                     <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      {t("longform.fieldMode")}
+                      {t("piece.fieldMode")}
                     </span>
                     <select
                       value={mode}
@@ -495,7 +495,7 @@ export default function LongformsPage() {
                   ) : (
                     <Sparkles size={13} />
                   )}
-                  {creating ? t("longform.creating") : t("longform.createSubmit")}
+                  {creating ? t("piece.creating") : t("piece.createSubmit")}
                 </button>
               </div>
             </motion.div>

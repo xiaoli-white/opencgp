@@ -229,7 +229,7 @@ class DatabaseWorkProfileRepository(WorkProfileRepository):
     def count_usage(self, profile_id: str) -> int:
         self.ensure_schema()
         total = 0
-        for table in ("courses", "longforms"):
+        for table in ("series", "pieces"):
             if not self._table_exists(table):
                 continue
             row = self.database.fetchone(

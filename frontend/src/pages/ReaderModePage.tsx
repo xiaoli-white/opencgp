@@ -47,8 +47,8 @@ const ICON_BTN =
 
 type TranslateFn = (path: string, vars?: Record<string, string | number>) => string;
 
-function splitCourseChapters(
-  lessons: {
+function splitSeriesChapters(
+  units: {
     id: string;
     title: string;
     content: string;
@@ -57,23 +57,23 @@ function splitCourseChapters(
   }[],
   t: TranslateFn,
 ): Chapter[] {
-  return [...lessons]
-    .filter((lesson) => (lesson.content ?? "").trim().length > 0)
+  return [...units]
+    .filter((unit) => (unit.content ?? "").trim().length > 0)
     .sort((a, b) => a.order_index - b.order_index)
-    .map((lesson) => ({
-      id: lesson.id,
-      title: lesson.title || t("reader.untitledLesson"),
-      content: lesson.content,
-      mode: lesson.last_mode || "",
+    .map((unit) => ({
+      id: unit.id,
+      title: unit.title || t("reader.untitledUnit"),
+      content: unit.content,
+      mode: unit.last_mode || "",
       citations: [],
     }));
 }
 
 export default function ReaderModePage() {
   const { t } = useI18n();
-  const { kind = "course", id = "" } = useParams();
+  const { kind = "series", id = "" } = useParams();
   const navigate = useNavigate();
-  const isCourse = kind === "course";
+  const isSeries = kind === "series";
 
   const [title, setTitle] = useState("");
   const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -95,8 +95,8 @@ export default function ReaderModePage() {
       navigate(-1);
       return;
     }
-    navigate(isCourse ? `/courses/${id}` : `/longforms/${id}`);
-  }, [navigate, isCourse, id]);
+    navigate(isSeries ? `/series/${id}` : `/pieces/${id}`);
+  }, [navigate, isSeries, id]);
 
   useEffect(() => {
     document.title = t("reader.docTitle");
@@ -143,14 +143,14 @@ export default function ReaderModePage() {
 
     const load = async () => {
       if (!id) throw new Error(t("reader.missingId"));
-      if (isCourse) {
-        const data = await api.getCourse(id);
+      if (isSeries) {
+        const data = await api.getSeries(id);
         if (!alive) return;
-        setTitle(data.course.title);
-        setChapters(splitCourseChapters(data.lessons, t));
+        setTitle(data.series.title);
+        setChapters(splitSeriesChapters(data.units, t));
         return;
       }
-      const data = await api.getLongform(id);
+      const data = await api.getPiece(id);
       if (!alive) return;
       setTitle(data.title);
       const sections = (data.outline ?? [])
@@ -186,10 +186,10 @@ export default function ReaderModePage() {
     return () => {
       alive = false;
     };
-  }, [id, isCourse, t]);
+  }, [id, isSeries, t]);
 
   useEffect(() => {
-    if (!isCourse) return;
+    if (!isSeries) return;
     const pending = chapters.filter((chapter) => chapter.citations.length === 0);
     if (pending.length === 0) return;
     let alive = true;
@@ -219,7 +219,7 @@ export default function ReaderModePage() {
     return () => {
       alive = false;
     };
-  }, [isCourse, chapters]);
+  }, [isSeries, chapters]);
 
   useEffect(() => {
     const onScroll = () => {

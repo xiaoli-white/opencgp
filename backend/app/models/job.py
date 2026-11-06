@@ -22,29 +22,29 @@ JOB_STATUSES = (
 )
 
 KIND_RESEARCH = "research"
-KIND_LONGFORM_CREATE = "longform_create"
-KIND_LONGFORM_GENERATE = "longform_generate"
-KIND_LONGFORM_REWRITE = "longform_rewrite"
-KIND_LESSON_GENERATE = "lesson_generate"
+KIND_PIECE_CREATE = "piece_create"
+KIND_PIECE_GENERATE = "piece_generate"
+KIND_PIECE_REWRITE = "piece_rewrite"
+KIND_UNIT_GENERATE = "unit_generate"
 KIND_BLUEPRINT_GENERATE = "blueprint_generate"
 KIND_KB_EMBED_BACKFILL = "kb_embed_backfill"
 
 JOB_KINDS = (
     KIND_RESEARCH,
-    KIND_LONGFORM_CREATE,
-    KIND_LONGFORM_GENERATE,
-    KIND_LONGFORM_REWRITE,
-    KIND_LESSON_GENERATE,
+    KIND_PIECE_CREATE,
+    KIND_PIECE_GENERATE,
+    KIND_PIECE_REWRITE,
+    KIND_UNIT_GENERATE,
     KIND_BLUEPRINT_GENERATE,
     KIND_KB_EMBED_BACKFILL,
 )
 
 QUOTA_KIND_BY_JOB_KIND = {
     KIND_RESEARCH: "research",
-    KIND_LONGFORM_CREATE: "longform",
-    KIND_LONGFORM_GENERATE: "longform",
-    KIND_LONGFORM_REWRITE: "longform",
-    KIND_LESSON_GENERATE: "generate",
+    KIND_PIECE_CREATE: "piece",
+    KIND_PIECE_GENERATE: "piece",
+    KIND_PIECE_REWRITE: "piece",
+    KIND_UNIT_GENERATE: "generate",
     KIND_BLUEPRINT_GENERATE: "blueprint",
 }
 

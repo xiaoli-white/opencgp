@@ -6,13 +6,13 @@ import uuid
 from typing import Any, Mapping, Sequence
 
 from app.models.citation import Citation
-from app.models.longform import Longform, LongformVersion, OutlineSection
+from app.models.piece import Piece, PieceVersion, OutlineSection
 from app.ports.database import Database
-from app.ports.longform_repository import LongformRepository
+from app.ports.piece_repository import PieceRepository
 
 SCHEMA: tuple[str, ...] = (
     """
-    CREATE TABLE IF NOT EXISTS longforms (
+    CREATE TABLE IF NOT EXISTS pieces (
         id TEXT PRIMARY KEY,
         tenant_id TEXT NOT NULL DEFAULT '',
         user_id TEXT NOT NULL DEFAULT '',
@@ -30,9 +30,9 @@ SCHEMA: tuple[str, ...] = (
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS longform_versions (
+    CREATE TABLE IF NOT EXISTS piece_versions (
         id TEXT PRIMARY KEY,
-        longform_id TEXT NOT NULL,
+        piece_id TEXT NOT NULL,
         version INTEGER NOT NULL,
         content TEXT NOT NULL DEFAULT '',
         outline_json TEXT NOT NULL DEFAULT '[]',
@@ -42,16 +42,16 @@ SCHEMA: tuple[str, ...] = (
         created_at REAL NOT NULL
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_longforms_tenant ON longforms(tenant_id, created_at)",
-    "CREATE INDEX IF NOT EXISTS idx_longform_versions ON longform_versions(longform_id, version)",
+    "CREATE INDEX IF NOT EXISTS idx_pieces_tenant ON pieces(tenant_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_piece_versions ON piece_versions(piece_id, version)",
 )
 
 COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
-    ("longforms", "profile_id", "TEXT NOT NULL DEFAULT ''"),
+    ("pieces", "profile_id", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
-class DatabaseLongformRepository(LongformRepository):
+class DatabasePieceRepository(PieceRepository):
     def __init__(self, database: Database) -> None:
         self.database = database
         self._schema_ready = False
@@ -70,67 +70,67 @@ class DatabaseLongformRepository(LongformRepository):
                 self.database.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         self._schema_ready = True
 
-    def create(self, longform: Longform) -> Longform:
+    def create(self, piece: Piece) -> Piece:
         self.ensure_schema()
         now = time.time()
-        created = longform.created_at or now
+        created = piece.created_at or now
         self.database.execute(
             """
-            INSERT INTO longforms
+            INSERT INTO pieces
                 (id, tenant_id, user_id, title, profile_json, outline_json, content,
                  status, current_version, target_words, last_mode, citations_json,
                  profile_id, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                longform.id,
-                longform.tenant_id,
-                longform.user_id,
-                longform.title,
-                json.dumps(longform.profile.model_dump(), ensure_ascii=False),
-                _dump_outline(longform.outline),
-                longform.content,
-                longform.status,
-                int(longform.current_version),
-                int(longform.target_words),
-                longform.last_mode,
-                _dump_citations(longform.citations),
-                longform.profile_id,
+                piece.id,
+                piece.tenant_id,
+                piece.user_id,
+                piece.title,
+                json.dumps(piece.profile.model_dump(), ensure_ascii=False),
+                _dump_outline(piece.outline),
+                piece.content,
+                piece.status,
+                int(piece.current_version),
+                int(piece.target_words),
+                piece.last_mode,
+                _dump_citations(piece.citations),
+                piece.profile_id,
                 created,
                 now,
             ),
         )
-        return longform.model_copy(update={"created_at": created, "updated_at": now})
+        return piece.model_copy(update={"created_at": created, "updated_at": now})
 
-    def get(self, longform_id: str, tenant_id: str | None = None) -> Longform | None:
+    def get(self, piece_id: str, tenant_id: str | None = None) -> Piece | None:
         self.ensure_schema()
         row = self.database.fetchone(
-            "SELECT * FROM longforms WHERE id = ?", (longform_id,)
+            "SELECT * FROM pieces WHERE id = ?", (piece_id,)
         )
         if row is None:
             return None
         if tenant_id is not None and str(row["tenant_id"] or "") != (tenant_id or ""):
             return None
-        return _row_to_longform(row)
+        return _row_to_piece(row)
 
-    def list(self, tenant_id: str | None = None, limit: int = 50) -> list[Longform]:
+    def list(self, tenant_id: str | None = None, limit: int = 50) -> list[Piece]:
         self.ensure_schema()
         if tenant_id is None:
             rows = self.database.fetchall(
-                "SELECT * FROM longforms ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM pieces ORDER BY created_at DESC LIMIT ?",
                 (int(limit),),
             )
         else:
             rows = self.database.fetchall(
-                "SELECT * FROM longforms WHERE tenant_id = ? "
+                "SELECT * FROM pieces WHERE tenant_id = ? "
                 "ORDER BY created_at DESC LIMIT ?",
                 (tenant_id or "", int(limit)),
             )
-        return [_row_to_longform(row) for row in rows]
+        return [_row_to_piece(row) for row in rows]
 
     def update(
         self,
-        longform_id: str,
+        piece_id: str,
         outline: Sequence[OutlineSection] | None = None,
         content: str | None = None,
         status: str | None = None,
@@ -140,9 +140,9 @@ class DatabaseLongformRepository(LongformRepository):
         profile: dict[str, Any] | None = None,
         target_words: int | None = None,
         profile_id: str | None = None,
-    ) -> Longform | None:
+    ) -> Piece | None:
         self.ensure_schema()
-        current = self.get(longform_id)
+        current = self.get(piece_id)
         if current is None:
             return None
         sets = ["updated_at = ?"]
@@ -174,32 +174,32 @@ class DatabaseLongformRepository(LongformRepository):
         if profile_id is not None:
             sets.append("profile_id = ?")
             params.append(profile_id)
-        params.append(longform_id)
+        params.append(piece_id)
         self.database.execute(
-            f"UPDATE longforms SET {', '.join(sets)} WHERE id = ?", tuple(params)
+            f"UPDATE pieces SET {', '.join(sets)} WHERE id = ?", tuple(params)
         )
-        return self.get(longform_id)
+        return self.get(piece_id)
 
     def append_version(
         self,
-        longform_id: str,
+        piece_id: str,
         content: str,
         outline: Sequence[OutlineSection] | None = None,
         citations: Sequence[Citation] | None = None,
         note: str = "",
         mode: str = "",
-    ) -> tuple[Longform, LongformVersion] | None:
+    ) -> tuple[Piece, PieceVersion] | None:
         self.ensure_schema()
-        current = self.get(longform_id)
+        current = self.get(piece_id)
         if current is None:
             return None
         version = int(current.current_version) + 1
         next_outline = list(outline) if outline is not None else list(current.outline)
         next_citations = list(citations) if citations is not None else list(current.citations)
         now = time.time()
-        record = LongformVersion(
-            id=f"lfver_{uuid.uuid4().hex[:16]}",
-            longform_id=longform_id,
+        record = PieceVersion(
+            id=f"pcver_{uuid.uuid4().hex[:16]}",
+            piece_id=piece_id,
             version=version,
             content=content,
             outline=next_outline,
@@ -210,14 +210,14 @@ class DatabaseLongformRepository(LongformRepository):
         )
         self.database.execute(
             """
-            INSERT INTO longform_versions
-                (id, longform_id, version, content, outline_json, citations_json,
+            INSERT INTO piece_versions
+                (id, piece_id, version, content, outline_json, citations_json,
                  note, mode, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.id,
-                longform_id,
+                piece_id,
                 version,
                 content,
                 _dump_outline(next_outline),
@@ -229,7 +229,7 @@ class DatabaseLongformRepository(LongformRepository):
         )
         self.database.execute(
             """
-            UPDATE longforms SET content = ?, outline_json = ?, citations_json = ?,
+            UPDATE pieces SET content = ?, outline_json = ?, citations_json = ?,
                 status = ?, current_version = ?, last_mode = ?, updated_at = ?
             WHERE id = ?
             """,
@@ -241,34 +241,34 @@ class DatabaseLongformRepository(LongformRepository):
                 version,
                 mode or current.last_mode,
                 now,
-                longform_id,
+                piece_id,
             ),
         )
-        updated = self.get(longform_id)
+        updated = self.get(piece_id)
         if updated is None:
             return None
         return updated, record
 
-    def list_versions(self, longform_id: str) -> list[LongformVersion]:
+    def list_versions(self, piece_id: str) -> list[PieceVersion]:
         self.ensure_schema()
         rows = self.database.fetchall(
-            "SELECT * FROM longform_versions WHERE longform_id = ? ORDER BY version",
-            (longform_id,),
+            "SELECT * FROM piece_versions WHERE piece_id = ? ORDER BY version",
+            (piece_id,),
         )
         return [_row_to_version(row) for row in rows]
 
-    def get_version(self, longform_id: str, version: int) -> LongformVersion | None:
+    def get_version(self, piece_id: str, version: int) -> PieceVersion | None:
         self.ensure_schema()
         row = self.database.fetchone(
-            "SELECT * FROM longform_versions WHERE longform_id = ? AND version = ?",
-            (longform_id, int(version)),
+            "SELECT * FROM piece_versions WHERE piece_id = ? AND version = ?",
+            (piece_id, int(version)),
         )
         return _row_to_version(row) if row is not None else None
 
     def count_by_user(self, user_id: str) -> int:
         self.ensure_schema()
         row = self.database.fetchone(
-            "SELECT COUNT(1) AS n FROM longforms WHERE user_id = ? AND user_id <> ''",
+            "SELECT COUNT(1) AS n FROM pieces WHERE user_id = ? AND user_id <> ''",
             (user_id,),
         )
         return int(row["n"]) if row else 0
@@ -281,35 +281,35 @@ class DatabaseLongformRepository(LongformRepository):
         if scoped:
             placeholders = ", ".join("?" for _ in scoped)
             row = self.database.fetchone(
-                f"SELECT COUNT(1) AS n FROM longforms WHERE user_id = ?"
+                f"SELECT COUNT(1) AS n FROM pieces WHERE user_id = ?"
                 f" AND tenant_id IN ({placeholders})",
                 (user_id, *scoped),
             )
             total = int(row["n"]) if row else 0
             self.database.execute(
-                f"UPDATE longforms SET user_id = ?, updated_at = ? WHERE user_id = ?"
+                f"UPDATE pieces SET user_id = ?, updated_at = ? WHERE user_id = ?"
                 f" AND tenant_id IN ({placeholders})",
                 (target_user_id, time.time(), user_id, *scoped),
             )
             return total
         row = self.database.fetchone(
-            "SELECT COUNT(1) AS n FROM longforms WHERE user_id = ?", (user_id,)
+            "SELECT COUNT(1) AS n FROM pieces WHERE user_id = ?", (user_id,)
         )
         total = int(row["n"]) if row else 0
         self.database.execute(
-            "UPDATE longforms SET user_id = ?, updated_at = ? WHERE user_id = ?",
+            "UPDATE pieces SET user_id = ?, updated_at = ? WHERE user_id = ?",
             (target_user_id, time.time(), user_id),
         )
         return total
 
-    def delete(self, longform_id: str, tenant_id: str | None = None) -> bool:
+    def delete(self, piece_id: str, tenant_id: str | None = None) -> bool:
         self.ensure_schema()
-        if self.get(longform_id, tenant_id) is None:
+        if self.get(piece_id, tenant_id) is None:
             return False
         self.database.execute(
-            "DELETE FROM longform_versions WHERE longform_id = ?", (longform_id,)
+            "DELETE FROM piece_versions WHERE piece_id = ?", (piece_id,)
         )
-        self.database.execute("DELETE FROM longforms WHERE id = ?", (longform_id,))
+        self.database.execute("DELETE FROM pieces WHERE id = ?", (piece_id,))
         return True
 
 
@@ -332,11 +332,11 @@ def _load_json(raw: Any, fallback: Any) -> Any:
         return fallback
 
 
-def _row_to_longform(row: Mapping[str, Any]) -> Longform:
+def _row_to_piece(row: Mapping[str, Any]) -> Piece:
     profile = _load_json(row["profile_json"], {})
     outline = _load_json(row["outline_json"], [])
     citations = _load_json(row["citations_json"], [])
-    return Longform(
+    return Piece(
         id=str(row["id"]),
         tenant_id=str(row["tenant_id"] or ""),
         user_id=str(row["user_id"] or ""),
@@ -359,12 +359,12 @@ def _row_to_longform(row: Mapping[str, Any]) -> Longform:
     )
 
 
-def _row_to_version(row: Mapping[str, Any]) -> LongformVersion:
+def _row_to_version(row: Mapping[str, Any]) -> PieceVersion:
     outline = _load_json(row["outline_json"], [])
     citations = _load_json(row["citations_json"], [])
-    return LongformVersion(
+    return PieceVersion(
         id=str(row["id"]),
-        longform_id=str(row["longform_id"]),
+        piece_id=str(row["piece_id"]),
         version=int(row["version"] or 0),
         content=str(row["content"] or ""),
         outline=[section for section in outline if isinstance(section, dict)]

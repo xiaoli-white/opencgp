@@ -99,17 +99,17 @@ export type RoleList = {
   roles: RoleRecord[];
 };
 
-export type CourseGrant = {
+export type SeriesGrant = {
   user_id: string;
   user_email: string;
   user_display_name: string;
   level: "read" | "write";
 };
 
-export type CourseGrants = {
-  course_id: string;
+export type SeriesGrants = {
+  series_id: string;
   count: number;
-  grants: CourseGrant[];
+  grants: SeriesGrant[];
 };
 
 export type ShareEntry = {
@@ -119,8 +119,8 @@ export type ShareEntry = {
   level: string;
 };
 
-export type LongformGrants = {
-  longform_id: string;
+export type PieceGrants = {
+  piece_id: string;
   count: number;
   grants: ShareEntry[];
 };
@@ -157,7 +157,7 @@ export type Capabilities = {
     scope: RoleScope;
   };
   can: Record<RoleAction, boolean>;
-  visible_course_ids: string[] | "all";
+  visible_series_ids: string[] | "all";
 };
 
 export type AuthPayload = {
@@ -225,19 +225,19 @@ export type VersionDiffResult = {
   hunks: VersionDiffHunk[];
 };
 
-export type LessonVersionDetail = LessonVersion & {
+export type UnitVersionDetail = UnitVersion & {
   citation_count?: number;
   content_length?: number;
   approved_at?: number;
   reviewer_id?: string;
 };
 
-export type LongformVersionDetail = {
+export type PieceVersionDetail = {
   id: string;
-  longform_id: string;
+  piece_id: string;
   version: number;
   content: string;
-  outline: LongformSection[];
+  outline: PieceSection[];
   citations: Citation[];
   mode: string;
   note: string;
@@ -538,7 +538,7 @@ export type ExportFormat = {
   available: boolean;
 };
 
-export type ExportSourceType = "course" | "longform";
+export type ExportSourceType = "series" | "piece";
 
 export type ExportResult = {
   blob: Blob;
@@ -559,7 +559,7 @@ export type MediaAsset = {
 
 export type GenerationMode = "strict" | "loose";
 
-export type Course = {
+export type Series = {
   id: string;
   title: string;
   subtitle: string;
@@ -571,9 +571,9 @@ export type Course = {
   updated_at: number;
 };
 
-export type Lesson = {
+export type Unit = {
   id: string;
-  course_id: string;
+  series_id: string;
   order_index: number;
   title: string;
   learning_objectives: string[];
@@ -586,9 +586,9 @@ export type Lesson = {
   updated_at: number;
 };
 
-export type LessonVersion = {
+export type UnitVersion = {
   id: string;
-  lesson_id: string;
+  unit_id: string;
   version: number;
   content: string;
   citations: Citation[];
@@ -607,17 +607,17 @@ export type Message = {
 };
 
 export type ThreadView = {
-  lesson_id: string;
+  unit_id: string;
   thread_id: string;
   title: string;
   message_count: number;
   messages: Message[];
   returned_count?: number;
-  course_id?: string;
+  series_id?: string;
 };
 
 export type GenerationResult = {
-  lesson_id: string;
+  unit_id: string;
   version: number;
   topic: string;
   top_k: number;
@@ -631,7 +631,7 @@ export type GenerationResult = {
 };
 
 export type AskResult = {
-  lesson_id: string;
+  unit_id: string;
   thread_id: string;
   question: string;
   answer: string;
@@ -644,7 +644,7 @@ export type AskResult = {
 };
 
 export type AmendResult = {
-  lesson_id: string;
+  unit_id: string;
   instruction: string;
   target: string;
   version: number;
@@ -683,10 +683,10 @@ export type SearchResponse = {
   citations: Citation[];
 };
 
-export type CourseDetail = {
-  course: Course;
-  lesson_count: number;
-  lessons: Lesson[];
+export type SeriesDetail = {
+  series: Series;
+  unit_count: number;
+  units: Unit[];
 };
 
 export type Health = {
@@ -719,12 +719,12 @@ export type OutlineNode = {
   objectives: string[];
   prerequisites: string[];
   estimated_minutes: number;
-  lesson_id: string | null;
+  unit_id: string | null;
   status: string;
 };
 
 export type Blueprint = {
-  course_id: string;
+  series_id: string;
   version: number;
   overview: string;
   mode: GenerationMode | "";
@@ -742,9 +742,9 @@ export type BlueprintEnvelope = {
   blueprint: Blueprint | null;
 };
 
-export type LessonReview = {
+export type UnitReview = {
   id: string;
-  lesson_id: string;
+  unit_id: string;
   action: "approve" | "request_revision" | string;
   note: string;
   version: number;
@@ -752,37 +752,37 @@ export type LessonReview = {
   created_at: number;
 };
 
-export type CourseProgress = {
-  course_id: string;
+export type SeriesProgress = {
+  series_id: string;
   total: number;
   by_status: Record<string, number>;
   approved: number;
   pending_review: number;
-  next_lesson_id: string | null;
+  next_unit_id: string | null;
   blueprint_ready: boolean;
   blueprint_version: number;
 };
 
 export type GlossaryPayload = {
-  course_id: string;
+  series_id: string;
   count: number;
   glossary: GlossaryTerm[];
 };
 
 export type ApplyBlueprintResult = {
-  created_lessons: Lesson[];
+  created_units: Unit[];
   blueprint: Blueprint;
   created_count: number;
 };
 
 export type ReviewResult = {
-  lesson: Lesson;
-  review: LessonReview;
-  course_progress: CourseProgress;
+  unit: Unit;
+  review: UnitReview;
+  series_progress: SeriesProgress;
 };
 
-export type LessonLockInfo = {
-  lesson_id: string;
+export type UnitLockInfo = {
+  unit_id: string;
   tenant_id?: string;
   user_id: string;
   user_name: string;
@@ -835,15 +835,15 @@ export type ResearchRun = {
 
 export type ResearchBlueprintResult = {
   research_id: string;
-  course_id: string;
+  series_id: string;
   blueprint: Blueprint;
 };
 
-export type LongformGenre = "article" | "report" | "essay" | "tutorial" | "custom";
+export type PieceGenre = "article" | "report" | "essay" | "tutorial" | "custom";
 
 export type CitationPolicy = "required" | "optional" | "forbidden";
 
-export type LongformProfile = {
+export type PieceProfile = {
   genre: string;
   tone: string;
   audience: string;
@@ -852,7 +852,7 @@ export type LongformProfile = {
   unit_name?: string;
 };
 
-export type LongformSection = {
+export type PieceSection = {
   id: string;
   title: string;
   summary: string;
@@ -861,13 +861,13 @@ export type LongformSection = {
   status: string;
 };
 
-export type Longform = {
+export type Piece = {
   id: string;
   tenant_id?: string;
   user_id?: string;
   title: string;
-  profile: LongformProfile;
-  outline: LongformSection[];
+  profile: PieceProfile;
+  outline: PieceSection[];
   content: string;
   status: string;
   current_version: number;
@@ -878,7 +878,7 @@ export type Longform = {
   updated_at: number;
 };
 
-export type LongformVersion = {
+export type PieceVersion = {
   id: string;
   version: number;
   note: string;
@@ -1268,15 +1268,15 @@ export type KbSource = {
 
 export type ThreadSummary = {
   id: string;
-  course_id?: string;
-  lesson_id?: string;
+  series_id?: string;
+  unit_id?: string;
   title: string;
   created_at: number;
   updated_at: number;
   message_count?: number;
 };
 
-export type ShareResourceType = "course" | "longform";
+export type ShareResourceType = "series" | "piece";
 
 export type ShareLink = {
   id: string;
@@ -1315,10 +1315,10 @@ export type PublicShare = {
 export const api = {
   health: () => request<Health>("/health"),
 
-  listCourses: () =>
-    request<{ count: number; courses: Course[] }>("/api/v1/courses"),
+  listSeries: () =>
+    request<{ count: number; series: Series[] }>("/api/v1/series"),
 
-  createCourse: (payload: {
+  createSeries: (payload: {
     title: string;
     subtitle?: string;
     audience?: string;
@@ -1326,16 +1326,16 @@ export const api = {
     language?: string;
     profile_id?: string;
   }) =>
-    request<Course>("/api/v1/courses", {
+    request<Series>("/api/v1/series", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
 
-  getCourse: (courseId: string) =>
-    request<CourseDetail>(`/api/v1/courses/${courseId}`),
+  getSeries: (seriesId: string) =>
+    request<SeriesDetail>(`/api/v1/series/${seriesId}`),
 
-  createLesson: (
-    courseId: string,
+  createUnit: (
+    seriesId: string,
     payload: {
       title: string;
       order_index?: number | null;
@@ -1345,16 +1345,16 @@ export const api = {
       note?: string;
     },
   ) =>
-    request<{ lesson: Lesson; version: number }>(
-      `/api/v1/courses/${courseId}/lessons`,
+    request<{ unit: Unit; version: number }>(
+      `/api/v1/series/${seriesId}/units`,
       { method: "POST", body: JSON.stringify(payload) },
     ),
 
-  getLesson: (lessonId: string) =>
-    request<Lesson>(`/api/v1/lessons/${lessonId}`),
+  getUnit: (unitId: string) =>
+    request<Unit>(`/api/v1/units/${unitId}`),
 
-  generateLesson: (
-    lessonId: string,
+  generateUnit: (
+    unitId: string,
     payload: {
       topic?: string;
       top_k?: number;
@@ -1364,41 +1364,41 @@ export const api = {
       expected_version?: number | null;
     } = {},
   ) =>
-    request<GenerationResult>(`/api/v1/lessons/${lessonId}/generate`, {
+    request<GenerationResult>(`/api/v1/units/${unitId}/generate`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
 
-  listVersions: (lessonId: string) =>
+  listVersions: (unitId: string) =>
     request<{
-      lesson_id: string;
+      unit_id: string;
       current_version: number;
       count: number;
-      versions: LessonVersion[];
-    }>(`/api/v1/lessons/${lessonId}/versions`),
+      versions: UnitVersion[];
+    }>(`/api/v1/units/${unitId}/versions`),
 
-  getLessonVersion: (lessonId: string, version: number) =>
-    request<{ lesson_id: string; version: LessonVersionDetail }>(
-      `/api/v1/lessons/${lessonId}/versions/${version}`,
+  getUnitVersion: (unitId: string, version: number) =>
+    request<{ unit_id: string; version: UnitVersionDetail }>(
+      `/api/v1/units/${unitId}/versions/${version}`,
     ),
 
-  diffLessonVersions: (lessonId: string, from: number, to: number) =>
+  diffUnitVersions: (unitId: string, from: number, to: number) =>
     request<VersionDiffResult>(
-      `/api/v1/lessons/${lessonId}/versions/diff?from=${from}&to=${to}`,
+      `/api/v1/units/${unitId}/versions/diff?from=${from}&to=${to}`,
     ),
 
-  revertLesson: (
-    lessonId: string,
+  revertUnit: (
+    unitId: string,
     version: number,
     note = "",
     expectedVersion?: number | null,
   ) =>
     request<{
-      lesson: Lesson;
+      unit: Unit;
       version: number;
       reverted_from: number;
       note: string;
-    }>(`/api/v1/lessons/${lessonId}/revert`, {
+    }>(`/api/v1/units/${unitId}/revert`, {
       method: "POST",
       body: JSON.stringify({
         version,
@@ -1407,8 +1407,8 @@ export const api = {
       }),
     }),
 
-  askLesson: (lessonId: string, question: string, selection?: string) =>
-    request<AskResult>(`/api/v1/lessons/${lessonId}/ask`, {
+  askUnit: (unitId: string, question: string, selection?: string) =>
+    request<AskResult>(`/api/v1/units/${unitId}/ask`, {
       method: "POST",
       body: JSON.stringify({
         question,
@@ -1416,14 +1416,14 @@ export const api = {
       }),
     }),
 
-  amendLesson: (
-    lessonId: string,
+  amendUnit: (
+    unitId: string,
     instruction: string,
     target?: string,
     mode: GenerationMode = "strict",
     expectedVersion?: number | null,
   ) =>
-    request<AmendResult>(`/api/v1/lessons/${lessonId}/amend`, {
+    request<AmendResult>(`/api/v1/units/${unitId}/amend`, {
       method: "POST",
       body: JSON.stringify({
         instruction,
@@ -1433,9 +1433,9 @@ export const api = {
       }),
     }),
 
-  checkLessonCode: (lessonId: string) =>
+  checkUnitCode: (unitId: string) =>
     request<{
-      lesson_id: string;
+      unit_id: string;
       blocks: {
         index: number;
         language: string;
@@ -1453,10 +1453,10 @@ export const api = {
         skipped: number;
         backend: string;
       };
-    }>(`/api/v1/lessons/${lessonId}/code-check`, { method: "POST", body: JSON.stringify({}) }),
+    }>(`/api/v1/units/${unitId}/code-check`, { method: "POST", body: JSON.stringify({}) }),
 
-  getThread: (lessonId: string) =>
-    request<ThreadView>(`/api/v1/lessons/${lessonId}/thread`),
+  getThread: (unitId: string) =>
+    request<ThreadView>(`/api/v1/units/${unitId}/thread`),
 
   uploadKb: (file: File, sourceName?: string) => {
     const form = new FormData();
@@ -1482,11 +1482,11 @@ export const api = {
       { method: "DELETE" },
     ),
 
-  getBlueprint: (courseId: string) =>
-    request<BlueprintEnvelope>(`/api/v1/courses/${courseId}/blueprint`),
+  getBlueprint: (seriesId: string) =>
+    request<BlueprintEnvelope>(`/api/v1/series/${seriesId}/blueprint`),
 
   generateBlueprint: (
-    courseId: string,
+    seriesId: string,
     payload: {
       mode?: GenerationMode;
       top_k?: number;
@@ -1495,7 +1495,7 @@ export const api = {
       expected_version?: number | null;
     } = {},
   ) =>
-    request<Blueprint>(`/api/v1/courses/${courseId}/blueprint/generate`, {
+    request<Blueprint>(`/api/v1/series/${seriesId}/blueprint/generate`, {
       method: "POST",
       body: JSON.stringify({
         mode: payload.mode ?? "strict",
@@ -1507,11 +1507,11 @@ export const api = {
     }),
 
   saveBlueprint: (
-    courseId: string,
+    seriesId: string,
     blueprint: Blueprint,
     expectedVersion?: number | null,
   ) =>
-    request<Blueprint>(`/api/v1/courses/${courseId}/blueprint`, {
+    request<Blueprint>(`/api/v1/series/${seriesId}/blueprint`, {
       method: "PUT",
       body: JSON.stringify({
         blueprint,
@@ -1519,63 +1519,63 @@ export const api = {
       }),
     }),
 
-  getLessonLock: (lessonId: string) =>
-    request<{ lock: LessonLockInfo | null }>(
-      `/api/v1/lessons/${lessonId}/lock`,
+  getUnitLock: (unitId: string) =>
+    request<{ lock: UnitLockInfo | null }>(
+      `/api/v1/units/${unitId}/lock`,
     ),
 
-  acquireLessonLock: (lessonId: string, force = false) =>
-    request<{ acquired: boolean; lock: LessonLockInfo }>(
-      `/api/v1/lessons/${lessonId}/lock`,
+  acquireUnitLock: (unitId: string, force = false) =>
+    request<{ acquired: boolean; lock: UnitLockInfo }>(
+      `/api/v1/units/${unitId}/lock`,
       { method: "POST", body: JSON.stringify({ force }) },
     ),
 
-  heartbeatLessonLock: (lessonId: string, token: string) =>
-    request<{ lock: LessonLockInfo }>(
-      `/api/v1/lessons/${lessonId}/lock/heartbeat`,
+  heartbeatUnitLock: (unitId: string, token: string) =>
+    request<{ lock: UnitLockInfo }>(
+      `/api/v1/units/${unitId}/lock/heartbeat`,
       { method: "POST", body: JSON.stringify({ token }) },
     ),
 
-  releaseLessonLock: (lessonId: string, token: string) =>
+  releaseUnitLock: (unitId: string, token: string) =>
     request<{ ok: boolean }>(
-      `/api/v1/lessons/${lessonId}/lock?token=${encodeURIComponent(token)}`,
+      `/api/v1/units/${unitId}/lock?token=${encodeURIComponent(token)}`,
       { method: "DELETE" },
     ),
 
-  applyBlueprint: (courseId: string) =>
+  applyBlueprint: (seriesId: string) =>
     request<ApplyBlueprintResult>(
-      `/api/v1/courses/${courseId}/blueprint/apply`,
+      `/api/v1/series/${seriesId}/blueprint/apply`,
       { method: "POST" },
     ),
 
-  getGlossary: (courseId: string) =>
-    request<GlossaryPayload>(`/api/v1/courses/${courseId}/glossary`),
+  getGlossary: (seriesId: string) =>
+    request<GlossaryPayload>(`/api/v1/series/${seriesId}/glossary`),
 
-  saveGlossary: (courseId: string, terms: GlossaryTerm[]) =>
-    request<GlossaryPayload>(`/api/v1/courses/${courseId}/glossary`, {
+  saveGlossary: (seriesId: string, terms: GlossaryTerm[]) =>
+    request<GlossaryPayload>(`/api/v1/series/${seriesId}/glossary`, {
       method: "PUT",
       body: JSON.stringify({ terms }),
     }),
 
-  reviewLesson: (
-    lessonId: string,
+  reviewUnit: (
+    unitId: string,
     action: "approve" | "request_revision",
     note = "",
   ) =>
-    request<ReviewResult>(`/api/v1/lessons/${lessonId}/review`, {
+    request<ReviewResult>(`/api/v1/units/${unitId}/review`, {
       method: "POST",
       body: JSON.stringify({ action, note }),
     }),
 
-  getProgress: (courseId: string) =>
-    request<CourseProgress>(`/api/v1/courses/${courseId}/progress`),
+  getProgress: (seriesId: string) =>
+    request<SeriesProgress>(`/api/v1/series/${seriesId}/progress`),
 
-  listLessonReviews: (lessonId: string) =>
+  listUnitReviews: (unitId: string) =>
     request<{
-      lesson_id: string;
+      unit_id: string;
       count: number;
-      reviews: LessonReview[];
-    }>(`/api/v1/lessons/${lessonId}/reviews`),
+      reviews: UnitReview[];
+    }>(`/api/v1/units/${unitId}/reviews`),
 
   register: (payload: {
     email: string;
@@ -1696,14 +1696,14 @@ export const api = {
   deleteRole: (roleId: string) =>
     request<{ ok?: boolean }>(`/api/v1/roles/${roleId}`, { method: "DELETE" }),
 
-  getCourseGrants: (courseId: string) =>
-    request<CourseGrants>(`/api/v1/courses/${courseId}/grants`),
+  getSeriesGrants: (seriesId: string) =>
+    request<SeriesGrants>(`/api/v1/series/${seriesId}/grants`),
 
-  saveCourseGrants: (
-    courseId: string,
+  saveSeriesGrants: (
+    seriesId: string,
     grants: { user_id: string; level: "read" | "write" }[],
   ) =>
-    request<CourseGrants>(`/api/v1/courses/${courseId}/grants`, {
+    request<SeriesGrants>(`/api/v1/series/${seriesId}/grants`, {
       method: "PUT",
       body: JSON.stringify({ grants }),
     }),
@@ -1866,9 +1866,9 @@ export const api = {
   researchToBlueprint: (
     runId: string,
     payload: {
-      create_course?: boolean;
-      course_id?: string;
-      course_title?: string;
+      create_series?: boolean;
+      series_id?: string;
+      series_title?: string;
       mode?: GenerationMode;
     },
   ) =>
@@ -1877,9 +1877,9 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  createLongform: (payload: {
+  createPiece: (payload: {
     title: string;
-    genre?: LongformGenre | string;
+    genre?: PieceGenre | string;
     tone?: string;
     audience?: string;
     pov?: string;
@@ -1888,85 +1888,85 @@ export const api = {
     mode?: GenerationMode;
     profile_id?: string;
   }) =>
-    request<Longform>("/api/v1/longforms", {
+    request<Piece>("/api/v1/pieces", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
 
-  listLongforms: () =>
-    request<{ count: number; longforms: Longform[] }>("/api/v1/longforms"),
+  listPieces: () =>
+    request<{ count: number; pieces: Piece[] }>("/api/v1/pieces"),
 
-  getLongform: (longformId: string) =>
-    request<Longform>(`/api/v1/longforms/${longformId}`),
+  getPiece: (pieceId: string) =>
+    request<Piece>(`/api/v1/pieces/${pieceId}`),
 
   generateSection: (
-    longformId: string,
+    pieceId: string,
     sectionId: string,
     payload?: { mode?: GenerationMode; top_k?: number },
   ) =>
-    request<{ section_id: string; content: string; longform: Longform }>(
-      `/api/v1/longforms/${longformId}/sections/${sectionId}/generate`,
+    request<{ section_id: string; content: string; piece: Piece }>(
+      `/api/v1/pieces/${pieceId}/sections/${sectionId}/generate`,
       { method: "POST", body: JSON.stringify(payload ?? {}) },
     ),
 
-  generateLongform: (
-    longformId: string,
+  generatePiece: (
+    pieceId: string,
     payload?: { mode?: GenerationMode; top_k?: number; expected_version?: number },
   ) =>
-    request<Longform>(`/api/v1/longforms/${longformId}/generate`, {
+    request<Piece>(`/api/v1/pieces/${pieceId}/generate`, {
       method: "POST",
       body: JSON.stringify(payload ?? {}),
     }),
 
-  rewriteLongform: (
-    longformId: string,
+  rewritePiece: (
+    pieceId: string,
     payload: {
       instruction: string;
       mode?: GenerationMode;
       expected_version?: number;
     },
   ) =>
-    request<Longform>(`/api/v1/longforms/${longformId}/rewrite`, {
+    request<Piece>(`/api/v1/pieces/${pieceId}/rewrite`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
 
-  listLongformVersions: (longformId: string) =>
-    request<{ count: number; versions: LongformVersion[] }>(
-      `/api/v1/longforms/${longformId}/versions`,
+  listPieceVersions: (pieceId: string) =>
+    request<{ count: number; versions: PieceVersion[] }>(
+      `/api/v1/pieces/${pieceId}/versions`,
     ),
 
-  getLongformVersion: (longformId: string, version: number) =>
-    request<{ longform_id: string; version: LongformVersionDetail }>(
-      `/api/v1/longforms/${longformId}/versions/${version}`,
+  getPieceVersion: (pieceId: string, version: number) =>
+    request<{ piece_id: string; version: PieceVersionDetail }>(
+      `/api/v1/pieces/${pieceId}/versions/${version}`,
     ),
 
-  diffLongformVersions: (longformId: string, from: number, to: number) =>
+  diffPieceVersions: (pieceId: string, from: number, to: number) =>
     request<VersionDiffResult>(
-      `/api/v1/longforms/${longformId}/versions/diff?from=${from}&to=${to}`,
+      `/api/v1/pieces/${pieceId}/versions/diff?from=${from}&to=${to}`,
     ),
 
-  revertLongform: (longformId: string, version: number) =>
-    request<Longform>(`/api/v1/longforms/${longformId}/revert`, {
+  revertPiece: (pieceId: string, version: number) =>
+    request<Piece>(`/api/v1/pieces/${pieceId}/revert`, {
       method: "POST",
       body: JSON.stringify({ version }),
     }),
 
-  deleteLongform: (longformId: string) =>
-    request<{ ok?: boolean }>(`/api/v1/longforms/${longformId}`, {
+  deletePiece: (pieceId: string) =>
+    request<{ ok?: boolean }>(`/api/v1/pieces/${pieceId}`, {
       method: "DELETE",
     }),
 
   storageInfo: () => request<StorageInfo>("/api/v1/storage/info"),
 
-  getLongformGrants: (longformId: string) =>
-    request<LongformGrants>(`/api/v1/longforms/${longformId}/grants`),
+  getPieceGrants: (pieceId: string) =>
+    request<PieceGrants>(`/api/v1/pieces/${pieceId}/grants`),
 
-  saveLongformGrants: (
-    longformId: string,
+  savePieceGrants: (
+    pieceId: string,
     grants: { user_id: string; level: string }[],
   ) =>
-    request<LongformGrants>(`/api/v1/longforms/${longformId}/grants`, {
+    request<PieceGrants>(`/api/v1/pieces/${pieceId}/grants`, {
       method: "PUT",
       body: JSON.stringify({ grants }),
     }),
@@ -2005,8 +2005,8 @@ export const api = {
       body: JSON.stringify({ reason: reason ?? "" }),
     }),
 
-  updateCourse: (
-    courseId: string,
+  updateSeries: (
+    seriesId: string,
     payload: {
       title?: string;
       subtitle?: string;
@@ -2016,19 +2016,19 @@ export const api = {
       profile_id?: string;
     },
   ) =>
-    request<Course>(`/api/v1/courses/${courseId}`, {
+    request<Series>(`/api/v1/series/${seriesId}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
 
-  deleteCourse: (courseId: string) =>
-    request<{ course_id: string; deleted: Record<string, number> }>(
-      `/api/v1/courses/${courseId}`,
+  deleteSeries: (seriesId: string) =>
+    request<{ series_id: string; deleted: Record<string, number> }>(
+      `/api/v1/series/${seriesId}`,
       { method: "DELETE" },
     ),
 
-  updateLesson: (
-    lessonId: string,
+  updateUnit: (
+    unitId: string,
     payload: {
       title?: string;
       learning_objectives?: string[];
@@ -2037,47 +2037,47 @@ export const api = {
       status?: string;
     },
   ) =>
-    request<Lesson>(`/api/v1/lessons/${lessonId}`, {
+    request<Unit>(`/api/v1/units/${unitId}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
 
-  deleteLesson: (lessonId: string) =>
-    request<{ lesson_id: string; deleted_versions: number; deleted_threads: number }>(
-      `/api/v1/lessons/${lessonId}`,
+  deleteUnit: (unitId: string) =>
+    request<{ unit_id: string; deleted_versions: number; deleted_threads: number }>(
+      `/api/v1/units/${unitId}`,
       { method: "DELETE" },
     ),
 
-  reorderLessons: (courseId: string, lessonIds: string[]) =>
-    request<CourseDetail>(`/api/v1/courses/${courseId}/lessons/reorder`, {
+  reorderUnits: (seriesId: string, unitIds: string[]) =>
+    request<SeriesDetail>(`/api/v1/series/${seriesId}/units/reorder`, {
       method: "POST",
-      body: JSON.stringify({ lesson_ids: lessonIds }),
+      body: JSON.stringify({ unit_ids: unitIds }),
     }),
 
-  updateLongform: (
-    longformId: string,
+  updatePiece: (
+    pieceId: string,
     payload: {
       title?: string;
       profile?: Record<string, unknown>;
       target_words?: number;
     },
   ) =>
-    request<Longform>(`/api/v1/longforms/${longformId}`, {
+    request<Piece>(`/api/v1/pieces/${pieceId}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
 
-  saveLongformContent: (
-    longformId: string,
+  savePieceContent: (
+    pieceId: string,
     payload: { content: string; note?: string; expected_version?: number | null },
   ) =>
-    request<Longform>(`/api/v1/longforms/${longformId}/content`, {
+    request<Piece>(`/api/v1/pieces/${pieceId}/content`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
 
-  createLongformSection: (
-    longformId: string,
+  createPieceSection: (
+    pieceId: string,
     payload: {
       title: string;
       summary?: string;
@@ -2085,13 +2085,13 @@ export const api = {
       after_id?: string | null;
     },
   ) =>
-    request<{ section: LongformSection; longform: Longform }>(
-      `/api/v1/longforms/${longformId}/sections`,
+    request<{ section: PieceSection; piece: Piece }>(
+      `/api/v1/pieces/${pieceId}/sections`,
       { method: "POST", body: JSON.stringify(payload) },
     ),
 
-  updateLongformSection: (
-    longformId: string,
+  updatePieceSection: (
+    pieceId: string,
     sectionId: string,
     payload: {
       title?: string;
@@ -2100,18 +2100,18 @@ export const api = {
       content?: string;
     },
   ) =>
-    request<Longform>(`/api/v1/longforms/${longformId}/sections/${sectionId}`, {
+    request<Piece>(`/api/v1/pieces/${pieceId}/sections/${sectionId}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
 
-  deleteLongformSection: (longformId: string, sectionId: string) =>
-    request<Longform>(`/api/v1/longforms/${longformId}/sections/${sectionId}`, {
+  deletePieceSection: (pieceId: string, sectionId: string) =>
+    request<Piece>(`/api/v1/pieces/${pieceId}/sections/${sectionId}`, {
       method: "DELETE",
     }),
 
-  reorderLongformSections: (longformId: string, sectionIds: string[]) =>
-    request<Longform>(`/api/v1/longforms/${longformId}/sections/reorder`, {
+  reorderPieceSections: (pieceId: string, sectionIds: string[]) =>
+    request<Piece>(`/api/v1/pieces/${pieceId}/sections/reorder`, {
       method: "POST",
       body: JSON.stringify({ section_ids: sectionIds }),
     }),

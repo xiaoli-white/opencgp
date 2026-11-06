@@ -1,4 +1,4 @@
-class LessonNotFoundError(LookupError):
+class UnitNotFoundError(LookupError):
     pass
 
 
@@ -6,7 +6,7 @@ class MessageNotFoundError(LookupError):
     pass
 
 
-class LessonContentEmptyError(ValueError):
+class UnitContentEmptyError(ValueError):
     pass
 
 
@@ -61,14 +61,14 @@ class VersionConflictError(RuntimeError):
         self.current = int(current)
 
 
-class LessonLockedError(RuntimeError):
+class UnitLockedError(RuntimeError):
     def __init__(self, name: str, lock: object | None = None) -> None:
         super().__init__(f"该讲正被 {name} 编辑")
         self.name = name
         self.lock = lock
 
 
-class LessonLockLostError(RuntimeError):
+class UnitLockLostError(RuntimeError):
     pass
 
 
@@ -112,11 +112,11 @@ class ResearchParseError(RuntimeError):
     pass
 
 
-class LongformNotFoundError(LookupError):
+class PieceNotFoundError(LookupError):
     pass
 
 
-class LongformSectionNotFoundError(LookupError):
+class PieceSectionNotFoundError(LookupError):
     pass
 
 

@@ -33,8 +33,8 @@ import {
   ApiError,
   api,
   type GenerationMode,
-  type Longform,
-  type LongformVersion,
+  type Piece,
+  type PieceVersion,
 } from "@/lib/api";
 import { cancelJob, runJob } from "@/lib/jobs";
 import { contentLength, formatChars, formatDateTime } from "@/lib/format";
@@ -76,7 +76,7 @@ function useElapsed(active: boolean): number {
   return seconds;
 }
 
-export default function LongformEditorPage() {
+export default function PieceEditorPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const { can, roleName, tenant } = useSession();
@@ -85,11 +85,11 @@ export default function LongformEditorPage() {
 
   const genreLabel = (value: string) =>
     (GENRE_VALUES as readonly string[]).includes(value)
-      ? t(`longform.genre.${value}`)
-      : t("longform.genre.article");
+      ? t(`piece.genre.${value}`)
+      : t("piece.genre.article");
 
-  const [longform, setLongform] = useState<Longform | null>(null);
-  const [versions, setVersions] = useState<LongformVersion[]>([]);
+  const [piece, setPiece] = useState<Piece | null>(null);
+  const [versions, setVersions] = useState<PieceVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -153,7 +153,7 @@ export default function LongformEditorPage() {
     try {
       const [memberList, grantList] = await Promise.all([
         tenant ? api.listMembers(tenant) : Promise.resolve({ count: 0, members: [] }),
-        api.getLongformGrants(id),
+        api.getPieceGrants(id),
       ]);
       setShareMembers(
         (memberList.members ?? []).map((member) => ({
@@ -171,7 +171,7 @@ export default function LongformEditorPage() {
       }
       setShareLevels(next);
     } catch (err) {
-      setShareError(err instanceof Error ? err.message : t("longform.shareLoadFailed"));
+      setShareError(err instanceof Error ? err.message : t("piece.shareLoadFailed"));
     } finally {
       setShareLoading(false);
     }
@@ -183,8 +183,8 @@ export default function LongformEditorPage() {
       setShareSaving(true);
       setShareError("");
       try {
-        await api.saveLongformGrants(id, entries);
-        setNotice(t("longform.shareSaved"));
+        await api.savePieceGrants(id, entries);
+        setNotice(t("piece.shareSaved"));
         setShareOpen(false);
       } catch (err) {
         setShareError(err instanceof Error ? err.message : t("errors.saveFailed"));
@@ -203,13 +203,13 @@ export default function LongformEditorPage() {
       if (!quiet) setLoading(true);
       try {
         const [detail, versionData] = await Promise.all([
-          api.getLongform(id),
-          api.listLongformVersions(id),
+          api.getPiece(id),
+          api.listPieceVersions(id),
         ]);
-        setLongform(detail);
+        setPiece(detail);
         setVersions(versionData.versions);
       } catch (err) {
-        setError(err instanceof Error ? err.message : t("longform.loadFailed"));
+        setError(err instanceof Error ? err.message : t("piece.loadFailed"));
       } finally {
         setLoading(false);
       }
@@ -222,14 +222,14 @@ export default function LongformEditorPage() {
   }, [load]);
 
   const words = useMemo(
-    () => (longform?.content ? contentLength(longform.content) : 0),
-    [longform],
+    () => (piece?.content ? contentLength(piece.content) : 0),
+    [piece],
   );
 
   const generateAll = async () => {
-    if (!longform || busy) return;
+    if (!piece || busy) return;
     if (!writable) {
-      setError(t("longform.readOnlyGenerate"));
+      setError(t("piece.readOnlyGenerate"));
       return;
     }
     setBusy("all");
@@ -239,39 +239,39 @@ export default function LongformEditorPage() {
     setNotice("");
     const startedAt = Date.now();
     try {
-      let updated: Longform | null = null;
+      let updated: Piece | null = null;
       try {
         await runJob(
-          "longform_generate",
-          { longform_id: longform.id },
+          "piece_generate",
+          { piece_id: piece.id },
           {
             onProgress: setJobProgress,
             onJob: (created) => setJobId(created.id),
           },
         );
-        updated = await api.getLongform(longform.id);
+        updated = await api.getPiece(piece.id);
       } catch (queueErr) {
         const queueable =
           queueErr instanceof ApiError &&
           (queueErr.status === 400 || queueErr.status === 404 || queueErr.status === 422);
         if (!queueable) throw queueErr;
-        updated = await api.generateLongform(longform.id, {
-          mode: (longform.last_mode as GenerationMode) || "loose",
-          expected_version: longform.current_version,
+        updated = await api.generatePiece(piece.id, {
+          mode: (piece.last_mode as GenerationMode) || "loose",
+          expected_version: piece.current_version,
         });
       }
-      setLongform(updated);
-      const versionData = await api.listLongformVersions(longform.id);
+      setPiece(updated);
+      const versionData = await api.listPieceVersions(piece.id);
       setVersions(versionData.versions);
       const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
       setNotice(
-        t("longform.generatedFull", {
+        t("piece.generatedFull", {
           seconds,
           version: updated.current_version,
         }),
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("longform.generateFailed"));
+      setError(err instanceof Error ? err.message : t("piece.generateFailed"));
     } finally {
       setBusy("");
       setJobId(null);
@@ -279,9 +279,9 @@ export default function LongformEditorPage() {
   };
 
   const generateOne = async (sectionId: string) => {
-    if (!longform || busy) return;
+    if (!piece || busy) return;
     if (!writable) {
-      setError(t("longform.readOnlyGenerateSection"));
+      setError(t("piece.readOnlyGenerateSection"));
       return;
     }
     setBusy(sectionId);
@@ -289,16 +289,16 @@ export default function LongformEditorPage() {
     setNotice("");
     const startedAt = Date.now();
     try {
-      const result = await api.generateSection(longform.id, sectionId, {
-        mode: (longform.last_mode as GenerationMode) || "loose",
+      const result = await api.generateSection(piece.id, sectionId, {
+        mode: (piece.last_mode as GenerationMode) || "loose",
       });
-      setLongform(result.longform);
-      const versionData = await api.listLongformVersions(longform.id);
+      setPiece(result.piece);
+      const versionData = await api.listPieceVersions(piece.id);
       setVersions(versionData.versions);
       const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-      setNotice(t("longform.generatedSection", { seconds }));
+      setNotice(t("piece.generatedSection", { seconds }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("longform.generateSectionFailed"));
+      setError(err instanceof Error ? err.message : t("piece.generateSectionFailed"));
     } finally {
       setBusy("");
     }
@@ -306,9 +306,9 @@ export default function LongformEditorPage() {
 
   const submitRewrite = async () => {
     const text = instruction.trim();
-    if (!longform || !text || busy) return;
+    if (!piece || !text || busy) return;
     if (!writable) {
-      setError(t("longform.readOnlyRewrite"));
+      setError(t("piece.readOnlyRewrite"));
       return;
     }
     setBusy("rewrite");
@@ -318,42 +318,42 @@ export default function LongformEditorPage() {
     setNotice("");
     const startedAt = Date.now();
     try {
-      let updated: Longform | null = null;
+      let updated: Piece | null = null;
       try {
         await runJob(
-          "longform_rewrite",
-          { longform_id: longform.id, instruction: text },
+          "piece_rewrite",
+          { piece_id: piece.id, instruction: text },
           {
             onProgress: setJobProgress,
             onJob: (created) => setJobId(created.id),
           },
         );
-        updated = await api.getLongform(longform.id);
+        updated = await api.getPiece(piece.id);
       } catch (queueErr) {
         const queueable =
           queueErr instanceof ApiError &&
           (queueErr.status === 400 || queueErr.status === 404 || queueErr.status === 422);
         if (!queueable) throw queueErr;
-        updated = await api.rewriteLongform(longform.id, {
+        updated = await api.rewritePiece(piece.id, {
           instruction: text,
           mode: rewriteMode,
-          expected_version: longform.current_version,
+          expected_version: piece.current_version,
         });
       }
-      setLongform(updated);
-      const versionData = await api.listLongformVersions(longform.id);
+      setPiece(updated);
+      const versionData = await api.listPieceVersions(piece.id);
       setVersions(versionData.versions);
       setRewriteOpen(false);
       setInstruction("");
       const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
       setNotice(
-        t("longform.rewriteDone", {
+        t("piece.rewriteDone", {
           seconds,
           version: updated.current_version,
         }),
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("longform.rewriteFailed"));
+      setError(err instanceof Error ? err.message : t("piece.rewriteFailed"));
     } finally {
       setBusy("");
       setJobId(null);
@@ -364,9 +364,9 @@ export default function LongformEditorPage() {
     if (!jobId) return;
     try {
       await cancelJob(jobId);
-      setNotice(t("longform.cancelRequested"));
+      setNotice(t("piece.cancelRequested"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("longform.cancelFailed"));
+      setError(err instanceof Error ? err.message : t("piece.cancelFailed"));
     }
   };
 
@@ -376,7 +376,7 @@ export default function LongformEditorPage() {
   };
 
   const loadVersionPreview = async (version: number) => {
-    const detail = await api.getLongformVersion(id, version);
+    const detail = await api.getPieceVersion(id, version);
     return {
       content: detail.version.content ?? "",
       citations: detail.version.citations ?? [],
@@ -384,38 +384,38 @@ export default function LongformEditorPage() {
   };
 
   const fetchVersionDiff = async (from: number, to: number) => {
-    return api.diffLongformVersions(id, from, to);
+    return api.diffPieceVersions(id, from, to);
   };
 
   const revert = async (version: number) => {
-    if (!longform || busy) return;
+    if (!piece || busy) return;
     if (!writable) return;
-    const confirmed = window.confirm(t("longform.confirmRevert", { version }));
+    const confirmed = window.confirm(t("piece.confirmRevert", { version }));
     if (!confirmed) return;
     setBusy(`revert-${version}`);
     setError("");
     try {
-      const updated = await api.revertLongform(longform.id, version);
-      setLongform(updated);
-      const versionData = await api.listLongformVersions(longform.id);
+      const updated = await api.revertPiece(piece.id, version);
+      setPiece(updated);
+      const versionData = await api.listPieceVersions(piece.id);
       setVersions(versionData.versions);
-      setNotice(t("longform.reverted", { version, current: updated.current_version }));
+      setNotice(t("piece.reverted", { version, current: updated.current_version }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("longform.revertFailed"));
+      setError(err instanceof Error ? err.message : t("piece.revertFailed"));
     } finally {
       setBusy("");
     }
   };
 
   const remove = async () => {
-    if (!longform || !writable) return;
+    if (!piece || !writable) return;
     const confirmed = window.confirm(
-      t("longform.confirmDelete", { title: longform.title }),
+      t("piece.confirmDelete", { title: piece.title }),
     );
     if (!confirmed) return;
     try {
-      await api.deleteLongform(longform.id);
-      navigate("/longforms");
+      await api.deletePiece(piece.id);
+      navigate("/pieces");
     } catch (err) {
       setError(err instanceof Error ? err.message : t("errors.deleteFailed"));
     }
@@ -437,27 +437,27 @@ export default function LongformEditorPage() {
   };
 
   const openManual = () => {
-    if (!longform) return;
+    if (!piece) return;
     setDialogError("");
-    setManualText(longform.content ?? "");
+    setManualText(piece.content ?? "");
     setManualOpen(true);
   };
 
   const saveManual = async () => {
-    if (!longform) return;
+    if (!piece) return;
     setDialogBusy(true);
     setDialogError("");
     try {
-      const updated = await api.saveLongformContent(longform.id, {
+      const updated = await api.savePieceContent(piece.id, {
         content: manualText,
-        note: t("longform.manualNote"),
-        expected_version: longform.current_version,
+        note: t("piece.manualNote"),
+        expected_version: piece.current_version,
       });
-      setLongform(updated);
-      const versionData = await api.listLongformVersions(longform.id);
+      setPiece(updated);
+      const versionData = await api.listPieceVersions(piece.id);
       setVersions(versionData.versions);
       setManualOpen(false);
-      setNotice(t("longform.savedAsVersion", { version: updated.current_version }));
+      setNotice(t("piece.savedAsVersion", { version: updated.current_version }));
     } catch (err) {
       setDialogError(err instanceof Error ? err.message : t("errors.saveFailed"));
     } finally {
@@ -466,76 +466,76 @@ export default function LongformEditorPage() {
   };
 
   const saveTitle = async (value: string) => {
-    if (!longform) return;
+    if (!piece) return;
     setDialogBusy(true);
     setDialogError("");
     try {
-      const updated = await api.updateLongform(longform.id, { title: value });
-      setLongform(updated);
+      const updated = await api.updatePiece(piece.id, { title: value });
+      setPiece(updated);
       setTitleEditOpen(false);
-      setNotice(t("longform.titleUpdated"));
+      setNotice(t("piece.titleUpdated"));
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : t("longform.updateFailed"));
+      setDialogError(err instanceof Error ? err.message : t("piece.updateFailed"));
     } finally {
       setDialogBusy(false);
     }
   };
 
   const saveTargetWords = async (value: string) => {
-    if (!longform) return;
+    if (!piece) return;
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed <= 0) {
-      setDialogError(t("longform.targetWordsInvalid"));
+      setDialogError(t("piece.targetWordsInvalid"));
       return;
     }
     setDialogBusy(true);
     setDialogError("");
     try {
-      const updated = await api.updateLongform(longform.id, {
+      const updated = await api.updatePiece(piece.id, {
         target_words: Math.round(parsed),
       });
-      setLongform(updated);
+      setPiece(updated);
       setTargetEditOpen(false);
-      setNotice(t("longform.targetUpdated"));
+      setNotice(t("piece.targetUpdated"));
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : t("longform.updateFailed"));
+      setDialogError(err instanceof Error ? err.message : t("piece.updateFailed"));
     } finally {
       setDialogBusy(false);
     }
   };
 
   const renameSection = async (value: string) => {
-    if (!longform || !sectionRename) return;
+    if (!piece || !sectionRename) return;
     setDialogBusy(true);
     setDialogError("");
     try {
-      const updated = await api.updateLongformSection(longform.id, sectionRename.id, {
+      const updated = await api.updatePieceSection(piece.id, sectionRename.id, {
         title: value,
       });
-      setLongform(updated);
+      setPiece(updated);
       setSectionRename(null);
-      setNotice(t("longform.sectionRenamed"));
+      setNotice(t("piece.sectionRenamed"));
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : t("longform.renameFailed"));
+      setDialogError(err instanceof Error ? err.message : t("piece.renameFailed"));
     } finally {
       setDialogBusy(false);
     }
   };
 
   const saveSectionForm = async () => {
-    if (!longform || !sectionForm) return;
+    if (!piece || !sectionForm) return;
     setDialogBusy(true);
     setDialogError("");
     try {
-      const updated = await api.updateLongformSection(longform.id, sectionForm.id, {
+      const updated = await api.updatePieceSection(piece.id, sectionForm.id, {
         title: sectionForm.title.trim(),
         summary: sectionForm.summary,
         target_words: Number(sectionForm.targetWords) || 0,
         content: sectionForm.content,
       });
-      setLongform(updated);
+      setPiece(updated);
       setSectionForm(null);
-      setNotice(t("longform.sectionSaved"));
+      setNotice(t("piece.sectionSaved"));
     } catch (err) {
       setDialogError(err instanceof Error ? err.message : t("errors.saveFailed"));
     } finally {
@@ -544,35 +544,35 @@ export default function LongformEditorPage() {
   };
 
   const createSection = async () => {
-    if (!longform || !sectionCreate) return;
+    if (!piece || !sectionCreate) return;
     setDialogBusy(true);
     setDialogError("");
     try {
-      const result = await api.createLongformSection(longform.id, {
+      const result = await api.createPieceSection(piece.id, {
         title: sectionCreate.title.trim(),
         summary: sectionCreate.summary,
         target_words: Number(sectionCreate.targetWords) || 0,
         after_id: sectionCreate.afterId,
       });
-      setLongform(result.longform);
+      setPiece(result.piece);
       setSectionCreate(null);
-      setNotice(t("longform.sectionCreated"));
+      setNotice(t("piece.sectionCreated"));
     } catch (err) {
-      setDialogError(err instanceof Error ? err.message : t("longform.createFailed"));
+      setDialogError(err instanceof Error ? err.message : t("piece.createFailed"));
     } finally {
       setDialogBusy(false);
     }
   };
 
   const deleteSection = async () => {
-    if (!longform || !sectionDelete) return;
+    if (!piece || !sectionDelete) return;
     setDialogBusy(true);
     setDialogError("");
     try {
-      const updated = await api.deleteLongformSection(longform.id, sectionDelete.id);
-      setLongform(updated);
+      const updated = await api.deletePieceSection(piece.id, sectionDelete.id);
+      setPiece(updated);
       setSectionDelete(null);
-      setNotice(t("longform.sectionDeleted"));
+      setNotice(t("piece.sectionDeleted"));
     } catch (err) {
       setDialogError(err instanceof Error ? err.message : t("errors.deleteFailed"));
     } finally {
@@ -581,8 +581,8 @@ export default function LongformEditorPage() {
   };
 
   const moveSection = async (sectionId: string, direction: -1 | 1) => {
-    if (!longform) return;
-    const ids = longform.outline.map((section) => section.id);
+    if (!piece) return;
+    const ids = piece.outline.map((section) => section.id);
     const index = ids.indexOf(sectionId);
     const target = index + direction;
     if (index < 0 || target < 0 || target >= ids.length) return;
@@ -590,11 +590,11 @@ export default function LongformEditorPage() {
     next[index] = ids[target];
     next[target] = ids[index];
     try {
-      const updated = await api.reorderLongformSections(longform.id, next);
-      setLongform(updated);
-      setNotice(t("longform.orderUpdated"));
+      const updated = await api.reorderPieceSections(piece.id, next);
+      setPiece(updated);
+      setNotice(t("piece.orderUpdated"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("longform.reorderFailed"));
+      setError(err instanceof Error ? err.message : t("piece.reorderFailed"));
     }
   };
 
@@ -608,10 +608,10 @@ export default function LongformEditorPage() {
       },
     },
     {
-      label: t("longform.editSection"),
+      label: t("piece.editSection"),
       icon: <FileText size={11} />,
       onClick: () => {
-        const target = longform?.outline.find((item) => item.id === sectionId);
+        const target = piece?.outline.find((item) => item.id === sectionId);
         if (!target) return;
         setDialogError("");
         setSectionForm({
@@ -624,7 +624,7 @@ export default function LongformEditorPage() {
       },
     },
     {
-      label: t("longform.addSectionBelow"),
+      label: t("piece.addSectionBelow"),
       icon: <Plus size={11} />,
       onClick: () => {
         setDialogError("");
@@ -637,19 +637,19 @@ export default function LongformEditorPage() {
       },
     },
     {
-      label: t("longform.moveUp"),
+      label: t("piece.moveUp"),
       icon: <ArrowUp size={11} />,
       disabled: index === 0,
       onClick: () => void moveSection(sectionId, -1),
     },
     {
-      label: t("longform.moveDown"),
+      label: t("piece.moveDown"),
       icon: <ArrowDown size={11} />,
-      disabled: index === (longform?.outline.length ?? 0) - 1,
+      disabled: index === (piece?.outline.length ?? 0) - 1,
       onClick: () => void moveSection(sectionId, 1),
     },
     {
-      label: t("longform.deleteSection"),
+      label: t("piece.deleteSection"),
       icon: <Trash2 size={11} />,
       danger: true,
       onClick: () => {
@@ -666,27 +666,27 @@ export default function LongformEditorPage() {
     );
   }
 
-  if (!longform) {
+  if (!piece) {
     return (
       <div className="glass rounded-3xl p-10 text-center shadow-glass">
         <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-          {t("longform.notFound")}
+          {t("piece.notFound")}
         </p>
         {error ? (
           <p className="mt-2 break-words text-xs text-rose-600 dark:text-rose-300">{error}</p>
         ) : null}
-        <Link to="/longforms" className="btn btn-quiet mx-auto mt-4">
+        <Link to="/pieces" className="btn btn-quiet mx-auto mt-4">
           <ArrowLeft size={13} />
-          {t("longform.backToList")}
+          {t("piece.backToList")}
         </Link>
       </div>
     );
   }
 
   const modeText =
-    longform.last_mode === "loose" ? t("longform.loose") : t("longform.strict");
-  const progress = longform.target_words
-    ? Math.min(100, Math.round((words / longform.target_words) * 100))
+    piece.last_mode === "loose" ? t("piece.loose") : t("piece.strict");
+  const progress = piece.target_words
+    ? Math.min(100, Math.round((words / piece.target_words) * 100))
     : 0;
 
   return (
@@ -694,32 +694,32 @@ export default function LongformEditorPage() {
       <div className="glass rounded-3xl p-4 shadow-glass sm:p-5">
         <div className="flex flex-wrap items-start gap-3">
           <Link
-            to="/longforms"
+            to="/pieces"
             className="btn-quiet grid h-9 w-9 shrink-0 place-items-center rounded-full"
-            title={t("longform.backToListTitle")}
+            title={t("piece.backToListTitle")}
           >
             <ArrowLeft size={15} />
           </Link>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="chip">{genreLabel(longform.profile?.genre ?? "")}</span>
+              <span className="chip">{genreLabel(piece.profile?.genre ?? "")}</span>
               <span
                 className={clsx(
                   "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1",
-                  longform.last_mode === "loose"
+                  piece.last_mode === "loose"
                     ? "bg-amber-400/20 text-amber-700 ring-amber-500/30 dark:bg-amber-300/15 dark:text-amber-300 dark:ring-amber-300/25"
                     : "bg-emerald-500/12 text-emerald-700 ring-emerald-500/25 dark:bg-emerald-400/15 dark:text-emerald-300 dark:ring-emerald-300/25",
                 )}
               >
                 {modeText}
               </span>
-              <span className="chip-muted">v{longform.current_version}</span>
+              <span className="chip-muted">v{piece.current_version}</span>
               <span className="chip-muted">
-                {t("longform.sectionCount", { count: longform.outline.length })}
+                {t("piece.sectionCount", { count: piece.outline.length })}
               </span>
             </div>
             <h1 className="mt-2 flex items-center gap-1.5 text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100 sm:text-xl">
-              <span className="min-w-0 break-words">{longform.title}</span>
+              <span className="min-w-0 break-words">{piece.title}</span>
               {writable ? (
                 <button
                   type="button"
@@ -728,7 +728,7 @@ export default function LongformEditorPage() {
                     setTitleEditOpen(true);
                   }}
                   className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white/70 hover:text-indigo-600 dark:hover:bg-white/10 dark:hover:text-indigo-300"
-                  aria-label={t("longform.editTitle")}
+                  aria-label={t("piece.editTitle")}
                 >
                   <Pencil size={13} />
                 </button>
@@ -736,9 +736,9 @@ export default function LongformEditorPage() {
             </h1>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
               <span className="tabular-nums">
-                {t("longform.charsOfTarget", {
+                {t("piece.charsOfTarget", {
                   current: formatChars(words),
-                  target: formatChars(longform.target_words),
+                  target: formatChars(piece.target_words),
                 })}
               </span>
               {writable ? (
@@ -750,7 +750,7 @@ export default function LongformEditorPage() {
                   }}
                   className="rounded-full px-1.5 py-0.5 text-[10px] text-indigo-600 transition hover:bg-indigo-500/10 dark:text-indigo-300"
                 >
-                  {t("longform.editTarget")}
+                  {t("piece.editTarget")}
                 </button>
               ) : null}
               <span className="h-1.5 w-28 overflow-hidden rounded-full bg-slate-500/15 dark:bg-white/10">
@@ -761,8 +761,8 @@ export default function LongformEditorPage() {
               </span>
               <span>{progress}%</span>
               <span className="text-slate-400 dark:text-slate-500">
-                {t("longform.updatedAt", {
-                  time: formatDateTime(longform.updated_at || longform.created_at),
+                {t("piece.updatedAt", {
+                  time: formatDateTime(piece.updated_at || piece.created_at),
                 })}
               </span>
             </div>
@@ -781,17 +781,17 @@ export default function LongformEditorPage() {
               ) : (
                 <Play size={13} />
               )}
-              {t("longform.generateAll")}
+              {t("piece.generateAll")}
             </button>
             <a
-              href={`/read/longform/${longform.id}`}
+              href={`/read/piece/${piece.id}`}
               target="_blank"
               rel="noreferrer"
               className="btn btn-quiet whitespace-nowrap"
-              title={t("longform.readerHint")}
+              title={t("piece.readerHint")}
             >
               <BookOpen size={13} />
-              {t("longform.readerMode")}
+              {t("piece.readerMode")}
             </a>
             <button
               type="button"
@@ -801,14 +801,14 @@ export default function LongformEditorPage() {
               title={!writable ? t("common.readOnlyRole") : undefined}
             >
               <Wand2 size={13} />
-              {t("longform.rewrite")}
+              {t("piece.rewrite")}
             </button>
             <button
               type="button"
               onClick={() => void openShare()}
               disabled={!canShare}
               className="btn btn-quiet whitespace-nowrap"
-              title={canShare ? t("longform.shareHint") : t("longform.shareNoPermission")}
+              title={canShare ? t("piece.shareHint") : t("piece.shareNoPermission")}
             >
               <Share2 size={13} />
               {t("common.share")}
@@ -818,35 +818,35 @@ export default function LongformEditorPage() {
               onClick={() => setShareLinksOpen(true)}
               disabled={!writable}
               className="btn btn-quiet whitespace-nowrap"
-              title={writable ? t("longform.shareLinkHint") : t("common.readOnlyRole")}
+              title={writable ? t("piece.shareLinkHint") : t("common.readOnlyRole")}
             >
               <Link2 size={13} />
-              {t("longform.shareLink")}
+              {t("piece.shareLink")}
             </button>
             <button
               type="button"
               onClick={openManual}
               disabled={Boolean(busy) || !writable}
               className="btn btn-quiet whitespace-nowrap"
-              title={!writable ? t("common.readOnlyRole") : t("longform.manualHint")}
+              title={!writable ? t("common.readOnlyRole") : t("piece.manualHint")}
             >
               <PenLine size={13} />
-              {t("longform.manualEdit")}
+              {t("piece.manualEdit")}
             </button>
             <button
               type="button"
               onClick={() => setPickOpen(true)}
               disabled={Boolean(busy) || !writable}
               className="btn btn-quiet whitespace-nowrap"
-              title={!writable ? t("common.readOnlyRole") : t("longform.insertImageHint")}
+              title={!writable ? t("common.readOnlyRole") : t("piece.insertImageHint")}
             >
               <ImagePlus size={13} />
-              {t("longform.insertImage")}
+              {t("piece.insertImage")}
             </button>
             <ExportMenu
-              sourceType="longform"
-              sourceId={longform.id}
-              fallbackName={longform.title}
+              sourceType="piece"
+              sourceId={piece.id}
+              fallbackName={piece.title}
             />
             <button
               type="button"
@@ -874,15 +874,15 @@ export default function LongformEditorPage() {
             <span className="flex items-center gap-2 font-medium">
               <Loader2 size={13} className="animate-spin" />
               {busy === "all"
-                ? t("longform.busyFull")
+                ? t("piece.busyFull")
                 : busy === "rewrite"
-                  ? t("longform.busyRewrite")
+                  ? t("piece.busyRewrite")
                   : busy.startsWith("revert-")
-                    ? t("longform.busyRevert")
-                    : t("longform.busySection")}
+                    ? t("piece.busyRevert")
+                    : t("piece.busySection")}
               <span className="ml-auto inline-flex items-center gap-1 tabular-nums">
                 <Clock3 size={12} />
-                {t("longform.elapsed", { seconds: elapsed })}
+                {t("piece.elapsed", { seconds: elapsed })}
               </span>
             </span>
             {busy === "all" || busy === "rewrite" ? (
@@ -923,7 +923,7 @@ export default function LongformEditorPage() {
 
         {!writable ? (
           <div className="mt-3 rounded-2xl border border-amber-300/50 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-300">
-            {t("longform.readOnlyView", { role: roleName || t("common.readOnly") })}
+            {t("piece.readOnlyView", { role: roleName || t("common.readOnly") })}
           </div>
         ) : null}
       </div>
@@ -936,7 +936,7 @@ export default function LongformEditorPage() {
         >
           <span className="flex items-center gap-1.5">
             <Layers size={13} />
-            {t("longform.outlineWithCount", { count: longform.outline.length })}
+            {t("piece.outlineWithCount", { count: piece.outline.length })}
           </span>
           <ChevronDown size={14} className={clsx("transition", outlineOpen && "rotate-180")} />
         </button>
@@ -949,7 +949,7 @@ export default function LongformEditorPage() {
               className="overflow-hidden"
             >
               <div className="glass mt-2 space-y-1.5 rounded-3xl p-3 shadow-glass">
-                {longform.outline.map((section, index) => (
+                {piece.outline.map((section, index) => (
                   <div
                     key={section.id}
                     className="rounded-xl border border-white/45 bg-white/45 p-2.5 dark:border-white/10 dark:bg-white/[0.04]"
@@ -971,7 +971,7 @@ export default function LongformEditorPage() {
                         </span>
                         <span>·</span>
                         <span>
-                          {section.content ? t("longform.written") : t("longform.pending")}
+                          {section.content ? t("piece.written") : t("piece.pending")}
                         </span>
                       </span>
                     </button>
@@ -987,11 +987,11 @@ export default function LongformEditorPage() {
                         ) : (
                           <Sparkles size={11} />
                         )}
-                        {t("longform.generateSection")}
+                        {t("piece.generateSection")}
                       </button>
                       {writable ? (
                         <RowMenu
-                          label={t("longform.sectionMenuLabel", { title: section.title })}
+                          label={t("piece.sectionMenuLabel", { title: section.title })}
                           items={sectionMenuItems(section.id, section.title, index)}
                         />
                       ) : null}
@@ -1017,7 +1017,7 @@ export default function LongformEditorPage() {
             className="btn-quiet mt-2 w-full text-[11px]"
           >
             <Plus size={11} />
-            {t("longform.addSectionEnd")}
+            {t("piece.addSectionEnd")}
           </button>
         ) : null}
       </div>
@@ -1026,15 +1026,15 @@ export default function LongformEditorPage() {
         <aside className="glass hidden h-fit rounded-3xl p-3.5 shadow-glass lg:block">
           <h2 className="flex items-center gap-1.5 px-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
             <Layers size={12} />
-            {t("longform.outline")}
+            {t("piece.outline")}
           </h2>
           <div className="no-scrollbar mt-2.5 max-h-[70vh] space-y-1.5 overflow-y-auto pr-1">
-            {longform.outline.length === 0 ? (
+            {piece.outline.length === 0 ? (
               <p className="px-1 py-2 text-[11px] text-slate-400">
-                {t("longform.outlineEmpty")}
+                {t("piece.outlineEmpty")}
               </p>
             ) : (
-              longform.outline.map((section, index) => (
+              piece.outline.map((section, index) => (
                 <div
                   key={section.id}
                   className="rounded-xl border border-white/45 bg-white/45 p-2.5 transition hover:border-indigo-300/50 dark:border-white/10 dark:bg-white/[0.04]"
@@ -1062,7 +1062,7 @@ export default function LongformEditorPage() {
                             : "bg-slate-500/10 text-slate-500 dark:bg-white/10 dark:text-slate-400",
                         )}
                       >
-                        {section.content ? t("longform.written") : t("longform.pending")}
+                        {section.content ? t("piece.written") : t("piece.pending")}
                       </span>
                     </span>
                   </button>
@@ -1079,11 +1079,11 @@ export default function LongformEditorPage() {
                       ) : (
                         <Sparkles size={11} />
                       )}
-                      {t("longform.generateSection")}
+                      {t("piece.generateSection")}
                     </button>
                     {writable ? (
                       <RowMenu
-                        label={t("longform.sectionMenuLabel", { title: section.title })}
+                        label={t("piece.sectionMenuLabel", { title: section.title })}
                         items={sectionMenuItems(section.id, section.title, index)}
                       />
                     ) : null}
@@ -1107,25 +1107,25 @@ export default function LongformEditorPage() {
               className="btn-quiet mt-1.5 w-full text-[11px]"
             >
               <Plus size={11} />
-              {t("longform.addSectionEnd")}
+              {t("piece.addSectionEnd")}
             </button>
           ) : null}
         </aside>
 
         <section className="glass min-w-0 rounded-3xl p-4 shadow-glass sm:p-6">
           <div ref={contentRef}>
-            {longform.content ? (
-              <MarkdownReader content={longform.content} citations={longform.citations} />
+            {piece.content ? (
+              <MarkdownReader content={piece.content} citations={piece.citations} />
             ) : (
               <div className="py-12 text-center">
                 <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl brand-gradient text-white shadow-brand">
                   <PenLine size={20} />
                 </div>
                 <p className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">
-                  {t("longform.contentEmpty")}
+                  {t("piece.contentEmpty")}
                 </p>
                 <p className="mx-auto mt-1.5 max-w-sm text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                  {t("longform.contentEmptyDesc")}
+                  {t("piece.contentEmptyDesc")}
                 </p>
                 <button
                   type="button"
@@ -1138,7 +1138,7 @@ export default function LongformEditorPage() {
                   ) : (
                     <Play size={13} />
                   )}
-                  {t("longform.generateAll")}
+                  {t("piece.generateAll")}
                 </button>
               </div>
             )}
@@ -1148,19 +1148,19 @@ export default function LongformEditorPage() {
         <aside className="glass h-fit rounded-3xl p-3.5 shadow-glass">
           <h2 className="flex items-center gap-1.5 px-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
             <History size={12} />
-            {t("longform.versions")}
+            {t("piece.versions")}
           </h2>
           <div className="no-scrollbar mt-2.5 max-h-[60vh] space-y-1.5 overflow-y-auto pr-1">
             {versions.length === 0 ? (
               <p className="px-1 py-2 text-[11px] text-slate-400">
-                {t("longform.versionsEmpty")}
+                {t("piece.versionsEmpty")}
               </p>
             ) : (
               [...versions]
                 .sort((a, b) => b.version - a.version)
                 .map((version) => {
                   const active = selectedVersion === version.version;
-                  const current = version.version === longform.current_version;
+                  const current = version.version === piece.current_version;
                   return (
                     <div
                       key={version.id}
@@ -1182,14 +1182,14 @@ export default function LongformEditorPage() {
                           v{version.version}
                           {current ? (
                             <span className="rounded-full bg-emerald-500/12 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300">
-                              {t("longform.current")}
+                              {t("piece.current")}
                             </span>
                           ) : null}
                           {version.mode ? (
                             <span className="text-[9px] font-normal text-slate-400">
                               {version.mode === "loose"
-                                ? t("longform.loose")
-                                : t("longform.strict")}
+                                ? t("piece.loose")
+                                : t("piece.strict")}
                             </span>
                           ) : null}
                         </span>
@@ -1210,7 +1210,7 @@ export default function LongformEditorPage() {
                           className="btn-quiet px-2 py-1 text-[10.5px]"
                         >
                           <Eye size={11} />
-                          {t("longform.preview")}
+                          {t("piece.preview")}
                         </button>
                         <button
                           type="button"
@@ -1218,7 +1218,7 @@ export default function LongformEditorPage() {
                           className="btn-quiet px-2 py-1 text-[10.5px]"
                         >
                           <GitCompare size={11} />
-                          {t("longform.compare")}
+                          {t("piece.compare")}
                         </button>
                       </div>
                       {active && !current ? (
@@ -1234,7 +1234,7 @@ export default function LongformEditorPage() {
                           ) : (
                             <RotateCcw size={11} />
                           )}
-                          {t("longform.revertTo")}
+                          {t("piece.revertTo")}
                         </button>
                       ) : null}
                     </div>
@@ -1243,7 +1243,7 @@ export default function LongformEditorPage() {
             )}
           </div>
           <p className="mt-2 px-1 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
-            {t("longform.versionsHint")}
+            {t("piece.versionsHint")}
           </p>
         </aside>
       </div>
@@ -1266,10 +1266,10 @@ export default function LongformEditorPage() {
                 <div>
                   <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-800 dark:text-slate-100">
                     <Wand2 size={14} className="text-indigo-500" />
-                    {t("longform.rewriteTitle")}
+                    {t("piece.rewriteTitle")}
                   </h3>
                   <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                    {t("longform.rewriteDesc")}
+                    {t("piece.rewriteDesc")}
                   </p>
                 </div>
                 <button
@@ -1282,19 +1282,19 @@ export default function LongformEditorPage() {
               </div>
               <label className="mt-4 block">
                 <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  {t("longform.instructionLabel")}
+                  {t("piece.instructionLabel")}
                 </span>
                 <textarea
                   value={instruction}
                   onChange={(event) => setInstruction(event.target.value)}
                   rows={4}
                   className="input resize-y"
-                  placeholder={t("longform.instructionPlaceholder")}
+                  placeholder={t("piece.instructionPlaceholder")}
                 />
               </label>
               <label className="mt-3 block">
                 <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  {t("longform.fieldMode")}
+                  {t("piece.fieldMode")}
                 </span>
                 <select
                   value={rewriteMode}
@@ -1303,8 +1303,8 @@ export default function LongformEditorPage() {
                   }
                   className="select"
                 >
-                  <option value="loose">{t("longform.modeLooseOption")}</option>
-                  <option value="strict">{t("longform.modeStrictCiteOption")}</option>
+                  <option value="loose">{t("piece.modeLooseOption")}</option>
+                  <option value="strict">{t("piece.modeStrictCiteOption")}</option>
                 </select>
               </label>
               <div className="mt-5 flex justify-end gap-2">
@@ -1326,7 +1326,7 @@ export default function LongformEditorPage() {
                   ) : (
                     <FileText size={13} />
                   )}
-                  {t("longform.startRewrite")}
+                  {t("piece.startRewrite")}
                 </button>
               </div>
             </motion.div>
@@ -1337,20 +1337,20 @@ export default function LongformEditorPage() {
       <ShareLinksDialog
         open={shareLinksOpen}
         onClose={() => setShareLinksOpen(false)}
-        resourceType="longform"
-        resourceId={longform?.id ?? ""}
-        title={longform?.title}
+        resourceType="piece"
+        resourceId={piece?.id ?? ""}
+        title={piece?.title}
       />
 
       <SharePanel
         open={shareOpen}
-        title={t("longform.shareTitle")}
-        subtitle={longform ? longform.title : undefined}
+        title={t("piece.shareTitle")}
+        subtitle={piece ? piece.title : undefined}
         members={shareMembers}
         value={shareLevels}
         options={[
-          { value: "read", label: t("sharing.read"), desc: t("longform.readDesc") },
-          { value: "write", label: t("sharing.write"), desc: t("longform.writeDesc") },
+          { value: "read", label: t("sharing.read"), desc: t("piece.readDesc") },
+          { value: "write", label: t("sharing.write"), desc: t("piece.writeDesc") },
         ]}
         loading={shareLoading}
         saving={shareSaving}
@@ -1364,7 +1364,7 @@ export default function LongformEditorPage() {
 
       <ImagePickerDrawer
         open={pickOpen}
-        longform={longform}
+        piece={piece}
         onClose={() => setPickOpen(false)}
         onInserted={(message) => {
           setNotice(message);
@@ -1374,9 +1374,9 @@ export default function LongformEditorPage() {
 
       <PromptDialog
         open={titleEditOpen}
-        title={t("longform.editTitle")}
-        label={t("longform.longformTitle")}
-        initial={longform?.title ?? ""}
+        title={t("piece.editTitle")}
+        label={t("piece.pieceTitle")}
+        initial={piece?.title ?? ""}
         busy={dialogBusy}
         error={dialogError}
         onConfirm={(value) => void saveTitle(value)}
@@ -1385,9 +1385,9 @@ export default function LongformEditorPage() {
 
       <PromptDialog
         open={targetEditOpen}
-        title={t("longform.editTargetTitle")}
-        label={t("longform.fieldTargetWords")}
-        initial={String(longform?.target_words ?? 0)}
+        title={t("piece.editTargetTitle")}
+        label={t("piece.fieldTargetWords")}
+        initial={String(piece?.target_words ?? 0)}
         busy={dialogBusy}
         error={dialogError}
         onConfirm={(value) => void saveTargetWords(value)}
@@ -1396,8 +1396,8 @@ export default function LongformEditorPage() {
 
       <PromptDialog
         open={Boolean(sectionRename)}
-        title={t("longform.renameSection")}
-        label={t("longform.sectionTitle")}
+        title={t("piece.renameSection")}
+        label={t("piece.sectionTitle")}
         initial={sectionRename?.title ?? ""}
         busy={dialogBusy}
         error={dialogError}
@@ -1407,15 +1407,15 @@ export default function LongformEditorPage() {
 
       <Modal
         open={Boolean(sectionForm)}
-        title={t("longform.editSectionTitle")}
-        subtitle={t("longform.editSectionDesc")}
+        title={t("piece.editSectionTitle")}
+        subtitle={t("piece.editSectionDesc")}
         onClose={() => setSectionForm(null)}
         wide
       >
         {sectionForm ? (
           <div className="space-y-3">
             <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-              {t("longform.fieldTitle")}
+              {t("piece.fieldTitle")}
               <input
                 value={sectionForm.title}
                 onChange={(event) =>
@@ -1426,7 +1426,7 @@ export default function LongformEditorPage() {
             </label>
             <div className="grid gap-3 sm:grid-cols-[1fr_130px]">
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                {t("longform.fieldSummary")}
+                {t("piece.fieldSummary")}
                 <input
                   value={sectionForm.summary}
                   onChange={(event) =>
@@ -1436,7 +1436,7 @@ export default function LongformEditorPage() {
                 />
               </label>
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                {t("longform.fieldTargetWords")}
+                {t("piece.fieldTargetWords")}
                 <input
                   type="number"
                   value={sectionForm.targetWords}
@@ -1451,7 +1451,7 @@ export default function LongformEditorPage() {
               </label>
             </div>
             <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-              {t("longform.fieldSectionContent")}
+              {t("piece.fieldSectionContent")}
               <textarea
                 value={sectionForm.content}
                 onChange={(event) =>
@@ -1481,7 +1481,7 @@ export default function LongformEditorPage() {
                 className="btn btn-primary"
               >
                 {dialogBusy ? <Loader2 size={13} className="animate-spin" /> : null}
-                {t("longform.saveSection")}
+                {t("piece.saveSection")}
               </button>
             </div>
           </div>
@@ -1490,13 +1490,13 @@ export default function LongformEditorPage() {
 
       <Modal
         open={Boolean(sectionCreate)}
-        title={t("longform.addSectionTitle")}
+        title={t("piece.addSectionTitle")}
         onClose={() => setSectionCreate(null)}
       >
         {sectionCreate ? (
           <div className="space-y-3">
             <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-              {t("longform.sectionTitle")}
+              {t("piece.sectionTitle")}
               <input
                 autoFocus
                 value={sectionCreate.title}
@@ -1504,12 +1504,12 @@ export default function LongformEditorPage() {
                   setSectionCreate({ ...sectionCreate, title: event.target.value })
                 }
                 className="input mt-1"
-                placeholder={t("longform.sectionTitlePlaceholder")}
+                placeholder={t("piece.sectionTitlePlaceholder")}
               />
             </label>
             <div className="grid gap-3 sm:grid-cols-[1fr_130px]">
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                {t("longform.fieldSummary")}
+                {t("piece.fieldSummary")}
                 <input
                   value={sectionCreate.summary}
                   onChange={(event) =>
@@ -1519,7 +1519,7 @@ export default function LongformEditorPage() {
                 />
               </label>
               <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                {t("longform.fieldTargetWords")}
+                {t("piece.fieldTargetWords")}
                 <input
                   type="number"
                   value={sectionCreate.targetWords}
@@ -1535,8 +1535,8 @@ export default function LongformEditorPage() {
             </div>
             <p className="text-[10.5px] text-slate-400 dark:text-slate-500">
               {sectionCreate.afterId
-                ? t("longform.insertAfter")
-                : t("longform.appendEnd")}
+                ? t("piece.insertAfter")
+                : t("piece.appendEnd")}
             </p>
             {dialogError ? (
               <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-700 dark:text-rose-300">
@@ -1558,7 +1558,7 @@ export default function LongformEditorPage() {
                 className="btn btn-primary"
               >
                 {dialogBusy ? <Loader2 size={13} className="animate-spin" /> : null}
-                {t("longform.addSectionTitle")}
+                {t("piece.addSectionTitle")}
               </button>
             </div>
           </div>
@@ -1567,8 +1567,8 @@ export default function LongformEditorPage() {
 
       <ConfirmDialog
         open={Boolean(sectionDelete)}
-        title={t("longform.deleteSectionTitle")}
-        description={t("longform.deleteSectionDesc", {
+        title={t("piece.deleteSectionTitle")}
+        description={t("piece.deleteSectionDesc", {
           title: sectionDelete?.title ?? "",
         })}
         busy={dialogBusy}
@@ -1579,9 +1579,9 @@ export default function LongformEditorPage() {
 
       <Modal
         open={manualOpen}
-        title={t("longform.manualEditTitle")}
-        subtitle={t("longform.manualEditDesc", {
-          version: longform?.current_version ?? 0,
+        title={t("piece.manualEditTitle")}
+        subtitle={t("piece.manualEditDesc", {
+          version: piece?.current_version ?? 0,
         })}
         onClose={() => setManualOpen(false)}
         wide
@@ -1592,10 +1592,10 @@ export default function LongformEditorPage() {
             onChange={(event) => setManualText(event.target.value)}
             rows={16}
             className="input w-full font-mono text-[12px] leading-relaxed"
-            placeholder={t("longform.manualPlaceholder")}
+            placeholder={t("piece.manualPlaceholder")}
           />
           <div className="flex items-center justify-between gap-2 text-[10.5px] text-slate-400 dark:text-slate-500">
-            <span>{t("longform.charCount", { count: manualText.length })}</span>
+            <span>{t("piece.charCount", { count: manualText.length })}</span>
             {dialogError ? (
               <span className="text-rose-600 dark:text-rose-300">{dialogError}</span>
             ) : null}
@@ -1615,7 +1615,7 @@ export default function LongformEditorPage() {
               className="btn btn-primary"
             >
               {dialogBusy ? <Loader2 size={13} className="animate-spin" /> : null}
-              {t("longform.saveAsVersion")}
+              {t("piece.saveAsVersion")}
             </button>
           </div>
         </div>
@@ -1645,7 +1645,7 @@ export default function LongformEditorPage() {
         }
         initialTo={
           versionDiffAnchor ??
-          (longform?.current_version ||
+          (piece?.current_version ||
             versions.reduce((max, item) => Math.max(max, item.version), 1))
         }
         fetchDiff={fetchVersionDiff}

@@ -1,19 +1,19 @@
 import { useMemo, useState } from "react";
 import { Eye, GitCompare, History, Loader2, RotateCcw } from "lucide-react";
 import clsx from "clsx";
-import { api, type LessonVersion } from "@/lib/api";
+import { api, type UnitVersion } from "@/lib/api";
 import { contentLength, formatDateTime } from "@/lib/format";
 import VersionDiffDialog from "@/components/reader/VersionDiffDialog";
 import VersionPreviewDialog from "@/components/reader/VersionPreviewDialog";
 import { useI18n } from "@/i18n/I18nProvider";
 
 type VersionPanelProps = {
-  versions: LessonVersion[];
+  versions: UnitVersion[];
   currentVersion: number;
   loading: boolean;
   busyVersion: number | null;
   onRevert: (version: number) => Promise<void>;
-  lessonId?: string;
+  unitId?: string;
   className?: string;
 };
 
@@ -23,7 +23,7 @@ export default function VersionPanel({
   loading,
   busyVersion,
   onRevert,
-  lessonId,
+  unitId,
   className,
 }: VersionPanelProps) {
   const { t } = useI18n();
@@ -42,8 +42,8 @@ export default function VersionPanel({
   );
 
   const loadPreview = async (version: number) => {
-    if (lessonId) {
-      const detail = await api.getLessonVersion(lessonId, version);
+    if (unitId) {
+      const detail = await api.getUnitVersion(unitId, version);
       return {
         content: detail.version.content ?? "",
         citations: detail.version.citations ?? [],
@@ -54,8 +54,8 @@ export default function VersionPanel({
   };
 
   const fetchDiff = async (from: number, to: number) => {
-    if (!lessonId) throw new Error(t("reader.missingLesson"));
-    return api.diffLessonVersions(lessonId, from, to);
+    if (!unitId) throw new Error(t("reader.missingUnit"));
+    return api.diffUnitVersions(unitId, from, to);
   };
 
   const openDiff = (version?: number) => {

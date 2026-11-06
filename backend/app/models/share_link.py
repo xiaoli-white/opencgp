@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-RESOURCE_TYPES = ("course", "longform")
+RESOURCE_TYPES = ("series", "piece")
 
 
 class ShareLink(BaseModel):

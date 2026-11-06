@@ -7,7 +7,7 @@ export type Translate = (
 
 const GROUPS: Record<string, string[]> = {
   role: ["owner", "admin", "editor", "viewer"],
-  lessonStatus: [
+  unitStatus: [
     "planned",
     "draft",
     "generated",
@@ -19,10 +19,10 @@ const GROUPS: Record<string, string[]> = {
   ],
   jobKind: [
     "research",
-    "longform_create",
-    "longform_generate",
-    "longform_rewrite",
-    "lesson_generate",
+    "piece_create",
+    "piece_generate",
+    "piece_rewrite",
+    "unit_generate",
     "blueprint_generate",
   ],
   jobStatus: ["queued", "running", "succeeded", "failed", "canceled"],
@@ -70,8 +70,8 @@ export function roleLabel(t: Translate, role: string): string {
   return label(t, "role", role);
 }
 
-export function lessonStatusLabel(t: Translate, status: string): string {
-  return label(t, "lessonStatus", status);
+export function unitStatusLabel(t: Translate, status: string): string {
+  return label(t, "unitStatus", status);
 }
 
 export function jobKindLabel(t: Translate, kind: string): string {

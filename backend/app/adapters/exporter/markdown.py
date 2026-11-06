@@ -34,7 +34,7 @@ def render(
         lines.extend(["", " · ".join(meta_bits)])
 
     if document.front_matter.strip():
-        lines.extend(["", "## 课程信息" if document.source_type == "course" else "## 文档信息"])
+        lines.extend(["", "## 课程信息" if document.source_type == "series" else "## 文档信息"])
         lines.extend(["", document.front_matter.strip()])
 
     for chapter in document.chapters:

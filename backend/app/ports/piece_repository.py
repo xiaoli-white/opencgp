@@ -3,26 +3,26 @@ from __future__ import annotations
 from typing import Any, Protocol, Sequence, runtime_checkable
 
 from app.models.citation import Citation
-from app.models.longform import Longform, LongformVersion, OutlineSection
+from app.models.piece import Piece, PieceVersion, OutlineSection
 
 
 @runtime_checkable
-class LongformRepository(Protocol):
+class PieceRepository(Protocol):
     def ensure_schema(self) -> None:
         ...
 
-    def create(self, longform: Longform) -> Longform:
+    def create(self, piece: Piece) -> Piece:
         ...
 
-    def get(self, longform_id: str, tenant_id: str | None = None) -> Longform | None:
+    def get(self, piece_id: str, tenant_id: str | None = None) -> Piece | None:
         ...
 
-    def list(self, tenant_id: str | None = None, limit: int = 50) -> list[Longform]:
+    def list(self, tenant_id: str | None = None, limit: int = 50) -> list[Piece]:
         ...
 
     def update(
         self,
-        longform_id: str,
+        piece_id: str,
         outline: Sequence[OutlineSection] | None = None,
         content: str | None = None,
         status: str | None = None,
@@ -32,24 +32,24 @@ class LongformRepository(Protocol):
         profile: dict[str, Any] | None = None,
         target_words: int | None = None,
         profile_id: str | None = None,
-    ) -> Longform | None:
+    ) -> Piece | None:
         ...
 
     def append_version(
         self,
-        longform_id: str,
+        piece_id: str,
         content: str,
         outline: Sequence[OutlineSection] | None = None,
         citations: Sequence[Citation] | None = None,
         note: str = "",
         mode: str = "",
-    ) -> tuple[Longform, LongformVersion] | None:
+    ) -> tuple[Piece, PieceVersion] | None:
         ...
 
-    def list_versions(self, longform_id: str) -> list[LongformVersion]:
+    def list_versions(self, piece_id: str) -> list[PieceVersion]:
         ...
 
-    def get_version(self, longform_id: str, version: int) -> LongformVersion | None:
+    def get_version(self, piece_id: str, version: int) -> PieceVersion | None:
         ...
 
     def count_by_user(self, user_id: str) -> int:
@@ -60,5 +60,5 @@ class LongformRepository(Protocol):
     ) -> int:
         ...
 
-    def delete(self, longform_id: str, tenant_id: str | None = None) -> bool:
+    def delete(self, piece_id: str, tenant_id: str | None = None) -> bool:
         ...

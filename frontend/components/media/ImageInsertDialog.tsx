@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { api, type Longform, type MediaAsset } from "@/lib/api";
+import { api, type Piece, type MediaAsset } from "@/lib/api";
 import { assetMarkdown, assetSrc } from "@/lib/media";
 import { useI18n } from "@/i18n/I18nProvider";
 import { Modal } from "@/components/common/Dialogs";
 
 type ImageInsertDialogProps = {
   asset: MediaAsset | null;
-  lockedLongformId?: string;
+  lockedPieceId?: string;
   initialSectionId?: string;
   onClose: () => void;
   onInserted: (message: string) => void;
@@ -15,15 +15,15 @@ type ImageInsertDialogProps = {
 
 export default function ImageInsertDialog({
   asset,
-  lockedLongformId,
+  lockedPieceId,
   initialSectionId,
   onClose,
   onInserted,
 }: ImageInsertDialogProps) {
   const { t } = useI18n();
-  const [longforms, setLongforms] = useState<Longform[]>([]);
-  const [longformId, setLongformId] = useState(lockedLongformId ?? "");
-  const [detail, setDetail] = useState<Longform | null>(null);
+  const [pieces, setPieces] = useState<Piece[]>([]);
+  const [pieceId, setPieceId] = useState(lockedPieceId ?? "");
+  const [detail, setDetail] = useState<Piece | null>(null);
   const [sectionId, setSectionId] = useState(initialSectionId ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -33,37 +33,37 @@ export default function ImageInsertDialog({
     if (!open) return;
     setError("");
     setSectionId(initialSectionId ?? "");
-    if (lockedLongformId) {
-      setLongformId(lockedLongformId);
+    if (lockedPieceId) {
+      setPieceId(lockedPieceId);
       return;
     }
     let alive = true;
     void api
-      .listLongforms()
+      .listPieces()
       .then((data) => {
         if (!alive) return;
-        setLongforms(data.longforms);
-        setLongformId((current) => current || data.longforms[0]?.id || "");
+        setPieces(data.pieces);
+        setPieceId((current) => current || data.pieces[0]?.id || "");
       })
       .catch((err) => {
         if (alive)
           setError(
-            err instanceof Error ? err.message : t("media.longformsLoadFailed"),
+            err instanceof Error ? err.message : t("media.piecesLoadFailed"),
           );
       });
     return () => {
       alive = false;
     };
-  }, [open, lockedLongformId, initialSectionId]);
+  }, [open, lockedPieceId, initialSectionId]);
 
   useEffect(() => {
-    if (!open || !longformId) {
+    if (!open || !pieceId) {
       setDetail(null);
       return;
     }
     let alive = true;
     void api
-      .getLongform(longformId)
+      .getPiece(pieceId)
       .then((data) => {
         if (!alive) return;
         setDetail(data);
@@ -75,24 +75,24 @@ export default function ImageInsertDialog({
       .catch((err) => {
         if (alive)
           setError(
-            err instanceof Error ? err.message : t("media.longformLoadFailed"),
+            err instanceof Error ? err.message : t("media.pieceLoadFailed"),
           );
       });
     return () => {
       alive = false;
     };
-  }, [open, longformId]);
+  }, [open, pieceId]);
 
   const submit = async () => {
-    if (!asset || !longformId || !sectionId) return;
+    if (!asset || !pieceId || !sectionId) return;
     setBusy(true);
     setError("");
     try {
-      const fresh = await api.getLongform(longformId);
+      const fresh = await api.getPiece(pieceId);
       const section = fresh.outline.find((item) => item.id === sectionId);
       if (!section) throw new Error(t("media.sectionMissing"));
       const merged = `${section.content ?? ""}\n\n${assetMarkdown(asset)}\n`.trim();
-      await api.updateLongformSection(longformId, sectionId, { content: merged });
+      await api.updatePieceSection(pieceId, sectionId, { content: merged });
       onInserted(
         t("media.inserted", { title: fresh.title, section: section.title }),
       );
@@ -125,20 +125,20 @@ export default function ImageInsertDialog({
           </div>
         ) : null}
 
-        {lockedLongformId ? null : (
+        {lockedPieceId ? null : (
           <label className="block">
             <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              {t("media.fieldLongform")}
+              {t("media.fieldPiece")}
             </span>
             <select
-              value={longformId}
-              onChange={(event) => setLongformId(event.target.value)}
+              value={pieceId}
+              onChange={(event) => setPieceId(event.target.value)}
               className="select w-full"
             >
-              {longforms.length === 0 ? (
-                <option value="">{t("media.noLongforms")}</option>
+              {pieces.length === 0 ? (
+                <option value="">{t("media.noPieces")}</option>
               ) : null}
-              {longforms.map((item) => (
+              {pieces.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.title}
                 </option>
@@ -180,7 +180,7 @@ export default function ImageInsertDialog({
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={busy || !longformId || !sectionId}
+            disabled={busy || !pieceId || !sectionId}
             className="btn btn-primary"
           >
             {busy ? <Loader2 size={13} className="animate-spin" /> : null}

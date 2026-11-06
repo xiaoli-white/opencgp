@@ -198,8 +198,8 @@ export default function ProviderCard({
 
   useEffect(() => {
     const handler = () => void load();
-    window.addEventListener("course-studio:providers-changed", handler);
-    return () => window.removeEventListener("course-studio:providers-changed", handler);
+    window.addEventListener("series-studio:providers-changed", handler);
+    return () => window.removeEventListener("series-studio:providers-changed", handler);
   }, [load]);
 
   const providers: ProviderOption[] = useMemo(() => data?.providers ?? [], [data]);

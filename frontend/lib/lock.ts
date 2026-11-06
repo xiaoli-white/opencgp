@@ -1,42 +1,42 @@
-import { API_BASE, ApiError, api, type LessonLockInfo } from "@/lib/api";
+import { API_BASE, ApiError, api, type UnitLockInfo } from "@/lib/api";
 import { getTenantId, getToken } from "@/lib/session";
 
-export type { LessonLockInfo };
+export type { UnitLockInfo };
 
-export type LessonLockState =
+export type UnitLockState =
   | { status: "idle" }
   | { status: "acquiring" }
-  | { status: "held"; lock: LessonLockInfo }
-  | { status: "blocked"; name: string; lock: LessonLockInfo | null }
+  | { status: "held"; lock: UnitLockInfo }
+  | { status: "blocked"; name: string; lock: UnitLockInfo | null }
   | { status: "lost" };
 
 export const LOCK_HEARTBEAT_MS = 45_000;
 
-export async function acquireLessonLock(
-  lessonId: string,
+export async function acquireUnitLock(
+  unitId: string,
   force = false,
-): Promise<LessonLockInfo> {
-  const result = await api.acquireLessonLock(lessonId, force);
+): Promise<UnitLockInfo> {
+  const result = await api.acquireUnitLock(unitId, force);
   return result.lock;
 }
 
 export async function heartbeat(
-  lessonId: string,
+  unitId: string,
   token: string,
-): Promise<LessonLockInfo> {
-  const result = await api.heartbeatLessonLock(lessonId, token);
+): Promise<UnitLockInfo> {
+  const result = await api.heartbeatUnitLock(unitId, token);
   return result.lock;
 }
 
-export async function releaseLessonLock(
-  lessonId: string,
+export async function releaseUnitLock(
+  unitId: string,
   token: string,
 ): Promise<void> {
-  await api.releaseLessonLock(lessonId, token);
+  await api.releaseUnitLock(unitId, token);
 }
 
-export function releaseLessonLockBeacon(lessonId: string, token: string): void {
-  if (!lessonId || !token) return;
+export function releaseUnitLockBeacon(unitId: string, token: string): void {
+  if (!unitId || !token) return;
   const headers: Record<string, string> = {};
   const auth = getToken();
   const tenant = getTenantId();
@@ -44,7 +44,7 @@ export function releaseLessonLockBeacon(lessonId: string, token: string): void {
   if (tenant) headers["X-Tenant-Id"] = tenant;
   try {
     void fetch(
-      `${API_BASE}/api/v1/lessons/${lessonId}/lock?token=${encodeURIComponent(token)}`,
+      `${API_BASE}/api/v1/units/${unitId}/lock?token=${encodeURIComponent(token)}`,
       { method: "DELETE", headers, keepalive: true },
     );
   } catch {
@@ -54,13 +54,13 @@ export function releaseLessonLockBeacon(lessonId: string, token: string): void {
 
 export function lockHolderOf(error: unknown): {
   name: string;
-  lock: LessonLockInfo | null;
+  lock: UnitLockInfo | null;
 } {
   if (!(error instanceof ApiError)) {
     return { name: "", lock: null };
   }
   const payload = error.payload;
-  const raw = payload?.lock as LessonLockInfo | null | undefined;
+  const raw = payload?.lock as UnitLockInfo | null | undefined;
   const lock = raw && typeof raw === "object" ? raw : null;
   const name =
     (lock?.user_name ?? "").trim() ||
@@ -80,7 +80,7 @@ export function formatLockRemaining(expiresAt: number, now = Date.now()): string
   return `${minutes}:${String(rest).padStart(2, "0")}`;
 }
 
-export type LessonLockController = {
+export type UnitLockController = {
   start: () => Promise<void>;
   stop: (release?: boolean) => void;
   force: () => Promise<void>;
@@ -88,13 +88,13 @@ export type LessonLockController = {
   token: () => string | null;
 };
 
-export function createLessonLockController(options: {
-  lessonId: string;
+export function createUnitLockController(options: {
+  unitId: string;
   intervalMs?: number;
-  onState: (state: LessonLockState) => void;
+  onState: (state: UnitLockState) => void;
   onError?: (message: string) => void;
-}): LessonLockController {
-  const { lessonId, onState, onError } = options;
+}): UnitLockController {
+  const { unitId, onState, onError } = options;
   const intervalMs = options.intervalMs ?? LOCK_HEARTBEAT_MS;
   let token: string | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -112,7 +112,7 @@ export function createLessonLockController(options: {
     timer = setInterval(() => {
       const current = token;
       if (!current || stopped) return;
-      void heartbeat(lessonId, current)
+      void heartbeat(unitId, current)
         .then((lock) => {
           token = lock.token;
           onState({ status: "held", lock });
@@ -134,7 +134,7 @@ export function createLessonLockController(options: {
     stopped = false;
     onState({ status: "acquiring" });
     try {
-      const lock = await acquireLessonLock(lessonId, force);
+      const lock = await acquireUnitLock(unitId, force);
       token = lock.token;
       onState({ status: "held", lock });
       schedule();
@@ -165,7 +165,7 @@ export function createLessonLockController(options: {
       clearTimer();
       const current = token;
       token = null;
-      if (release && current) releaseLessonLockBeacon(lessonId, current);
+      if (release && current) releaseUnitLockBeacon(unitId, current);
       onState({ status: "idle" });
     },
     force: () => acquire(true),

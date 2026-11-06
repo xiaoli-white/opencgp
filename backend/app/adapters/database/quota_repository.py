@@ -9,7 +9,7 @@ from app.models.quota import (
     GENERATION_KINDS,
     DEFAULT_MONTHLY_UPLOADS,
     DEFAULT_STORAGE_BYTES,
-    LessonLock,
+    UnitLock,
     QuotaLimits,
     QuotaUsage,
 )
@@ -40,8 +40,8 @@ SCHEMA: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_usage_events_tenant ON usage_events(tenant_id, created_at)",
     """
-    CREATE TABLE IF NOT EXISTS lesson_locks (
-        lesson_id TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS unit_locks (
+        unit_id TEXT PRIMARY KEY,
         tenant_id TEXT NOT NULL DEFAULT '',
         user_id TEXT NOT NULL DEFAULT '',
         user_name TEXT NOT NULL DEFAULT '',
@@ -184,15 +184,15 @@ class DatabaseLockRepository(LockRepository):
             self.database.execute(statement)
         self._schema_ready = True
 
-    def get_lock(self, lesson_id: str) -> LessonLock | None:
+    def get_lock(self, unit_id: str) -> UnitLock | None:
         self.ensure_schema()
         row = self.database.fetchone(
-            "SELECT * FROM lesson_locks WHERE lesson_id = ?", (lesson_id,)
+            "SELECT * FROM unit_locks WHERE unit_id = ?", (unit_id,)
         )
         if row is None:
             return None
-        return LessonLock(
-            lesson_id=str(row["lesson_id"]),
+        return UnitLock(
+            unit_id=str(row["unit_id"]),
             tenant_id=str(row["tenant_id"] or ""),
             user_id=str(row["user_id"] or ""),
             user_name=str(row["user_name"] or ""),
@@ -201,17 +201,17 @@ class DatabaseLockRepository(LockRepository):
             expires_at=float(row["expires_at"] or 0),
         )
 
-    def save_lock(self, lock: LessonLock) -> LessonLock:
+    def save_lock(self, lock: UnitLock) -> UnitLock:
         self.ensure_schema()
         self.database.execute(
-            "INSERT INTO lesson_locks (lesson_id, tenant_id, user_id, user_name, token,"
+            "INSERT INTO unit_locks (unit_id, tenant_id, user_id, user_name, token,"
             " heartbeat_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-            " ON CONFLICT(lesson_id) DO UPDATE SET"
+            " ON CONFLICT(unit_id) DO UPDATE SET"
             " tenant_id = excluded.tenant_id, user_id = excluded.user_id,"
             " user_name = excluded.user_name, token = excluded.token,"
             " heartbeat_at = excluded.heartbeat_at, expires_at = excluded.expires_at",
             (
-                lock.lesson_id,
+                lock.unit_id,
                 lock.tenant_id,
                 lock.user_id,
                 lock.user_name,
@@ -222,19 +222,19 @@ class DatabaseLockRepository(LockRepository):
         )
         return lock
 
-    def delete_lock(self, lesson_id: str) -> None:
+    def delete_lock(self, unit_id: str) -> None:
         self.ensure_schema()
         self.database.execute(
-            "DELETE FROM lesson_locks WHERE lesson_id = ?", (lesson_id,)
+            "DELETE FROM unit_locks WHERE unit_id = ?", (unit_id,)
         )
 
     def delete_by_user(self, user_id: str) -> int:
         self.ensure_schema()
         row = self.database.fetchone(
-            "SELECT COUNT(*) AS total FROM lesson_locks WHERE user_id = ?", (user_id,)
+            "SELECT COUNT(*) AS total FROM unit_locks WHERE user_id = ?", (user_id,)
         )
         removed = int(row["total"]) if row and row["total"] is not None else 0
-        self.database.execute("DELETE FROM lesson_locks WHERE user_id = ?", (user_id,))
+        self.database.execute("DELETE FROM unit_locks WHERE user_id = ?", (user_id,))
         return removed
 
 

@@ -243,8 +243,8 @@ export default function ProfilesCard({
 
   useEffect(() => {
     const handler = () => void load();
-    window.addEventListener("course-studio:refresh", handler);
-    return () => window.removeEventListener("course-studio:refresh", handler);
+    window.addEventListener("series-studio:refresh", handler);
+    return () => window.removeEventListener("series-studio:refresh", handler);
   }, [load]);
 
   const builtin = useMemo(() => profiles.filter((item) => item.is_builtin), [profiles]);

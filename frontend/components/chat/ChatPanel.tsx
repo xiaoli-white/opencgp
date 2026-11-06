@@ -14,13 +14,13 @@ import clsx from "clsx";
 import { api, ApiError, type AmendResult, type GenerationMode, type Message } from "@/lib/api";
 import { contentLength, formatRelative, modeLabel, sourceLabel } from "@/lib/format";
 import MarkdownReader from "@/components/reader/MarkdownReader";
-import ModePicker from "@/components/course/ModePicker";
-import type { VersionConflict } from "@/components/course/ConflictDialog";
+import ModePicker from "@/components/series/ModePicker";
+import type { VersionConflict } from "@/components/series/ConflictDialog";
 
 type ChatPanelProps = {
   open: boolean;
-  lessonId: string | null;
-  lessonTitle: string;
+  unitId: string | null;
+  unitTitle: string;
   currentVersion: number;
   initialSelection?: string;
   onSelectionConsumed?: () => void;
@@ -40,8 +40,8 @@ const ASK_PRESETS = ["这一讲的核心结论是什么？", "为什么先讲这
 
 export default function ChatPanel({
   open,
-  lessonId,
-  lessonTitle,
+  unitId,
+  unitTitle,
   currentVersion,
   initialSelection,
   onSelectionConsumed,
@@ -70,19 +70,19 @@ export default function ChatPanel({
     setSelection("");
     setInput("");
     setAmendMode("strict");
-  }, [lessonId]);
+  }, [unitId]);
 
   useEffect(() => {
     if (!open) setSelection("");
   }, [open]);
 
   useEffect(() => {
-    if (!open || !lessonId) return;
+    if (!open || !unitId) return;
     let cancelled = false;
     setLoadingThread(true);
     setError("");
     api
-      .getThread(lessonId)
+      .getThread(unitId)
       .then((view) => {
         if (!cancelled) setMessages(view.messages ?? []);
       })
@@ -98,7 +98,7 @@ export default function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [open, lessonId]);
+  }, [open, unitId]);
 
   useEffect(() => {
     if (!open) return;
@@ -115,7 +115,7 @@ export default function ChatPanel({
 
   const send = async () => {
     const text = input.trim();
-    if (!lessonId || !text || busy) return;
+    if (!unitId || !text || busy) return;
     setError("");
     setAmendInfo(null);
 
@@ -134,7 +134,7 @@ export default function ChatPanel({
       setInput("");
       setBusy(true);
       try {
-        const result = await api.askLesson(lessonId, text, quoted);
+        const result = await api.askUnit(unitId, text, quoted);
         setMessages((prev) => [
           ...prev,
           {
@@ -167,11 +167,11 @@ export default function ChatPanel({
   };
 
   const runAmend = async (text: string, expectedVersion: number) => {
-    if (!lessonId) return;
+    if (!unitId) return;
     setBusy(true);
     try {
-      const result = await api.amendLesson(
-        lessonId,
+      const result = await api.amendUnit(
+        unitId,
         text,
         undefined,
         amendMode,
@@ -230,7 +230,7 @@ export default function ChatPanel({
                   追问与修改
                 </p>
                 <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">
-                  {lessonTitle || "选择一讲"} · v{currentVersion}
+                  {unitTitle || "选择一讲"} · v{currentVersion}
                 </p>
               </div>
               <button

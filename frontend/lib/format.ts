@@ -56,7 +56,7 @@ export function formatRelative(timestamp: number): string {
 import {
   difficultyLabel as difficultyLabelI18n,
   getActiveTranslate,
-  lessonStatusLabel,
+  unitStatusLabel,
   modeLabel as modeLabelI18n,
 } from "@/i18n/labels";
 
@@ -65,7 +65,7 @@ export function difficultyLabel(value: string): string {
 }
 
 export function statusLabel(value: string): string {
-  return lessonStatusLabel(getActiveTranslate(), value || "draft");
+  return unitStatusLabel(getActiveTranslate(), value || "draft");
 }
 
 export type StatusTone =

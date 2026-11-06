@@ -162,7 +162,7 @@ export default function ResearchPage() {
   const [blueprintTitle, setBlueprintTitle] = useState("");
   const [blueprintMode, setBlueprintMode] = useState<"loose" | "strict">("loose");
   const [blueprintBusy, setBlueprintBusy] = useState(false);
-  const [blueprintResult, setBlueprintResult] = useState<{ courseId: string } | null>(
+  const [blueprintResult, setBlueprintResult] = useState<{ seriesId: string } | null>(
     null,
   );
 
@@ -323,11 +323,11 @@ export default function ResearchPage() {
     setError("");
     try {
       const result = await api.researchToBlueprint(run.id, {
-        create_course: true,
-        course_title: blueprintTitle.trim() || run.topic,
+        create_series: true,
+        series_title: blueprintTitle.trim() || run.topic,
         mode: blueprintMode,
       });
-      setBlueprintResult({ courseId: result.course_id });
+      setBlueprintResult({ seriesId: result.series_id });
       setBlueprintOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("research.blueprintFailed"));
@@ -430,7 +430,7 @@ export default function ResearchPage() {
                 {t("research.runningTitle")}
                 <span className="ml-auto inline-flex items-center gap-1 tabular-nums">
                   <Clock3 size={12} />
-                  {t("longform.elapsed", { seconds: elapsed })}
+                  {t("piece.elapsed", { seconds: elapsed })}
                 </span>
               </div>
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/60 dark:bg-white/10">
@@ -466,10 +466,10 @@ export default function ResearchPage() {
               <BookMarked size={13} />
               {t("research.blueprintDone")}
               <Link
-                to={`/courses/${blueprintResult.courseId}`}
+                to={`/series/${blueprintResult.seriesId}`}
                 className="inline-flex items-center gap-1 font-semibold underline decoration-dotted"
               >
-                {t("research.goToCourse")}
+                {t("research.goToSeries")}
                 <ArrowRight size={12} />
               </Link>
             </div>
@@ -909,7 +909,7 @@ export default function ResearchPage() {
               </div>
               <label className="mt-4 block">
                 <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  {t("research.courseName")}
+                  {t("research.seriesName")}
                 </span>
                 <input
                   value={blueprintTitle}
@@ -920,7 +920,7 @@ export default function ResearchPage() {
               </label>
               <label className="mt-3 block">
                 <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  {t("longform.fieldMode")}
+                  {t("piece.fieldMode")}
                 </span>
                 <select
                   value={blueprintMode}
@@ -929,8 +929,8 @@ export default function ResearchPage() {
                   }
                   className="select"
                 >
-                  <option value="loose">{t("longform.modeLooseOption")}</option>
-                  <option value="strict">{t("longform.modeStrictCiteOption")}</option>
+                  <option value="loose">{t("piece.modeLooseOption")}</option>
+                  <option value="strict">{t("piece.modeStrictCiteOption")}</option>
                 </select>
               </label>
               <div className="mt-5 flex justify-end gap-2">

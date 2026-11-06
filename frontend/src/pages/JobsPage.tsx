@@ -82,16 +82,16 @@ function resultLink(job: Job): { href: string; labelKey: string } | null {
       ? { href: `/research?id=${encodeURIComponent(id)}`, labelKey: "jobs.viewResearch" }
       : null;
   }
-  if (job.kind === "longform_create" || job.kind === "longform_generate" || job.kind === "longform_rewrite") {
-    const id = pick("longform_id");
+  if (job.kind === "piece_create" || job.kind === "piece_generate" || job.kind === "piece_rewrite") {
+    const id = pick("piece_id");
     return id
-      ? { href: `/longforms/${encodeURIComponent(id)}`, labelKey: "jobs.openEditor" }
+      ? { href: `/pieces/${encodeURIComponent(id)}`, labelKey: "jobs.openEditor" }
       : null;
   }
-  if (job.kind === "lesson_generate" || job.kind === "blueprint_generate") {
-    const id = pick("course_id");
+  if (job.kind === "unit_generate" || job.kind === "blueprint_generate") {
+    const id = pick("series_id");
     return id
-      ? { href: `/courses/${encodeURIComponent(id)}`, labelKey: "jobs.openCourse" }
+      ? { href: `/series/${encodeURIComponent(id)}`, labelKey: "jobs.openSeries" }
       : null;
   }
   return null;
@@ -370,8 +370,8 @@ export default function JobsPage() {
                 {t("jobs.goResearch")}
                 <ArrowRight size={13} />
               </Link>
-              <Link to="/longforms" className="btn btn-ghost whitespace-nowrap">
-                {t("jobs.goLongforms")}
+              <Link to="/pieces" className="btn btn-ghost whitespace-nowrap">
+                {t("jobs.goPieces")}
               </Link>
             </div>
           </div>

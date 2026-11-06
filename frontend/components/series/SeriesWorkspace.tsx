@@ -29,39 +29,39 @@ import clsx from "clsx";
 import {
   ApiError,
   api,
-  type CourseDetail,
-  type CourseProgress,
+  type SeriesDetail,
+  type SeriesProgress,
   type GenerationMode,
-  type LessonVersion,
+  type UnitVersion,
 } from "@/lib/api";
 import {
-  createLessonLockController,
-  releaseLessonLockBeacon,
-  type LessonLockController,
-  type LessonLockState,
+  createUnitLockController,
+  releaseUnitLockBeacon,
+  type UnitLockController,
+  type UnitLockState,
 } from "@/lib/lock";
 import { contentLength, formatRelative } from "@/lib/format";
 import {
   difficultyLabel,
-  lessonStatusLabel,
+  unitStatusLabel,
   modeLabel,
 } from "@/i18n/labels";
 import { useI18n } from "@/i18n/I18nProvider";
 import MarkdownReader from "@/components/reader/MarkdownReader";
-import CourseReader from "@/components/reader/CourseReader";
+import SeriesReader from "@/components/reader/SeriesReader";
 import VersionPanel from "@/components/reader/VersionPanel";
 import ChatPanel from "@/components/chat/ChatPanel";
-import ModePicker from "@/components/course/ModePicker";
+import ModePicker from "@/components/series/ModePicker";
 import BlueprintBoard from "@/components/blueprint/BlueprintBoard";
-import ReviewControls from "@/components/course/ReviewControls";
-import CodeCheckPanel from "@/components/course/CodeCheckPanel";
-import CourseGrantsPanel from "@/components/course/CourseGrantsPanel";
+import ReviewControls from "@/components/series/ReviewControls";
+import CodeCheckPanel from "@/components/series/CodeCheckPanel";
+import SeriesGrantsPanel from "@/components/series/SeriesGrantsPanel";
 import ShareLinksDialog from "@/components/share/ShareLinksDialog";
-import StatusBadge from "@/components/course/StatusBadge";
-import LessonLockBanner from "@/components/course/LessonLockBanner";
+import StatusBadge from "@/components/series/StatusBadge";
+import UnitLockBanner from "@/components/series/UnitLockBanner";
 import ExportMenu from "@/components/export/ExportMenu";
-import CourseEditDialog from "@/components/course/CourseEditDialog";
-import ThreadsPanel from "@/components/course/ThreadsPanel";
+import SeriesEditDialog from "@/components/series/SeriesEditDialog";
+import ThreadsPanel from "@/components/series/ThreadsPanel";
 import { useWorkProfiles } from "@/components/profiles/ProfileSelect";
 import {
   ConfirmDialog,
@@ -70,7 +70,7 @@ import {
 } from "@/components/common/Dialogs";
 import ConflictDialog, {
   type VersionConflict,
-} from "@/components/course/ConflictDialog";
+} from "@/components/series/ConflictDialog";
 import { useSession } from "@/components/auth/SessionProvider";
 
 type WorkspaceView = "reader" | "blueprint" | "continuous";
@@ -81,17 +81,17 @@ const VIEWS: { value: WorkspaceView; key: string; icon: typeof BookOpen }[] = [
   { value: "continuous", key: "viewContinuous", icon: ScrollText },
 ];
 
-export default function CourseWorkspace({ courseId }: { courseId: string }) {
+export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
   const { can, roleName } = useSession();
   const { t } = useI18n();
   const canWrite = can("write");
   const canManage = can("manage_members");
   const readOnly = !canWrite;
-  const [detail, setDetail] = useState<CourseDetail | null>(null);
+  const [detail, setDetail] = useState<SeriesDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [versions, setVersions] = useState<LessonVersion[]>([]);
+  const [versions, setVersions] = useState<UnitVersion[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [reverting, setReverting] = useState<number | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -112,72 +112,72 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   const [creating, setCreating] = useState(false);
   const [versionTick, setVersionTick] = useState(0);
   const [view, setView] = useState<WorkspaceView>("reader");
-  const [progress, setProgress] = useState<CourseProgress | null>(null);
+  const [progress, setProgress] = useState<SeriesProgress | null>(null);
   const [blueprintTick, setBlueprintTick] = useState(0);
-  const [lockState, setLockState] = useState<LessonLockState>({
+  const [lockState, setLockState] = useState<UnitLockState>({
     status: "idle",
   });
   const [conflict, setConflict] = useState<VersionConflict | null>(null);
   const [conflictBusy, setConflictBusy] = useState(false);
-  const [courseEditOpen, setCourseEditOpen] = useState(false);
-  const [courseDeleteOpen, setCourseDeleteOpen] = useState(false);
-  const [courseBusy, setCourseBusy] = useState(false);
-  const [courseDialogError, setCourseDialogError] = useState("");
-  const [lessonRename, setLessonRename] = useState<{ id: string; title: string } | null>(
+  const [seriesEditOpen, setSeriesEditOpen] = useState(false);
+  const [seriesDeleteOpen, setSeriesDeleteOpen] = useState(false);
+  const [seriesBusy, setSeriesBusy] = useState(false);
+  const [seriesDialogError, setSeriesDialogError] = useState("");
+  const [unitRename, setUnitRename] = useState<{ id: string; title: string } | null>(
     null,
   );
-  const [lessonDelete, setLessonDelete] = useState<{ id: string; title: string } | null>(
+  const [unitDelete, setUnitDelete] = useState<{ id: string; title: string } | null>(
     null,
   );
-  const [lessonBusy, setLessonBusy] = useState(false);
-  const [lessonDialogError, setLessonDialogError] = useState("");
+  const [unitBusy, setUnitBusy] = useState(false);
+  const [unitDialogError, setUnitDialogError] = useState("");
   const { profiles } = useWorkProfiles();
   const navigate = useNavigate();
-  const lockController = useRef<LessonLockController | null>(null);
+  const lockController = useRef<UnitLockController | null>(null);
 
   const lockBlocked =
     canWrite && (lockState.status === "blocked" || lockState.status === "lost");
   const lockReason =
     lockState.status === "blocked"
-      ? t("course.lockEditing", { name: lockState.name })
-      : t("course.lockLost");
+      ? t("series.lockEditing", { name: lockState.name })
+      : t("series.lockLost");
   const guard = readOnly
-    ? { disabled: true, title: t("course.guardReadOnly") }
+    ? { disabled: true, title: t("series.guardReadOnly") }
     : lockBlocked
       ? { disabled: true, title: lockReason }
       : {};
 
-  const loadCourse = useCallback(
+  const loadSeries = useCallback(
     async (preferred?: string | null) => {
-      const data = await api.getCourse(courseId);
+      const data = await api.getSeries(seriesId);
       setDetail(data);
       setActiveId((prev) => {
         const candidate = preferred ?? prev;
-        if (candidate && data.lessons.some((lesson) => lesson.id === candidate)) {
+        if (candidate && data.units.some((unit) => unit.id === candidate)) {
           return candidate;
         }
-        return data.lessons[0]?.id ?? null;
+        return data.units[0]?.id ?? null;
       });
       return data;
     },
-    [courseId],
+    [seriesId],
   );
 
   const refreshProgress = useCallback(async () => {
     try {
-      const data = await api.getProgress(courseId);
+      const data = await api.getProgress(seriesId);
       setProgress(data);
     } catch {
       setProgress(null);
     }
-  }, [courseId]);
+  }, [seriesId]);
 
   const refreshWorkspace = useCallback(async () => {
-    await loadCourse(activeId);
+    await loadSeries(activeId);
     await refreshProgress();
     setVersionTick((tick) => tick + 1);
     setBlueprintTick((tick) => tick + 1);
-  }, [activeId, loadCourse, refreshProgress]);
+  }, [activeId, loadSeries, refreshProgress]);
 
   useEffect(() => {
     void refreshProgress();
@@ -188,15 +188,15 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     setLoading(true);
     setLoadError("");
     api
-      .getCourse(courseId)
+      .getSeries(seriesId)
       .then((data) => {
         if (cancelled) return;
         setDetail(data);
-        setActiveId(data.lessons[0]?.id ?? null);
+        setActiveId(data.units[0]?.id ?? null);
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setLoadError(err instanceof Error ? err.message : t("course.errors.load"));
+          setLoadError(err instanceof Error ? err.message : t("series.errors.load"));
         }
       })
       .finally(() => {
@@ -205,7 +205,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [courseId]);
+  }, [seriesId]);
 
   useEffect(() => {
     if (!activeId) {
@@ -240,19 +240,19 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     setPendingSelection(null);
   }, [activeId]);
 
-  const activeLesson = useMemo(
-    () => detail?.lessons.find((lesson) => lesson.id === activeId) ?? null,
+  const activeUnit = useMemo(
+    () => detail?.units.find((unit) => unit.id === activeId) ?? null,
     [detail, activeId],
   );
 
   const currentVersionRecord = useMemo(
     () =>
-      activeLesson
+      activeUnit
         ? versions.find(
-            (version) => version.version === activeLesson.current_version,
+            (version) => version.version === activeUnit.current_version,
           )
         : undefined,
-    [versions, activeLesson],
+    [versions, activeUnit],
   );
 
   const currentCitations = useMemo(
@@ -262,8 +262,8 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
 
   const currentMode = useMemo<GenerationMode | "">(
     () =>
-      currentVersionRecord?.mode || activeLesson?.last_mode || "",
-    [currentVersionRecord, activeLesson],
+      currentVersionRecord?.mode || activeUnit?.last_mode || "",
+    [currentVersionRecord, activeUnit],
   );
 
   useEffect(() => {
@@ -271,15 +271,15 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
       setLockState({ status: "idle" });
       return;
     }
-    const controller = createLessonLockController({
-      lessonId: activeId,
+    const controller = createUnitLockController({
+      unitId: activeId,
       onState: setLockState,
     });
     lockController.current = controller;
     void controller.start();
     const handleUnload = () => {
       const token = controller.token();
-      if (token) releaseLessonLockBeacon(activeId, token);
+      if (token) releaseUnitLockBeacon(activeId, token);
     };
     window.addEventListener("beforeunload", handleUnload);
     return () => {
@@ -307,36 +307,36 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   };
 
   const runGenerate = async (expectedVersion?: number) => {
-    if (!activeLesson || generating) return;
+    if (!activeUnit || generating) return;
     if (lockBlocked) {
       setError(lockReason);
       return;
     }
-    const baseline = expectedVersion ?? activeLesson.current_version;
+    const baseline = expectedVersion ?? activeUnit.current_version;
     setGenerating(true);
     setError("");
     try {
-      const result = await api.generateLesson(activeLesson.id, {
+      const result = await api.generateUnit(activeUnit.id, {
         topic: topic.trim() || undefined,
         top_k: topK,
         mode: generateMode,
         expected_version: baseline,
       });
-      await loadCourse(activeLesson.id);
+      await loadSeries(activeUnit.id);
       setVersionTick((tick) => tick + 1);
       setGenerateOpen(false);
       setTopic("");
       setNotice(
         result.mode === "loose"
-          ? t("course.notices.generatedLoose", { version: result.version })
+          ? t("series.notices.generatedLoose", { version: result.version })
           : result.grounded
-            ? t("course.notices.generatedGrounded", {
+            ? t("series.notices.generatedGrounded", {
                 version: result.version,
                 count: result.citations.length,
               })
-            : t("course.notices.generatedUngrounded", { version: result.version }),
+            : t("series.notices.generatedUngrounded", { version: result.version }),
       );
-      window.dispatchEvent(new Event("course-studio:refresh"));
+      window.dispatchEvent(new Event("series-studio:refresh"));
     } catch (err) {
       const info = err instanceof ApiError ? err.conflict() : null;
       if (info && info.current_version !== undefined) {
@@ -344,11 +344,11 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         setConflict({
           expectedVersion: baseline,
           currentVersion: current,
-          label: t("course.conflictContent"),
+          label: t("series.conflictContent"),
           retry: () => runGenerate(current),
         });
       } else {
-        setError(err instanceof Error ? err.message : t("course.errors.generate"));
+        setError(err instanceof Error ? err.message : t("series.errors.generate"));
       }
     } finally {
       setGenerating(false);
@@ -356,24 +356,24 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
   };
 
   const handleRevert = async (version: number, expectedVersion?: number) => {
-    if (!activeLesson) return;
+    if (!activeUnit) return;
     if (lockBlocked) {
       setError(lockReason);
       return;
     }
-    const baseline = expectedVersion ?? activeLesson.current_version;
+    const baseline = expectedVersion ?? activeUnit.current_version;
     setReverting(version);
     setError("");
     try {
-      await api.revertLesson(
-        activeLesson.id,
+      await api.revertUnit(
+        activeUnit.id,
         version,
         `revert to v${version}`,
         baseline,
       );
-      await loadCourse(activeLesson.id);
+      await loadSeries(activeUnit.id);
       setVersionTick((tick) => tick + 1);
-      setNotice(t("course.notices.reverted", { version }));
+      setNotice(t("series.notices.reverted", { version }));
     } catch (err) {
       const info = err instanceof ApiError ? err.conflict() : null;
       if (info && info.current_version !== undefined) {
@@ -381,44 +381,44 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         setConflict({
           expectedVersion: baseline,
           currentVersion: current,
-          label: t("course.conflictRevert"),
+          label: t("series.conflictRevert"),
           retry: () => handleRevert(version, current),
         });
       } else {
-        setError(err instanceof Error ? err.message : t("course.errors.revert"));
+        setError(err instanceof Error ? err.message : t("series.errors.revert"));
       }
     } finally {
       setReverting(null);
     }
   };
 
-  const handleCreateLesson = async (event: React.FormEvent) => {
+  const handleCreateUnit = async (event: React.FormEvent) => {
     event.preventDefault();
     const title = newTitle.trim();
     if (!title || creating) return;
     setCreating(true);
     setError("");
     try {
-      const result = await api.createLesson(courseId, {
+      const result = await api.createUnit(seriesId, {
         title,
-        order_index: (detail?.lessons.length ?? 0) + 1,
+        order_index: (detail?.units.length ?? 0) + 1,
       });
-      await loadCourse(result.lesson.id);
+      await loadSeries(result.unit.id);
       setNewTitle("");
       setFormOpen(false);
-      setNotice(t("course.notices.lessonCreated", { title: result.lesson.title }));
+      setNotice(t("series.notices.unitCreated", { title: result.unit.title }));
       await refreshProgress();
-      window.dispatchEvent(new Event("course-studio:refresh"));
+      window.dispatchEvent(new Event("series-studio:refresh"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("course.errors.createLesson"));
+      setError(err instanceof Error ? err.message : t("series.errors.createUnit"));
     } finally {
       setCreating(false);
     }
   };
 
   const handleChatApplied = async () => {
-    if (activeLesson) {
-      await loadCourse(activeLesson.id);
+    if (activeUnit) {
+      await loadSeries(activeUnit.id);
     }
     setVersionTick((tick) => tick + 1);
   };
@@ -435,79 +435,79 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
     setPendingSelection(null);
   }, []);
 
-  const handleOpenLesson = useCallback((lessonId: string) => {
-    if (lessonId) setActiveId(lessonId);
+  const handleOpenUnit = useCallback((unitId: string) => {
+    if (unitId) setActiveId(unitId);
     setView("reader");
     setGenerateOpen(false);
   }, []);
 
-  const handleLessonsChanged = useCallback(async () => {
-    await loadCourse(activeId);
+  const handleUnitsChanged = useCallback(async () => {
+    await loadSeries(activeId);
     await refreshProgress();
-  }, [activeId, loadCourse, refreshProgress]);
+  }, [activeId, loadSeries, refreshProgress]);
 
-  const handleCourseDelete = async () => {
-    setCourseBusy(true);
-    setCourseDialogError("");
+  const handleSeriesDelete = async () => {
+    setSeriesBusy(true);
+    setSeriesDialogError("");
     try {
-      await api.deleteCourse(courseId);
-      window.dispatchEvent(new Event("course-studio:refresh"));
+      await api.deleteSeries(seriesId);
+      window.dispatchEvent(new Event("series-studio:refresh"));
       navigate("/");
     } catch (err) {
-      setCourseDialogError(err instanceof Error ? err.message : t("course.errors.delete"));
+      setSeriesDialogError(err instanceof Error ? err.message : t("series.errors.delete"));
     } finally {
-      setCourseBusy(false);
+      setSeriesBusy(false);
     }
   };
 
-  const handleLessonRename = async (title: string) => {
-    if (!lessonRename) return;
-    setLessonBusy(true);
-    setLessonDialogError("");
+  const handleUnitRename = async (title: string) => {
+    if (!unitRename) return;
+    setUnitBusy(true);
+    setUnitDialogError("");
     try {
-      await api.updateLesson(lessonRename.id, { title });
-      setLessonRename(null);
-      setNotice(t("course.notices.lessonRenamed"));
-      await handleLessonsChanged();
+      await api.updateUnit(unitRename.id, { title });
+      setUnitRename(null);
+      setNotice(t("series.notices.unitRenamed"));
+      await handleUnitsChanged();
     } catch (err) {
-      setLessonDialogError(err instanceof Error ? err.message : t("course.errors.rename"));
+      setUnitDialogError(err instanceof Error ? err.message : t("series.errors.rename"));
     } finally {
-      setLessonBusy(false);
+      setUnitBusy(false);
     }
   };
 
-  const handleLessonDelete = async () => {
-    if (!lessonDelete) return;
-    setLessonBusy(true);
-    setLessonDialogError("");
+  const handleUnitDelete = async () => {
+    if (!unitDelete) return;
+    setUnitBusy(true);
+    setUnitDialogError("");
     try {
-      await api.deleteLesson(lessonDelete.id);
-      setLessonDelete(null);
-      setNotice(t("course.notices.lessonDeleted"));
-      if (activeId === lessonDelete.id) setActiveId(null);
-      await handleLessonsChanged();
+      await api.deleteUnit(unitDelete.id);
+      setUnitDelete(null);
+      setNotice(t("series.notices.unitDeleted"));
+      if (activeId === unitDelete.id) setActiveId(null);
+      await handleUnitsChanged();
     } catch (err) {
-      setLessonDialogError(err instanceof Error ? err.message : t("course.errors.delete"));
+      setUnitDialogError(err instanceof Error ? err.message : t("series.errors.delete"));
     } finally {
-      setLessonBusy(false);
+      setUnitBusy(false);
     }
   };
 
-  const moveLesson = async (lessonId: string, direction: -1 | 1) => {
+  const moveUnit = async (unitId: string, direction: -1 | 1) => {
     if (!detail) return;
-    const ids = detail.lessons.map((lesson) => lesson.id);
-    const index = ids.indexOf(lessonId);
+    const ids = detail.units.map((unit) => unit.id);
+    const index = ids.indexOf(unitId);
     const target = index + direction;
     if (index < 0 || target < 0 || target >= ids.length) return;
     const next = [...ids];
     next[index] = ids[target];
     next[target] = ids[index];
     try {
-      await api.reorderLessons(courseId, next);
-      setNotice(t("course.notices.orderUpdated"));
-      await handleLessonsChanged();
+      await api.reorderUnits(seriesId, next);
+      setNotice(t("series.notices.orderUpdated"));
+      await handleUnitsChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("course.errors.order"));
+      setError(err instanceof Error ? err.message : t("series.errors.order"));
     }
   };
 
@@ -530,21 +530,21 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           <AlertCircle size={20} />
         </div>
         <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-200">
-          {t("course.loadErrorTitle")}
+          {t("series.loadErrorTitle")}
         </p>
         <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-          {loadError || t("course.loadErrorBody")}
+          {loadError || t("series.loadErrorBody")}
         </p>
         <Link to="/" className="btn btn-ghost mt-5">
           <ArrowLeft size={14} />
-          {t("course.backToCourses")}
+          {t("series.backToSeries")}
         </Link>
       </div>
     );
   }
 
-  const course = detail.course;
-  const currentProfile = profiles.find((item) => item.id === course.profile_id);
+  const series = detail.series;
+  const currentProfile = profiles.find((item) => item.id === series.profile_id);
 
   return (
     <motion.div
@@ -561,43 +561,43 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               className="inline-flex items-center gap-1 text-[11px] text-slate-400 transition hover:text-indigo-600 dark:hover:text-indigo-300"
             >
               <ArrowLeft size={12} />
-              {t("course.allCourses")}
+              {t("series.allSeries")}
             </Link>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-[26px]">
-              {course.title}
+              {series.title}
             </h1>
-            {course.subtitle ? (
+            {series.subtitle ? (
               <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-slate-500 dark:text-slate-400">
-                {course.subtitle}
+                {series.subtitle}
               </p>
             ) : null}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className="chip">
                 <BookOpen size={11} />
-                {t("course.lessonCount", { count: detail.lesson_count })}
+                {t("series.unitCount", { count: detail.unit_count })}
               </span>
               <span className="chip-muted">
-                {difficultyLabel(t, course.difficulty)}
+                {difficultyLabel(t, series.difficulty)}
               </span>
-              {course.audience ? (
+              {series.audience ? (
                 <span className="chip-muted">
-                  {t("course.audienceChip", { name: course.audience })}
+                  {t("series.audienceChip", { name: series.audience })}
                 </span>
               ) : null}
               <span className="chip-muted">
-                {course.language === "zh"
-                  ? t("course.languageChinese")
-                  : course.language}
+                {series.language === "zh"
+                  ? t("series.languageChinese")
+                  : series.language}
               </span>
-              {course.profile_id ? (
+              {series.profile_id ? (
                 <Link
                   to="/settings#creation-profiles"
                   className="chip transition hover:text-indigo-600 dark:hover:text-indigo-200"
-                  title={t("profiles.courseChipHint")}
+                  title={t("profiles.seriesChipHint")}
                 >
                   <Wand2 size={11} />
-                  {t("profiles.courseChip", {
-                    name: currentProfile?.name ?? course.profile_id,
+                  {t("profiles.seriesChip", {
+                    name: currentProfile?.name ?? series.profile_id,
                   })}
                 </Link>
               ) : null}
@@ -605,41 +605,41 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           </div>
           <div className="no-scrollbar -mx-1 flex items-center gap-2 overflow-x-auto px-1">
             <ExportMenu
-              sourceType="course"
-              sourceId={course.id}
-              fallbackName={course.title}
+              sourceType="series"
+              sourceId={series.id}
+              fallbackName={series.title}
             />
             <a
-              href={`/read/course/${course.id}`}
+              href={`/read/series/${series.id}`}
               target="_blank"
               rel="noreferrer"
               className="btn btn-ghost shrink-0"
-              title={t("course.readModeTitle")}
+              title={t("series.readModeTitle")}
             >
               <BookOpen size={13} />
-              {t("course.readMode")}
+              {t("series.readMode")}
             </a>
             {canWrite ? (
               <button
                 type="button"
-                onClick={() => setCourseEditOpen(true)}
+                onClick={() => setSeriesEditOpen(true)}
                 className="btn btn-ghost shrink-0"
               >
                 <Pencil size={13} />
-                {t("course.editCourse")}
+                {t("series.editSeries")}
               </button>
             ) : null}
             {canWrite ? (
               <button
                 type="button"
                 onClick={() => {
-                  setCourseDialogError("");
-                  setCourseDeleteOpen(true);
+                  setSeriesDialogError("");
+                  setSeriesDeleteOpen(true);
                 }}
                 className="btn btn-ghost shrink-0 text-rose-600 hover:text-rose-700 dark:text-rose-300"
               >
                 <Trash2 size={13} />
-                {t("course.deleteCourse")}
+                {t("series.deleteSeries")}
               </button>
             ) : null}
             {can("manage_members") ? (
@@ -649,7 +649,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 className="btn btn-ghost shrink-0"
               >
                 <Lock size={13} />
-                {t("course.grants")}
+                {t("series.grants")}
               </button>
             ) : null}
             {canWrite ? (
@@ -668,17 +668,17 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               className="btn btn-ghost shrink-0 lg:hidden"
             >
               <List size={14} />
-              {t("course.outline")}
+              {t("series.outline")}
             </button>
             <button
               type="button"
               {...guard}
               onClick={() => setChatOpen(true)}
-              disabled={readOnly || lockBlocked || !activeLesson}
+              disabled={readOnly || lockBlocked || !activeUnit}
               className="btn btn-primary hidden shrink-0 sm:inline-flex"
             >
               <MessageSquare size={14} />
-              {t("course.askEdit")}
+              {t("series.askEdit")}
             </button>
           </div>
         </div>
@@ -686,7 +686,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
 
       {readOnly ? (
         <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-          {t("course.readOnlyBanner", { role: roleName || t("common.readOnly") })}
+          {t("series.readOnlyBanner", { role: roleName || t("common.readOnly") })}
         </div>
       ) : null}
 
@@ -708,7 +708,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 )}
               >
                 <Icon size={12} />
-                {t(`course.${item.key}`)}
+                {t(`series.${item.key}`)}
               </button>
             );
           })}
@@ -716,7 +716,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         <div className="flex flex-wrap items-center gap-2">
           {progress ? (
             <span className="chip-muted">
-              {t("course.progress.approved", {
+              {t("series.progress.approved", {
                 approved: progress.approved,
                 total: progress.total,
                 pending: progress.pending_review,
@@ -725,10 +725,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           ) : null}
           <span className="chip-muted">
             {progress?.blueprint_ready
-              ? t("course.progress.blueprintReady", {
+              ? t("series.progress.blueprintReady", {
                   version: progress.blueprint_version,
                 })
-              : t("course.progress.blueprintMissing")}
+              : t("series.progress.blueprintMissing")}
           </span>
         </div>
       </div>
@@ -741,7 +741,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
             type="button"
             onClick={() => setError("")}
             className="text-rose-400 transition hover:text-rose-600"
-            aria-label={t("course.closeError")}
+            aria-label={t("series.closeError")}
           >
             <X size={13} />
           </button>
@@ -772,10 +772,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           <div className="flex items-center justify-between px-1">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                {t("course.outlineTitle")}
+                {t("series.outlineTitle")}
               </p>
               <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                {t("course.lessonCount", { count: detail.lesson_count })}
+                {t("series.unitCount", { count: detail.unit_count })}
               </p>
             </div>
             <div className="flex items-center gap-1">
@@ -783,7 +783,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 type="button"
                 onClick={() => setFormOpen((value) => !value)}
                 className="grid h-9 w-9 place-items-center rounded-full bg-indigo-500/10 text-indigo-600 transition hover:bg-indigo-500/20 dark:text-indigo-300"
-                aria-label={t("course.addLesson")}
+                aria-label={t("series.addUnit")}
               >
                 <Plus size={15} />
               </button>
@@ -791,7 +791,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 type="button"
                 onClick={() => setOutlineOpen(false)}
                 className="grid h-9 w-9 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 lg:hidden"
-                aria-label={t("course.closeOutline")}
+                aria-label={t("series.closeOutline")}
               >
                 <X size={16} />
               </button>
@@ -805,7 +805,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 animate={{ opacity: 1, height: "auto" }}
                 exit={{ opacity: 0, height: 0 }}
                 transition={{ duration: 0.2 }}
-                onSubmit={handleCreateLesson}
+                onSubmit={handleCreateUnit}
                 className="overflow-hidden"
               >
                 <div className="mt-2.5 space-y-2 rounded-2xl border border-white/60 bg-white/50 p-2.5 dark:border-white/10 dark:bg-white/[0.04]">
@@ -813,7 +813,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     autoFocus
                     value={newTitle}
                     onChange={(event) => setNewTitle(event.target.value)}
-                    placeholder={t("course.lessonTitlePlaceholder")}
+                    placeholder={t("series.unitTitlePlaceholder")}
                     className="input text-[13px]"
                   />
                   <div className="flex justify-end gap-1">
@@ -837,7 +837,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                       ) : (
                         <Plus size={12} />
                       )}
-                      {t("course.add")}
+                      {t("series.add")}
                     </button>
                   </div>
                 </div>
@@ -846,26 +846,26 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
           </AnimatePresence>
 
           <div className="no-scrollbar mt-3 flex-1 space-y-1 overflow-y-auto pr-0.5">
-            {detail.lessons.length === 0 ? (
+            {detail.units.length === 0 ? (
               <p className="px-2 py-4 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-                {t("course.emptyLessons")}
+                {t("series.emptyUnits")}
               </p>
             ) : (
-              detail.lessons.map((lesson, lessonIndex) => {
-                const active = lesson.id === activeId;
+              detail.units.map((unit, unitIndex) => {
+                const active = unit.id === activeId;
                 return (
                   <div
-                    key={lesson.id}
+                    key={unit.id}
                     role="button"
                     tabIndex={0}
                     onClick={() => {
-                      setActiveId(lesson.id);
+                      setActiveId(unit.id);
                       setGenerateOpen(false);
                       setOutlineOpen(false);
                     }}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
-                        setActiveId(lesson.id);
+                        setActiveId(unit.id);
                         setGenerateOpen(false);
                         setOutlineOpen(false);
                       }
@@ -885,7 +885,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                           : "bg-slate-200/70 text-slate-500 dark:bg-white/10 dark:text-slate-300",
                       )}
                     >
-                      {lesson.order_index}
+                      {unit.order_index}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span
@@ -896,13 +896,13 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                             : "text-slate-600 dark:text-slate-300",
                         )}
                       >
-                        {lesson.title}
+                        {unit.title}
                       </span>
                       <span className="mt-0.5 block truncate text-[10px] text-slate-400 dark:text-slate-500">
-                        {lesson.content
-                          ? `v${lesson.current_version}`
-                          : t("course.toGenerate")}{" "}
-                        · {lessonStatusLabel(t, lesson.status)}
+                        {unit.content
+                          ? `v${unit.current_version}`
+                          : t("series.toGenerate")}{" "}
+                        · {unitStatusLabel(t, unit.status)}
                       </span>
                     </span>
                     {canWrite ? (
@@ -912,29 +912,29 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                             label: t("common.rename"),
                             icon: <Pencil size={11} />,
                             onClick: () => {
-                              setLessonDialogError("");
-                              setLessonRename({ id: lesson.id, title: lesson.title });
+                              setUnitDialogError("");
+                              setUnitRename({ id: unit.id, title: unit.title });
                             },
                           },
                           {
-                            label: t("course.moveUp"),
+                            label: t("series.moveUp"),
                             icon: <ArrowUp size={11} />,
-                            disabled: lessonIndex === 0,
-                            onClick: () => void moveLesson(lesson.id, -1),
+                            disabled: unitIndex === 0,
+                            onClick: () => void moveUnit(unit.id, -1),
                           },
                           {
-                            label: t("course.moveDown"),
+                            label: t("series.moveDown"),
                             icon: <ArrowDown size={11} />,
-                            disabled: lessonIndex === detail.lessons.length - 1,
-                            onClick: () => void moveLesson(lesson.id, 1),
+                            disabled: unitIndex === detail.units.length - 1,
+                            onClick: () => void moveUnit(unit.id, 1),
                           },
                           {
-                            label: t("course.deleteLesson"),
+                            label: t("series.deleteUnit"),
                             icon: <Trash2 size={11} />,
                             danger: true,
                             onClick: () => {
-                              setLessonDialogError("");
-                              setLessonDelete({ id: lesson.id, title: lesson.title });
+                              setUnitDialogError("");
+                              setUnitDelete({ id: unit.id, title: unit.title });
                             },
                           },
                         ]}
@@ -958,19 +958,19 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         </aside>
 
         <div className="min-w-0 space-y-4">
-          {activeLesson ? (
+          {activeUnit ? (
             <article className="glass rounded-3xl p-4 shadow-glass sm:p-8">
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200/70 pb-5 dark:border-white/10">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500">
                     <span>
-                      {t("course.lessonNo", { index: activeLesson.order_index })}
+                      {t("series.unitNo", { index: activeUnit.order_index })}
                     </span>
                     <span>·</span>
-                    <StatusBadge status={activeLesson.status} />
+                    <StatusBadge status={activeUnit.status} />
                     <span>·</span>
-                    <span>v{activeLesson.current_version}</span>
-                    {activeLesson.content ? (
+                    <span>v{activeUnit.current_version}</span>
+                    {activeUnit.content ? (
                       <span
                         className={clsx(
                           "rounded-full px-1.5 py-0.5 text-[10px] font-medium",
@@ -979,14 +979,14 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                             : "bg-indigo-500/12 text-indigo-600 ring-1 ring-indigo-400/20 dark:bg-indigo-400/14 dark:text-indigo-300 dark:ring-indigo-300/20",
                         )}
                       >
-                        {t("course.modeSuffix", {
+                        {t("series.modeSuffix", {
                           mode: modeLabel(t, currentMode),
                         })}
                       </span>
                     ) : null}
                   </div>
                   <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-[22px]">
-                    {activeLesson.title}
+                    {activeUnit.title}
                   </h2>
                 </div>
                 <div className="no-scrollbar -mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-0.5">
@@ -1002,9 +1002,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     ) : (
                       <Sparkles size={14} />
                     )}
-                    {activeLesson.content
-                      ? t("course.regenerate")
-                      : t("course.generate")}
+                    {activeUnit.content
+                      ? t("series.regenerate")
+                      : t("series.generate")}
                   </button>
                   <button
                     type="button"
@@ -1012,51 +1012,51 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     className="btn btn-ghost xl:hidden"
                   >
                     <History size={14} />
-                    {t("course.versions")}
+                    {t("series.versions")}
                   </button>
                   {canWrite ? (
                     <RowMenu
-                      label={t("course.lessonActions")}
+                      label={t("series.unitActions")}
                       items={[
                         {
-                          label: t("course.renameLessonTitle"),
+                          label: t("series.renameUnitTitle"),
                           icon: <Pencil size={11} />,
                           onClick: () => {
-                            setLessonDialogError("");
-                            setLessonRename({
-                              id: activeLesson.id,
-                              title: activeLesson.title,
+                            setUnitDialogError("");
+                            setUnitRename({
+                              id: activeUnit.id,
+                              title: activeUnit.title,
                             });
                           },
                         },
                         {
-                          label: t("course.moveUp"),
+                          label: t("series.moveUp"),
                           icon: <ArrowUp size={11} />,
                           disabled:
-                            detail.lessons.findIndex(
-                              (lesson) => lesson.id === activeLesson.id,
+                            detail.units.findIndex(
+                              (unit) => unit.id === activeUnit.id,
                             ) <= 0,
-                          onClick: () => void moveLesson(activeLesson.id, -1),
+                          onClick: () => void moveUnit(activeUnit.id, -1),
                         },
                         {
-                          label: t("course.moveDown"),
+                          label: t("series.moveDown"),
                           icon: <ArrowDown size={11} />,
                           disabled:
-                            detail.lessons.findIndex(
-                              (lesson) => lesson.id === activeLesson.id,
+                            detail.units.findIndex(
+                              (unit) => unit.id === activeUnit.id,
                             ) ===
-                            detail.lessons.length - 1,
-                          onClick: () => void moveLesson(activeLesson.id, 1),
+                            detail.units.length - 1,
+                          onClick: () => void moveUnit(activeUnit.id, 1),
                         },
                         {
-                          label: t("course.deleteLesson"),
+                          label: t("series.deleteUnit"),
                           icon: <Trash2 size={11} />,
                           danger: true,
                           onClick: () => {
-                            setLessonDialogError("");
-                            setLessonDelete({
-                              id: activeLesson.id,
-                              title: activeLesson.title,
+                            setUnitDialogError("");
+                            setUnitDelete({
+                              id: activeUnit.id,
+                              title: activeUnit.title,
                             });
                           },
                         },
@@ -1066,7 +1066,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 </div>
               </div>
 
-              <LessonLockBanner
+              <UnitLockBanner
                 state={lockState}
                 canTakeOver={canManage}
                 readOnly={readOnly}
@@ -1076,9 +1076,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 onReacquire={() => void lockController.current?.retry()}
               />
 
-              <CodeCheckPanel lessonId={activeLesson.id} disabled={!canWrite} />
+              <CodeCheckPanel unitId={activeUnit.id} disabled={!canWrite} />
               <ReviewControls
-                lesson={activeLesson}
+                unit={activeUnit}
                 progress={progress}
                 onReviewed={refreshWorkspace}
                 onNotice={setNotice}
@@ -1099,17 +1099,17 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                     <div className="mt-4 rounded-2xl border border-indigo-200/60 bg-indigo-500/5 p-4 dark:border-indigo-400/20 dark:bg-indigo-400/5">
                       {readOnly ? (
         <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-          {t("course.readOnlyBannerSpace")}
+          {t("series.readOnlyBannerSpace")}
         </div>
       ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-[11px] font-medium text-indigo-600 dark:text-indigo-300">
                           {generateMode === "loose"
-                            ? t("course.generateLooseHint")
-                            : t("course.generateStrictHint")}
+                            ? t("series.generateLooseHint")
+                            : t("series.generateStrictHint")}
                         </p>
-                        <span className="chip-muted">{t("course.writeMode")}</span>
+                        <span className="chip-muted">{t("series.writeMode")}</span>
                       </div>
                       <div className="mt-3">
                         <ModePicker
@@ -1122,7 +1122,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                         <input
                           value={topic}
                           onChange={(event) => setTopic(event.target.value)}
-                          placeholder={t("course.topicPlaceholder")}
+                          placeholder={t("series.topicPlaceholder")}
                           className="input"
                         />
                         <select
@@ -1132,7 +1132,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                         >
                           {[3, 5, 8, 12].map((value) => (
                             <option key={value} value={value}>
-                              {t("course.evidenceCount", { count: value })}
+                              {t("series.evidenceCount", { count: value })}
                             </option>
                           ))}
                         </select>
@@ -1148,7 +1148,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                           ) : (
                             <Sparkles size={14} />
                           )}
-                          {t("course.startGenerate")}
+                          {t("series.startGenerate")}
                         </button>
                       </div>
                     </div>
@@ -1159,18 +1159,18 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               {generating && (
                 <div className="mt-4 flex items-center gap-2 rounded-2xl border border-indigo-200/50 bg-white/50 px-4 py-3 text-xs text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-400">
                   <Loader2 size={14} className="animate-spin text-indigo-500" />
-                  {t("course.generatingHint")}
+                  {t("series.generatingHint")}
                 </div>
               )}
 
-              {activeLesson.learning_objectives.length > 0 && (
+              {activeUnit.learning_objectives.length > 0 && (
                 <div className="mt-5 rounded-2xl border border-indigo-200/50 bg-indigo-500/5 p-4 dark:border-indigo-400/20 dark:bg-indigo-400/5">
                   <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-indigo-500 dark:text-indigo-300">
                     <Target size={12} />
-                    {t("course.objectives")}
+                    {t("series.objectives")}
                   </p>
                   <ul className="mt-2 space-y-1 text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">
-                    {activeLesson.learning_objectives.map((objective) => (
+                    {activeUnit.learning_objectives.map((objective) => (
                       <li key={objective} className="flex items-start gap-1.5">
                         <Check size={12} className="mt-1 shrink-0 text-indigo-400" />
                         <span>{objective}</span>
@@ -1180,12 +1180,12 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 </div>
               )}
 
-              {activeLesson.prerequisites.length > 0 && (
+              {activeUnit.prerequisites.length > 0 && (
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">
                   <span className="text-[10px] uppercase tracking-[0.14em] text-slate-400">
-                    {t("course.prerequisites")}
+                    {t("series.prerequisites")}
                   </span>
-                  {activeLesson.prerequisites.map((item) => (
+                  {activeUnit.prerequisites.map((item) => (
                     <span key={item} className="chip-muted">
                       {item}
                     </span>
@@ -1194,9 +1194,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
               )}
 
               <div className="relative mt-6">
-                {activeLesson.content ? (
+                {activeUnit.content ? (
                   <MarkdownReader
-                    content={activeLesson.content}
+                    content={activeUnit.content}
                     citations={currentCitations}
                     mode={currentMode}
                     onAskSelection={handleAskSelection}
@@ -1207,10 +1207,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                       <Sparkles size={20} />
                     </div>
                     <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-200">
-                      {t("course.emptyContentTitle")}
+                      {t("series.emptyContentTitle")}
                     </p>
                     <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                      {t("course.emptyContentBody")}
+                      {t("series.emptyContentBody")}
                     </p>
                     <div className="mt-4 flex flex-wrap justify-center gap-2">
                       <button
@@ -1221,10 +1221,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                         className="btn btn-primary"
                       >
                         <Sparkles size={14} />
-                        {t("course.generate")}
+                        {t("series.generate")}
                       </button>
                       <Link to="/kb" className="btn btn-ghost">
-                        {t("course.uploadFirst")}
+                        {t("series.uploadFirst")}
                       </Link>
                     </div>
                   </div>
@@ -1232,7 +1232,7 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 {lockBlocked ? (
                   <div className="pointer-events-none absolute inset-0 rounded-2xl bg-white/30 dark:bg-slate-950/35">
                     <div className="sticky top-3 mx-auto mt-3 w-fit rounded-full border border-amber-400/40 bg-amber-50/90 px-3 py-1 text-[11px] font-medium text-amber-800 shadow-sm backdrop-blur-sm dark:border-amber-300/25 dark:bg-amber-400/15 dark:text-amber-200">
-                      {t("course.lockOverlay", { reason: lockReason })}
+                      {t("series.lockOverlay", { reason: lockReason })}
                     </div>
                   </div>
                 ) : null}
@@ -1240,14 +1240,14 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
 
               <div className="mt-8 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70 pt-4 text-[11px] text-slate-400 dark:border-white/10 dark:text-slate-500">
                 <span>
-                  {t("course.citationsChars", {
+                  {t("series.citationsChars", {
                     citations: currentCitations.length,
-                    chars: contentLength(activeLesson.content),
+                    chars: contentLength(activeUnit.content),
                   })}
                 </span>
                 <span>
-                  {t("course.updatedAt", {
-                    time: formatRelative(activeLesson.updated_at),
+                  {t("series.updatedAt", {
+                    time: formatRelative(activeUnit.updated_at),
                   })}
                 </span>
               </div>
@@ -1258,10 +1258,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 <BookOpen size={20} />
               </div>
               <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-200">
-                {t("course.noLessonsTitle")}
+                {t("series.noUnitsTitle")}
               </p>
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                {t("course.noLessonsBody")}
+                {t("series.noUnitsBody")}
               </p>
               <button
                 type="button"
@@ -1269,13 +1269,13 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
                 className="btn btn-primary mt-4"
               >
                 <Plus size={14} />
-                {t("course.addFirstLesson")}
+                {t("series.addFirstUnit")}
               </button>
             </div>
           )}
           <div className="mt-4">
             <ThreadsPanel
-              courseId={courseId}
+              seriesId={seriesId}
               canWrite={canWrite}
               onNotice={setNotice}
               onError={setError}
@@ -1286,11 +1286,11 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         <div className="hidden xl:block">
           <VersionPanel
             versions={versions}
-            currentVersion={activeLesson?.current_version ?? 0}
+            currentVersion={activeUnit?.current_version ?? 0}
             loading={versionsLoading}
             busyVersion={reverting}
             onRevert={handleRevert}
-            lessonId={activeLesson?.id}
+            unitId={activeUnit?.id}
             className="sticky top-24 h-[calc(100vh-7rem)]"
           />
         </div>
@@ -1299,11 +1299,11 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
 
       {view === "blueprint" ? (
         <BlueprintBoard
-          courseId={courseId}
-          lessons={detail.lessons}
+          seriesId={seriesId}
+          units={detail.units}
           reloadKey={blueprintTick}
-          onOpenLesson={handleOpenLesson}
-          onLessonsChanged={handleLessonsChanged}
+          onOpenUnit={handleOpenUnit}
+          onUnitsChanged={handleUnitsChanged}
           onNotice={setNotice}
           onError={setError}
           onProgressRefresh={() => void refreshProgress()}
@@ -1312,10 +1312,10 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
       ) : null}
 
       {view === "continuous" ? (
-        <CourseReader
-          lessons={detail.lessons}
+        <SeriesReader
+          units={detail.units}
           progress={progress}
-          onOpenLesson={handleOpenLesson}
+          onOpenUnit={handleOpenUnit}
           onGoReader={() => setView("reader")}
         />
       ) : null}
@@ -1341,18 +1341,18 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
             >
               <VersionPanel
                 versions={versions}
-                currentVersion={activeLesson?.current_version ?? 0}
+                currentVersion={activeUnit?.current_version ?? 0}
                 loading={versionsLoading}
                 busyVersion={reverting}
                 onRevert={handleRevert}
-                lessonId={activeLesson?.id}
+                unitId={activeUnit?.id}
                 className="h-full"
               />
               <button
                 type="button"
                 onClick={() => setVersionsOpen(false)}
                 className="absolute -top-1 right-0 grid h-8 w-8 place-items-center rounded-full bg-white/85 text-slate-500 shadow-sm dark:bg-slate-800/85 dark:text-slate-300"
-                aria-label={t("course.closeVersions")}
+                aria-label={t("series.closeVersions")}
               >
                 <X size={15} />
               </button>
@@ -1375,19 +1375,19 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         )}
       </AnimatePresence>
 
-      {view === "reader" && activeLesson ? (
+      {view === "reader" && activeUnit ? (
         <button
           type="button"
           onClick={() => setChatOpen(true)}
           disabled={readOnly || lockBlocked}
           title={
             readOnly
-              ? t("course.guardReadOnly")
+              ? t("series.guardReadOnly")
               : lockBlocked
                 ? lockReason
-                : t("course.askEdit")
+                : t("series.askEdit")
           }
-          aria-label={t("course.askEdit")}
+          aria-label={t("series.askEdit")}
           className="fab brand-gradient grid h-14 w-14 place-items-center rounded-full text-white shadow-brand transition active:scale-95 disabled:opacity-45 sm:hidden"
         >
           <MessageSquare size={20} />
@@ -1396,9 +1396,9 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
 
       <ChatPanel
         open={chatOpen}
-        lessonId={activeLesson?.id ?? null}
-        lessonTitle={activeLesson?.title ?? ""}
-        currentVersion={activeLesson?.current_version ?? 0}
+        unitId={activeUnit?.id ?? null}
+        unitTitle={activeUnit?.title ?? ""}
+        currentVersion={activeUnit?.current_version ?? 0}
         initialSelection={pendingSelection ?? undefined}
         onSelectionConsumed={() => setPendingSelection(null)}
         onClose={handleCloseChat}
@@ -1417,8 +1417,8 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
         }}
       />
 
-      <CourseGrantsPanel
-        courseId={courseId}
+      <SeriesGrantsPanel
+        seriesId={seriesId}
         open={grantsOpen}
         onClose={() => setGrantsOpen(false)}
       />
@@ -1426,53 +1426,53 @@ export default function CourseWorkspace({ courseId }: { courseId: string }) {
       <ShareLinksDialog
         open={shareLinksOpen}
         onClose={() => setShareLinksOpen(false)}
-        resourceType="course"
-        resourceId={courseId}
-        title={course.title}
+        resourceType="series"
+        resourceId={seriesId}
+        title={series.title}
       />
 
-      <CourseEditDialog
-        open={courseEditOpen}
-        course={course}
-        onClose={() => setCourseEditOpen(false)}
+      <SeriesEditDialog
+        open={seriesEditOpen}
+        series={series}
+        onClose={() => setSeriesEditOpen(false)}
         onSaved={(updated) => {
-          setDetail((prev) => (prev ? { ...prev, course: updated } : prev));
-          setNotice(t("course.notices.courseUpdated"));
+          setDetail((prev) => (prev ? { ...prev, series: updated } : prev));
+          setNotice(t("series.notices.seriesUpdated"));
         }}
       />
 
       <ConfirmDialog
-        open={courseDeleteOpen}
-        title={t("course.deleteCourseTitle")}
-        description={t("course.deleteCourseDesc", { title: course.title })}
-        requireText={course.title}
-        busy={courseBusy}
-        error={courseDialogError}
-        onConfirm={() => void handleCourseDelete()}
-        onClose={() => setCourseDeleteOpen(false)}
+        open={seriesDeleteOpen}
+        title={t("series.deleteSeriesTitle")}
+        description={t("series.deleteSeriesDesc", { title: series.title })}
+        requireText={series.title}
+        busy={seriesBusy}
+        error={seriesDialogError}
+        onConfirm={() => void handleSeriesDelete()}
+        onClose={() => setSeriesDeleteOpen(false)}
       />
 
       <PromptDialog
-        open={Boolean(lessonRename)}
-        title={t("course.renameLessonTitle")}
-        label={t("course.lessonTitleLabel")}
-        initial={lessonRename?.title ?? ""}
-        busy={lessonBusy}
-        error={lessonDialogError}
-        onConfirm={(value) => void handleLessonRename(value)}
-        onClose={() => setLessonRename(null)}
+        open={Boolean(unitRename)}
+        title={t("series.renameUnitTitle")}
+        label={t("series.unitTitleLabel")}
+        initial={unitRename?.title ?? ""}
+        busy={unitBusy}
+        error={unitDialogError}
+        onConfirm={(value) => void handleUnitRename(value)}
+        onClose={() => setUnitRename(null)}
       />
 
       <ConfirmDialog
-        open={Boolean(lessonDelete)}
-        title={t("course.deleteLessonTitle")}
-        description={t("course.deleteLessonDesc", {
-          title: lessonDelete?.title ?? "",
+        open={Boolean(unitDelete)}
+        title={t("series.deleteUnitTitle")}
+        description={t("series.deleteUnitDesc", {
+          title: unitDelete?.title ?? "",
         })}
-        busy={lessonBusy}
-        error={lessonDialogError}
-        onConfirm={() => void handleLessonDelete()}
-        onClose={() => setLessonDelete(null)}
+        busy={unitBusy}
+        error={unitDialogError}
+        onConfirm={() => void handleUnitDelete()}
+        onClose={() => setUnitDelete(null)}
       />
     </motion.div>
   );

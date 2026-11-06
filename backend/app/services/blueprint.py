@@ -6,25 +6,25 @@ import time
 from typing import Any, Mapping, Sequence
 
 from app.models.blueprint import (
-    CourseBlueprint,
+    SeriesBlueprint,
     GlossaryTerm,
     LearningStage,
-    LessonReview,
+    UnitReview,
     OutlineNode,
 )
-from app.models.course import Course, Lesson
+from app.models.series import Series, Unit
 from app.models.generation import Evidence
 from app.models.mode import GenerationMode
 from app.ports.blueprint_repository import BlueprintRepository
-from app.ports.course_repository import CourseRepository
+from app.ports.series_repository import SeriesRepository
 from app.ports.llm import LLMProvider
 from app.ports.vectorstore import VectorStore
 from app.models.work_profile import ProfileSpec
 from app.services.errors import (
     BlueprintNotFoundError,
     BlueprintParseError,
-    LessonContentEmptyError,
-    LessonNotFoundError,
+    UnitContentEmptyError,
+    UnitNotFoundError,
     NoEvidenceError,
     VersionConflictError,
 )
@@ -46,7 +46,7 @@ REVIEW_REQUEST_REVISION = "request_revision"
 NODE_PLANNED = "planned"
 NODE_GENERATED = "generated"
 NODE_APPROVED = "approved"
-LESSON_NEEDS_REVISION = "needs_revision"
+UNIT_NEEDS_REVISION = "needs_revision"
 
 _STOPWORDS = {
     "一个", "我们", "你们", "他们", "这个", "那个", "可以", "需要", "使用", "进行",
@@ -102,7 +102,7 @@ class BlueprintService:
     def __init__(
         self,
         repository: BlueprintRepository,
-        course_repository: CourseRepository,
+        series_repository: SeriesRepository,
         vectorstore: VectorStore,
         llm: LLMProvider,
         default_top_k: int = 6,
@@ -112,7 +112,7 @@ class BlueprintService:
         min_score: float = 0.15,
     ) -> None:
         self.repository = repository
-        self.course_repository = course_repository
+        self.series_repository = series_repository
         self.vectorstore = vectorstore
         self.llm = llm
         self.default_top_k = default_top_k
@@ -123,7 +123,7 @@ class BlueprintService:
 
     async def generate(
         self,
-        course_id: str,
+        series_id: str,
         mode: str | None = None,
         top_k: int | None = None,
         source_ids: Sequence[str] | None = None,
@@ -132,20 +132,20 @@ class BlueprintService:
         llm: LLMProvider | None = None,
         spec: ProfileSpec | None = None,
         retrieval: RetrievalContext | None = None,
-    ) -> CourseBlueprint:
-        course = self.course_repository.get_course(course_id)
-        if course is None:
-            raise BlueprintNotFoundError(f"课程不存在: {course_id}")
+    ) -> SeriesBlueprint:
+        series = self.series_repository.get_series(series_id)
+        if series is None:
+            raise BlueprintNotFoundError(f"课程不存在: {series_id}")
         resolved_mode = GenerationMode.normalize(mode or self.default_mode)
         resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
-        lessons = self.course_repository.list_lessons(course_id)
+        units = self.series_repository.list_units(series_id)
         min_score = (
             self.min_score if resolved_mode is GenerationMode.strict else None
         )
         if retrieval is not None:
             citations, _ = await retrieval.search(
                 self.vectorstore,
-                self._build_query(course, focus, lessons),
+                self._build_query(series, focus, units),
                 top_k=resolved_top_k,
                 source_ids=source_ids,
                 tenant_id=tenant_id,
@@ -153,7 +153,7 @@ class BlueprintService:
             )
         else:
             citations = await self.vectorstore.search(
-                self._build_query(course, focus, lessons),
+                self._build_query(series, focus, units),
                 top_k=resolved_top_k,
                 source_ids=source_ids,
                 tenant_id=tenant_id,
@@ -171,184 +171,184 @@ class BlueprintService:
         provider_name = type(llm_provider).__name__
         if getattr(llm_provider, "is_placeholder", False):
             blueprint = self._placeholder_blueprint(
-                course, evidence, resolved_mode, provider_name, spec
+                series, evidence, resolved_mode, provider_name, spec
             )
         else:
             payload = await self._request_payload(
-                course, evidence, resolved_mode, focus, llm_provider, spec
+                series, evidence, resolved_mode, focus, llm_provider, spec
             )
             blueprint = self._blueprint_from_payload(
-                course, payload, evidence, resolved_mode, provider_name
+                series, payload, evidence, resolved_mode, provider_name
             )
         if retrieval is not None:
             blueprint.warnings = list(retrieval.warnings)
             blueprint.retrieval = retrieval.summary()
         return self.repository.save_blueprint(blueprint)
 
-    def get_blueprint(self, course_id: str) -> CourseBlueprint | None:
-        return self.repository.get_blueprint(course_id)
+    def get_blueprint(self, series_id: str) -> SeriesBlueprint | None:
+        return self.repository.get_blueprint(series_id)
 
     def save_blueprint(
         self,
-        course_id: str,
-        blueprint: CourseBlueprint,
+        series_id: str,
+        blueprint: SeriesBlueprint,
         expected_version: int | None = None,
-    ) -> CourseBlueprint:
-        existing = self.repository.get_blueprint(course_id)
+    ) -> SeriesBlueprint:
+        existing = self.repository.get_blueprint(series_id)
         current = existing.version if existing else 0
         if expected_version is not None and int(expected_version) != current:
             raise VersionConflictError(int(expected_version), current)
-        blueprint = blueprint.model_copy(update={"course_id": course_id})
+        blueprint = blueprint.model_copy(update={"series_id": series_id})
         return self.repository.save_blueprint(blueprint)
 
-    def apply(self, course_id: str) -> tuple[CourseBlueprint, list[Lesson]]:
-        blueprint = self.repository.get_blueprint(course_id)
+    def apply(self, series_id: str) -> tuple[SeriesBlueprint, list[Unit]]:
+        blueprint = self.repository.get_blueprint(series_id)
         if blueprint is None:
-            raise BlueprintNotFoundError(f"课程蓝图不存在: {course_id}")
-        if self.course_repository.get_course(course_id) is None:
-            raise BlueprintNotFoundError(f"课程不存在: {course_id}")
+            raise BlueprintNotFoundError(f"课程蓝图不存在: {series_id}")
+        if self.series_repository.get_series(series_id) is None:
+            raise BlueprintNotFoundError(f"课程不存在: {series_id}")
 
-        created: list[Lesson] = []
-        existing = self.course_repository.list_lessons(course_id)
-        next_index = max((lesson.order_index for lesson in existing), default=0) + 1
+        created: list[Unit] = []
+        existing = self.series_repository.list_units(series_id)
+        next_index = max((unit.order_index for unit in existing), default=0) + 1
         for node in blueprint.outline:
-            lesson: Lesson | None = None
-            if node.lesson_id:
-                lesson = self.course_repository.get_lesson(node.lesson_id)
-            if lesson is None:
-                lesson = self.course_repository.create_lesson(
-                    course_id=course_id,
+            unit: Unit | None = None
+            if node.unit_id:
+                unit = self.series_repository.get_unit(node.unit_id)
+            if unit is None:
+                unit = self.series_repository.create_unit(
+                    series_id=series_id,
                     title=node.title,
                     order_index=next_index,
                     learning_objectives=node.objectives,
                     prerequisites=node.prerequisites,
                     status=NODE_PLANNED,
                 )
-                created.append(lesson)
+                created.append(unit)
                 next_index += 1
-                node.lesson_id = lesson.id
-            node.status = self._node_status_for_lesson(lesson)
+                node.unit_id = unit.id
+            node.status = self._node_status_for_unit(unit)
         saved = self.repository.save_blueprint(blueprint)
         return saved, created
 
     def set_glossary(
-        self, course_id: str, terms: Sequence[GlossaryTerm]
-    ) -> CourseBlueprint:
-        blueprint = self.repository.get_blueprint(course_id)
+        self, series_id: str, terms: Sequence[GlossaryTerm]
+    ) -> SeriesBlueprint:
+        blueprint = self.repository.get_blueprint(series_id)
         if blueprint is None:
-            raise BlueprintNotFoundError(f"课程蓝图不存在: {course_id}")
+            raise BlueprintNotFoundError(f"课程蓝图不存在: {series_id}")
         blueprint.glossary = [
             term if isinstance(term, GlossaryTerm) else GlossaryTerm(**term)
             for term in terms
         ]
         return self.repository.save_blueprint(blueprint)
 
-    def sync_statuses(self, course_id: str) -> CourseBlueprint:
-        blueprint = self.repository.get_blueprint(course_id)
+    def sync_statuses(self, series_id: str) -> SeriesBlueprint:
+        blueprint = self.repository.get_blueprint(series_id)
         if blueprint is None:
-            raise BlueprintNotFoundError(f"课程蓝图不存在: {course_id}")
+            raise BlueprintNotFoundError(f"课程蓝图不存在: {series_id}")
         for node in blueprint.outline:
-            if not node.lesson_id:
+            if not node.unit_id:
                 continue
-            lesson = self.course_repository.get_lesson(node.lesson_id)
-            if lesson is None:
-                node.lesson_id = None
+            unit = self.series_repository.get_unit(node.unit_id)
+            if unit is None:
+                node.unit_id = None
                 node.status = NODE_PLANNED
                 continue
-            node.status = self._node_status_for_lesson(lesson)
+            node.status = self._node_status_for_unit(unit)
         return self.repository.save_blueprint(blueprint)
 
-    def review_lesson(
-        self, lesson_id: str, action: str, note: str = ""
-    ) -> tuple[Lesson, LessonReview]:
-        lesson = self.course_repository.get_lesson(lesson_id)
-        if lesson is None:
-            raise LessonNotFoundError(lesson_id)
+    def review_unit(
+        self, unit_id: str, action: str, note: str = ""
+    ) -> tuple[Unit, UnitReview]:
+        unit = self.series_repository.get_unit(unit_id)
+        if unit is None:
+            raise UnitNotFoundError(unit_id)
         resolved = (action or "").strip().lower()
         if resolved == REVIEW_APPROVE:
-            if not lesson.content.strip():
-                raise LessonContentEmptyError(lesson_id)
+            if not unit.content.strip():
+                raise UnitContentEmptyError(unit_id)
             status = NODE_APPROVED
             action_value = REVIEW_APPROVE
         elif resolved in (REVIEW_REQUEST_REVISION, "request-revision", "revision"):
-            status = LESSON_NEEDS_REVISION
+            status = UNIT_NEEDS_REVISION
             action_value = REVIEW_REQUEST_REVISION
         else:
             raise ValueError(f"不支持的审核动作: {action!r}")
 
-        updated = self.course_repository.update_lesson(lesson_id, status=status)
+        updated = self.series_repository.update_unit(unit_id, status=status)
         assert updated is not None
         review = self.repository.add_review(
-            lesson_id=lesson_id,
+            unit_id=unit_id,
             action=action_value,
             note=note,
-            version=lesson.current_version,
+            version=unit.current_version,
             status=status,
         )
-        self._sync_node_status(lesson.course_id, lesson_id, status)
+        self._sync_node_status(unit.series_id, unit_id, status)
         return updated, review
 
-    def list_reviews(self, lesson_id: str) -> list[LessonReview]:
-        return self.repository.list_reviews(lesson_id)
+    def list_reviews(self, unit_id: str) -> list[UnitReview]:
+        return self.repository.list_reviews(unit_id)
 
-    def progress(self, course_id: str) -> dict[str, Any]:
-        lessons = self.course_repository.list_lessons(course_id)
+    def progress(self, series_id: str) -> dict[str, Any]:
+        units = self.series_repository.list_units(series_id)
         by_status: dict[str, int] = {}
-        for lesson in lessons:
-            by_status[lesson.status] = by_status.get(lesson.status, 0) + 1
+        for unit in units:
+            by_status[unit.status] = by_status.get(unit.status, 0) + 1
         approved = by_status.get(NODE_APPROVED, 0)
         pending_review = sum(
             1
-            for lesson in lessons
-            if lesson.status != NODE_APPROVED and lesson.content.strip()
+            for unit in units
+            if unit.status != NODE_APPROVED and unit.content.strip()
         )
-        next_lesson_id: str | None = None
-        for lesson in lessons:
-            if lesson.status != NODE_APPROVED:
-                next_lesson_id = lesson.id
+        next_unit_id: str | None = None
+        for unit in units:
+            if unit.status != NODE_APPROVED:
+                next_unit_id = unit.id
                 break
-        blueprint = self.repository.get_blueprint(course_id)
+        blueprint = self.repository.get_blueprint(series_id)
         return {
-            "course_id": course_id,
-            "total": len(lessons),
+            "series_id": series_id,
+            "total": len(units),
             "by_status": by_status,
             "approved": approved,
             "pending_review": pending_review,
-            "next_lesson_id": next_lesson_id,
+            "next_unit_id": next_unit_id,
             "blueprint_ready": bool(blueprint and blueprint.outline),
             "blueprint_version": blueprint.version if blueprint else 0,
         }
 
-    def _sync_node_status(self, course_id: str, lesson_id: str, lesson_status: str) -> None:
-        blueprint = self.repository.get_blueprint(course_id)
+    def _sync_node_status(self, series_id: str, unit_id: str, unit_status: str) -> None:
+        blueprint = self.repository.get_blueprint(series_id)
         if blueprint is None:
             return
         node_status = (
-            NODE_APPROVED if lesson_status == NODE_APPROVED else NODE_GENERATED
+            NODE_APPROVED if unit_status == NODE_APPROVED else NODE_GENERATED
         )
         changed = False
         for node in blueprint.outline:
-            if node.lesson_id == lesson_id:
+            if node.unit_id == unit_id:
                 node.status = node_status
                 changed = True
         if changed:
             self.repository.save_blueprint(blueprint)
 
     @staticmethod
-    def _node_status_for_lesson(lesson: Lesson) -> str:
-        if lesson.status == NODE_APPROVED:
+    def _node_status_for_unit(unit: Unit) -> str:
+        if unit.status == NODE_APPROVED:
             return NODE_APPROVED
-        if lesson.content.strip():
+        if unit.content.strip():
             return NODE_GENERATED
         return NODE_PLANNED
 
-    def _build_query(self, course: Course, focus: str, lessons: Sequence[Any] | None = None) -> str:
-        parts = [course.title, course.subtitle, course.audience, focus]
-        for lesson in list(lessons or [])[:6]:
-            title = getattr(lesson, "title", "") or ""
-            if title and title not in course.title:
+    def _build_query(self, series: Series, focus: str, units: Sequence[Any] | None = None) -> str:
+        parts = [series.title, series.subtitle, series.audience, focus]
+        for unit in list(units or [])[:6]:
+            title = getattr(unit, "title", "") or ""
+            if title and title not in series.title:
                 parts.append(title)
-            objectives = getattr(lesson, "learning_objectives", None) or []
+            objectives = getattr(unit, "learning_objectives", None) or []
             for objective in list(objectives)[:2]:
                 parts.append(str(objective))
         seen: set[str] = set()
@@ -363,7 +363,7 @@ class BlueprintService:
 
     async def _request_payload(
         self,
-        course: Course,
+        series: Series,
         evidence: Sequence[Evidence],
         mode: GenerationMode,
         focus: str,
@@ -371,7 +371,7 @@ class BlueprintService:
         spec: ProfileSpec | None = None,
     ) -> dict[str, Any]:
         provider = llm or self.llm
-        prompt = self._build_prompt(course, evidence, mode, focus, spec)
+        prompt = self._build_prompt(series, evidence, mode, focus, spec)
         raw = await provider.complete(prompt)
         payload = _extract_json(raw)
         if payload is None:
@@ -388,7 +388,7 @@ class BlueprintService:
 
     def _build_prompt(
         self,
-        course: Course,
+        series: Series,
         evidence: Sequence[Evidence],
         mode: GenerationMode,
         focus: str,
@@ -398,9 +398,9 @@ class BlueprintService:
         stages_low, stages_high, nodes_low, nodes_high = self._plan_bounds(spec)
         values = prompt_values(
             spec,
-            title=course.title,
+            title=series.title,
             unit=unit,
-            audience=course.audience or "",
+            audience=series.audience or "",
             evidence_count=len(evidence),
         )
         lines: list[str] = []
@@ -412,11 +412,11 @@ class BlueprintService:
                 "你是资深课程架构师，负责为一门课程设计可执行的教学蓝图。",
                 "",
                 "## 课程信息",
-                f"- 标题：{course.title}",
-                f"- 副标题：{course.subtitle or '（无）'}",
-                f"- 目标读者：{course.audience or '（未指定）'}",
-                f"- 难度：{course.difficulty}",
-                f"- 语言：{course.language}",
+                f"- 标题：{series.title}",
+                f"- 副标题：{series.subtitle or '（无）'}",
+                f"- 目标读者：{series.audience or '（未指定）'}",
+                f"- 难度：{series.difficulty}",
+                f"- 语言：{series.language}",
                 f"- 写作单位：{unit}",
                 f"- 额外关注点：{focus.strip() or '（无）'}",
                 "",
@@ -511,12 +511,12 @@ class BlueprintService:
 
     def _blueprint_from_payload(
         self,
-        course: Course,
+        series: Series,
         payload: Mapping[str, Any],
         evidence: Sequence[Evidence],
         mode: GenerationMode,
         provider_name: str,
-    ) -> CourseBlueprint:
+    ) -> SeriesBlueprint:
         stages = _parse_stages(payload.get("learning_path") or payload.get("stages"))
         nodes = _parse_nodes(payload.get("outline") or payload.get("nodes"))
         if not nodes:
@@ -524,15 +524,15 @@ class BlueprintService:
         _assign_stages(stages, nodes)
         terms = _parse_terms(payload.get("glossary"))
         if not terms:
-            terms = self._placeholder_terms(course, evidence, [node.id for node in nodes])
+            terms = self._placeholder_terms(series, evidence, [node.id for node in nodes])
 
         grounded = mode is GenerationMode.strict and bool(evidence)
         overview = _as_str(payload.get("overview"))
         if mode is GenerationMode.loose and "未经知识库证据核实" not in overview:
             overview = f"⚠️ 本蓝图由大模型编写，未经知识库证据核实\n\n{overview}".strip()
 
-        return CourseBlueprint(
-            course_id=course.id,
+        return SeriesBlueprint(
+            series_id=series.id,
             overview=overview,
             mode=mode.value,
             grounded=grounded,
@@ -546,13 +546,13 @@ class BlueprintService:
 
     def _placeholder_blueprint(
         self,
-        course: Course,
+        series: Series,
         evidence: Sequence[Evidence],
         mode: GenerationMode,
         provider_name: str,
         spec: ProfileSpec | None = None,
-    ) -> CourseBlueprint:
-        title = course.title
+    ) -> SeriesBlueprint:
+        title = series.title
         unit = unit_name(spec)
         stage_titles = _stage_titles(spec)
         counts = _node_counts(spec, len(stage_titles))
@@ -618,16 +618,16 @@ class BlueprintService:
             else ""
         ) + (
             f"{term_source}覆盖「{title}」从入门到实践的 {len(stages)} 个阶段、"
-            f"{len(nodes)} 个{unit}。目标读者：{course.audience or '未指定'}；难度：{course.difficulty}。"
+            f"{len(nodes)} 个{unit}。目标读者：{series.audience or '未指定'}；难度：{series.difficulty}。"
         )
         glossary = self._placeholder_terms(
-            course, evidence, [node.id for node in nodes]
+            series, evidence, [node.id for node in nodes]
         )
         warning = PLACEHOLDER_WARNING
         if mode is GenerationMode.loose:
             warning = f"{PLACEHOLDER_WARNING}；{LOOSE_WARNING}"
-        return CourseBlueprint(
-            course_id=course.id,
+        return SeriesBlueprint(
+            series_id=series.id,
             overview=overview,
             mode=mode.value,
             grounded=mode is GenerationMode.strict and bool(evidence),
@@ -640,7 +640,7 @@ class BlueprintService:
         )
 
     def _placeholder_terms(
-        self, course: Course, evidence: Sequence[Evidence], node_ids: Sequence[str]
+        self, series: Series, evidence: Sequence[Evidence], node_ids: Sequence[str]
     ) -> list[GlossaryTerm]:
         counts: dict[str, int] = {}
         for item in evidence:
@@ -649,7 +649,7 @@ class BlueprintService:
                 counts[term] = counts.get(term, 0) + count
         selected = _select_terms(counts, 6)
         if len(selected) < 6:
-            meta = " ".join([course.title, course.subtitle, course.audience])
+            meta = " ".join([series.title, series.subtitle, series.audience])
             for term in _metadata_terms(meta):
                 if term in selected:
                     continue
@@ -671,7 +671,7 @@ class BlueprintService:
                     if term in (item.citation.text or item.citation.snippet)
                 }
             )
-            definition = f"占位释义：与「{course.title}」相关的关键概念，待补充资料后定稿。"
+            definition = f"占位释义：与「{series.title}」相关的关键概念，待补充资料后定稿。"
             if sources:
                 definition = f"{definition}出现于：{'、'.join(sources[:2])}。"
             terms.append(

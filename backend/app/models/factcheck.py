@@ -32,7 +32,7 @@ class CheckResult(BaseModel):
 
 
 class FactCheckReport(BaseModel):
-    lesson_id: str = ""
+    unit_id: str = ""
     count: int = 0
     supported: int = 0
     unsure: int = 0
@@ -45,7 +45,7 @@ class FactCheckReport(BaseModel):
     def build(
         cls,
         results: list[CheckResult],
-        lesson_id: str = "",
+        unit_id: str = "",
         retrieval: dict[str, Any] | None = None,
     ) -> "FactCheckReport":
         supported = sum(1 for item in results if item.verdict == VERDICT_SUPPORTED)
@@ -53,7 +53,7 @@ class FactCheckReport(BaseModel):
         unsupported = sum(1 for item in results if item.verdict == VERDICT_UNSUPPORTED)
         payload = dict(retrieval or {})
         return cls(
-            lesson_id=lesson_id,
+            unit_id=unit_id,
             count=len(results),
             supported=supported,
             unsure=unsure,

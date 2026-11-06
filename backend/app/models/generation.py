@@ -15,7 +15,7 @@ class Evidence(BaseModel):
 
 
 class GenerationResult(BaseModel):
-    lesson_id: str
+    unit_id: str
     version: int
     topic: str
     top_k: int

@@ -12,11 +12,11 @@ GENERATION_KINDS = (
     "ask",
     "blueprint",
     "research",
-    "longform",
+    "piece",
     "image",
     "exec",
 )
-TEXT_GENERATION_KINDS = ("generate", "amend", "ask", "blueprint", "research", "longform")
+TEXT_GENERATION_KINDS = ("generate", "amend", "ask", "blueprint", "research", "piece")
 HISTORY_MAX_DAYS = 90
 HISTORY_DEFAULT_DAYS = 30
 IMAGE_KINDS = ("image",)
@@ -38,8 +38,8 @@ class QuotaUsage(BaseModel):
     storage_bytes: int = 0
 
 
-class LessonLock(BaseModel):
-    lesson_id: str
+class UnitLock(BaseModel):
+    unit_id: str
     tenant_id: str = ""
     user_id: str = ""
     user_name: str = ""

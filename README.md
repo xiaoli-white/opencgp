@@ -24,7 +24,7 @@
 │   │   │   ├── storage.py    #   StorageBackend
 │   │   │   ├── llm.py        #   LLMProvider
 │   │   │   ├── vectorstore.py#   VectorStore
-│   │   │   ├── course_repository.py      #   课程/讲/版本仓库
+│   │   │   ├── series_repository.py      #   课程/讲/版本仓库
 │   │   │   ├── conversation_repository.py#   对话线（thread/message）仓库
 │   │   │   └── exporter.py   #   Exporter
 │   │   └── adapters/         # 具体实现（builtin 默认）
@@ -176,22 +176,22 @@ OPENCGP_RERANK_BATCH=32
 | POST | `/api/v1/kb/upload` | 上传知识库文档（pdf/docx/md/txt） |
 | POST | `/api/v1/kb/search` | 检索知识库，返回带来源的引用 |
 | DELETE | `/api/v1/kb/sources/{source_id}` | 删除知识源与其分块 |
-| POST | `/api/v1/courses` | 创建课程 |
-| GET | `/api/v1/courses` | 课程列表 |
-| GET | `/api/v1/courses/{course_id}` | 课程详情（含讲次） |
-| POST | `/api/v1/courses/{course_id}/lessons` | 创建讲次 |
-| GET | `/api/v1/courses/{course_id}/lessons` | 讲次列表 |
-| GET | `/api/v1/lessons/{lesson_id}` | 讲次详情（当前正文与版本号） |
-| POST | `/api/v1/lessons/{lesson_id}/generate` | 单讲生成（`mode=strict` 带引用 / `loose` 大模型自由写作，落 vN） |
-| GET | `/api/v1/lessons/{lesson_id}/versions` | 版本历史 |
-| POST | `/api/v1/lessons/{lesson_id}/revert` | 回滚到指定版本（追加新版本） |
-| POST | `/api/v1/lessons/{lesson_id}/ask` | 追问：基于正文 + 证据 + 对话线作答 |
-| POST | `/api/v1/lessons/{lesson_id}/amend` | 局部修改（支持 `mode=strict/loose`）：按自然语言指令落新版本 |
-| POST | `/api/v1/lessons/{lesson_id}/drilldown` | 沉淀：把某次追问回答追加进该讲 |
-| GET | `/api/v1/lessons/{lesson_id}/thread` | 该讲对话线（消息 + 证据） |
+| POST | `/api/v1/series` | 创建课程 |
+| GET | `/api/v1/series` | 课程列表 |
+| GET | `/api/v1/series/{series_id}` | 课程详情（含讲次） |
+| POST | `/api/v1/series/{series_id}/units` | 创建讲次 |
+| GET | `/api/v1/series/{series_id}/units` | 讲次列表 |
+| GET | `/api/v1/units/{unit_id}` | 讲次详情（当前正文与版本号） |
+| POST | `/api/v1/units/{unit_id}/generate` | 单讲生成（`mode=strict` 带引用 / `loose` 大模型自由写作，落 vN） |
+| GET | `/api/v1/units/{unit_id}/versions` | 版本历史 |
+| POST | `/api/v1/units/{unit_id}/revert` | 回滚到指定版本（追加新版本） |
+| POST | `/api/v1/units/{unit_id}/ask` | 追问：基于正文 + 证据 + 对话线作答 |
+| POST | `/api/v1/units/{unit_id}/amend` | 局部修改（支持 `mode=strict/loose`）：按自然语言指令落新版本 |
+| POST | `/api/v1/units/{unit_id}/drilldown` | 沉淀：把某次追问回答追加进该讲 |
+| GET | `/api/v1/units/{unit_id}/thread` | 该讲对话线（消息 + 证据） |
 | GET | `/api/v1/threads/{thread_id}` | 按对话线 ID 读取消息 |
 
-追问 / 修改 / 沉淀都复用追加式版本机制：正文变更只新增 `lesson_versions`，指令原文写入版本 `note`，历史可 diff、可回滚。
+追问 / 修改 / 沉淀都复用追加式版本机制：正文变更只新增 `unit_versions`，指令原文写入版本 `note`，历史可 diff、可回滚。
 
 ### 生成模式（strict / loose）
 
@@ -199,10 +199,10 @@ OPENCGP_RERANK_BATCH=32
 
 | 模式 | 行为 | 版本记录 |
 |---|---|---|
-| `strict`（默认） | 只基于检索证据写作，每段带 `[En]` 引用；检索不到证据直接返回「资料不足」，不硬写 | `lesson_versions.mode='strict'` |
-| `loose` | 允许模型基于自身通用知识自由写作，证据仅作可选参考；正文首行强制注入「⚠️ 本文由大模型编写，未经知识库证据核实」声明 | `lesson_versions.mode='loose'` |
+| `strict`（默认） | 只基于检索证据写作，每段带 `[En]` 引用；检索不到证据直接返回「资料不足」，不硬写 | `unit_versions.mode='strict'` |
+| `loose` | 允许模型基于自身通用知识自由写作，证据仅作可选参考；正文首行强制注入「⚠️ 本文由大模型编写，未经知识库证据核实」声明 | `unit_versions.mode='loose'` |
 
-`lessons.last_mode` 跟随最近一次生成模式，`generate` / `amend` 的返回体都带 `mode`，便于前端提示当前正文的可信度来源。
+`units.last_mode` 跟随最近一次生成模式，`generate` / `amend` 的返回体都带 `mode`，便于前端提示当前正文的可信度来源。
 
 ---
 
