@@ -124,7 +124,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "opencgp.databaseDsn" -}}
 {{- if .Values.externalDatabase.enabled -}}
-{{- required "externalDatabase.enabled=true 时必须设置 externalDatabase.dsn（形如 postgresql://user:password@host:5432/dbname）" .Values.externalDatabase.dsn -}}
+{{- required "externalDatabase.dsn is required when externalDatabase.enabled=true (e.g. postgresql://user:password@host:5432/dbname)" .Values.externalDatabase.dsn -}}
 {{- else if .Values.externalDatabase.dsn -}}
 {{- .Values.externalDatabase.dsn -}}
 {{- else if and .Values.postgres.enabled (eq .Values.mode "single") -}}
@@ -137,7 +137,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "opencgp.redisUrl" -}}
 {{- if .Values.externalRedis.enabled -}}
-{{- required "externalRedis.enabled=true 时必须设置 externalRedis.url（形如 redis://:password@host:6379/0）" .Values.externalRedis.url -}}
+{{- required "externalRedis.url is required when externalRedis.enabled=true (e.g. redis://:password@host:6379/0)" .Values.externalRedis.url -}}
 {{- else if .Values.externalRedis.url -}}
 {{- .Values.externalRedis.url -}}
 {{- else if .Values.config.redisUrl -}}
@@ -155,7 +155,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "opencgp.s3Endpoint" -}}
 {{- if .Values.externalS3.enabled -}}
-{{- required "externalS3.enabled=true 时必须设置 externalS3.endpoint（形如 https://s3.us-east-1.amazonaws.com 或 http://minio:9000）" .Values.externalS3.endpoint -}}
+{{- required "externalS3.endpoint is required when externalS3.enabled=true (e.g. https://s3.us-east-1.amazonaws.com or http://minio:9000)" .Values.externalS3.endpoint -}}
 {{- else if .Values.externalS3.endpoint -}}
 {{- .Values.externalS3.endpoint -}}
 {{- else if .Values.config.s3Endpoint -}}
@@ -209,33 +209,33 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "opencgp.validate" -}}
 {{- if not (has .Values.mode (list "single" "ha")) -}}
-{{- fail (printf "mode 只能是 single 或 ha，当前为 %q" (toString .Values.mode)) -}}
+{{- fail (printf "mode must be single or ha, got %q" (toString .Values.mode)) -}}
 {{- end -}}
 {{- if eq .Values.mode "ha" -}}
 {{- if not .Values.externalDatabase.dsn -}}
-{{- fail "mode=ha 必须提供 externalDatabase.dsn（例如 --set externalDatabase.dsn=postgresql://opencgp:pass@pg.database.svc:5432/opencgp）。Chart 在 HA 模式下不内置 PostgreSQL" -}}
+{{- fail "mode=ha requires externalDatabase.dsn (e.g. --set externalDatabase.dsn=postgresql://opencgp:pass@pg.database.svc:5432/opencgp); the chart does not ship PostgreSQL in HA mode" -}}
 {{- end -}}
 {{- if not (include "opencgp.redisUrl" .) -}}
-{{- fail "mode=ha 必须提供外部 Redis（--set externalRedis.url=redis://host:6379/0），且所有 API/Worker 实例必须指向同一个 Redis DB" -}}
+{{- fail "mode=ha requires external Redis (--set externalRedis.url=redis://host:6379/0); all API and worker pods must point at the same Redis DB" -}}
 {{- end -}}
 {{- if not (include "opencgp.s3Endpoint" .) -}}
-{{- fail "mode=ha 必须提供外部对象存储（--set externalS3.enabled=true --set externalS3.endpoint=https://s3.example.com）" -}}
+{{- fail "mode=ha requires external object storage (--set externalS3.enabled=true --set externalS3.endpoint=https://s3.example.com)" -}}
 {{- end -}}
 {{- if not .Values.worker.enabled -}}
-{{- fail "mode=ha 必须保持 worker.enabled=true：api.jobConcurrency=0 时若没有 Worker 就没有任何实例消费队列" -}}
+{{- fail "mode=ha requires worker.enabled=true: with api.jobConcurrency=0 nothing consumes the queue without a worker" -}}
 {{- end -}}
 {{- if ne (int .Values.api.jobConcurrency) 0 -}}
-{{- fail "mode=ha 要求 api.jobConcurrency=0（API 节点只处理 HTTP，不消费任务）；消费者并发请配置 worker.jobConcurrency" -}}
+{{- fail "mode=ha requires api.jobConcurrency=0 (API pods serve HTTP and consume nothing); set worker.jobConcurrency for consumption" -}}
 {{- end -}}
 {{- end -}}
 {{- if and (eq .Values.config.databaseBackend "postgres") (not (include "opencgp.databaseDsn" .)) -}}
-{{- fail "databaseBackend=postgres 但没有可用的 DSN：请启用内置 postgres（postgres.enabled=true，仅 single）或设置 externalDatabase.dsn" -}}
+{{- fail "databaseBackend=postgres but no DSN available: enable the bundled postgres (postgres.enabled=true, single mode only) or set externalDatabase.dsn" -}}
 {{- end -}}
 {{- if and (eq .Values.config.queueBackend "redis") (not (include "opencgp.redisUrl" .)) -}}
-{{- fail "queueBackend=redis 但没有可用的 Redis URL：请启用内置 redis（redis.enabled=true，仅 single）、设置 config.redisUrl 或 externalRedis.url" -}}
+{{- fail "queueBackend=redis but no Redis URL available: enable the bundled redis (redis.enabled=true, single mode only), set config.redisUrl or externalRedis.url" -}}
 {{- end -}}
 {{- if and (eq .Values.config.storageBackend "s3") (not (include "opencgp.s3Endpoint" .)) -}}
-{{- fail "storageBackend=s3 但没有可用的 endpoint：请启用内置 rustfs（rustfs.enabled=true，仅 single）、设置 config.s3Endpoint 或 externalS3.endpoint" -}}
+{{- fail "storageBackend=s3 but no endpoint available: enable the bundled rustfs (rustfs.enabled=true, single mode only), set config.s3Endpoint or externalS3.endpoint" -}}
 {{- end -}}
 {{- end -}}
 

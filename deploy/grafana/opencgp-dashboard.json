@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "OpenCGP 后端 /metrics 概览：请求速率、P95 延迟、任务吞吐、队列积压、适配器健康、配额用量。",
+  "description": "OpenCGP backend /metrics overview: request rate, P95 latency, job throughput, queue backlog, adapter health, quota usage.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -25,8 +25,8 @@
     {
       "id": 1,
       "type": "timeseries",
-      "title": "请求速率（按 route）",
-      "description": "opencgp_http_requests_total 按 route 分组的每秒请求数。",
+      "title": "Request rate (by route)",
+      "description": "Requests per second from opencgp_http_requests_total, grouped by route.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -87,8 +87,8 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "P95 延迟（按 route）",
-      "description": "由 opencgp_http_request_duration_seconds histogram 计算的 P95 延迟。",
+      "title": "P95 latency (by route)",
+      "description": "P95 latency computed from the opencgp_http_request_duration_seconds histogram.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -149,8 +149,8 @@
     {
       "id": 3,
       "type": "timeseries",
-      "title": "任务吞吐（kind/status）",
-      "description": "opencgp_jobs_total 按 kind 与 status 分组的每秒任务数。",
+      "title": "Job throughput (kind/status)",
+      "description": "Jobs per second from opencgp_jobs_total, grouped by kind and status.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -211,8 +211,8 @@
     {
       "id": 4,
       "type": "timeseries",
-      "title": "队列积压",
-      "description": "opencgp_queue_backlog 队列积压长度。",
+      "title": "Queue backlog",
+      "description": "Pending length reported by opencgp_queue_backlog.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -284,8 +284,8 @@
     {
       "id": 5,
       "type": "stat",
-      "title": "适配器健康",
-      "description": "opencgp_adapter_up，1 为健康，0 为异常。",
+      "title": "Adapter health",
+      "description": "opencgp_adapter_up: 1 healthy, 0 failing.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -364,8 +364,8 @@
     {
       "id": 6,
       "type": "bargauge",
-      "title": "配额用量（按 kind）",
-      "description": "opencgp_quota_usage 当前租户本月用量。",
+      "title": "Quota usage (by kind)",
+      "description": "Current month usage per tenant from opencgp_quota_usage.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"

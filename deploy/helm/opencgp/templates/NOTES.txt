@@ -1,53 +1,61 @@
 {{- $fullName := include "opencgp.fullname" . }}
-OpenCGP release {{ .Release.Name }} 已部署到命名空间 {{ .Release.Namespace }}（mode={{ .Values.mode }}）。
+OpenCGP release {{ .Release.Name }} is deployed in namespace {{ .Release.Namespace }} (mode={{ .Values.mode }}).
 
-服务：
-  前端  {{ $fullName }}-frontend:{{ .Values.frontend.service.port }}   (nginx 静态站点 + /api 反向代理)
+Workloads:
+  frontend {{ $fullName }}-frontend:{{ .Values.frontend.service.port }}   (nginx static site + /api reverse proxy)
 {{- if eq .Values.mode "ha" }}
-  API   {{ include "opencgp.apiName" . }}:{{ .Values.api.service.port }}   (FastAPI，JOB_CONCURRENCY=0，replicas={{ .Values.api.replicas }})
-  Worker {{ include "opencgp.workerName" . }}   (无 Service，JOB_CONCURRENCY={{ .Values.worker.jobConcurrency }}，replicas={{ .Values.worker.replicas }})
+  api      {{ include "opencgp.apiName" . }}:{{ .Values.api.service.port }}   (FastAPI, JOB_CONCURRENCY=0, replicas={{ .Values.api.replicas }})
+  worker   {{ include "opencgp.workerName" . }}   (no Service, JOB_CONCURRENCY={{ .Values.worker.jobConcurrency }}, replicas={{ .Values.worker.replicas }})
 {{- else }}
-  后端  {{ $fullName }}-backend:{{ .Values.backend.service.port }}   (FastAPI，API+Worker 合一，JOB_CONCURRENCY={{ .Values.config.jobConcurrency }})
+  backend  {{ $fullName }}-backend:{{ .Values.backend.service.port }}   (FastAPI, API and worker in one process, JOB_CONCURRENCY={{ .Values.config.jobConcurrency }})
 {{- end }}
 {{- if include "opencgp.builtinPostgresEnabled" . }}
-  PG    {{ include "opencgp.postgresName" . }}:{{ include "opencgp.postgresPort" . }} (内置，仅供单机模式)
+  postgres {{ include "opencgp.postgresName" . }}:{{ include "opencgp.postgresPort" . }} (bundled, single mode only)
 {{- end }}
 {{- if .Values.redis.enabled }}
-  Redis {{ $fullName }}-redis:{{ .Values.redis.service.port }} (headless)
+  redis    {{ $fullName }}-redis:{{ .Values.redis.service.port }} (headless)
 {{- end }}
 {{- if .Values.rustfs.enabled }}
-  rustfs {{ $fullName }}-rustfs:{{ .Values.rustfs.service.port }} (console {{ .Values.rustfs.service.consolePort }})
+  rustfs   {{ $fullName }}-rustfs:{{ .Values.rustfs.service.port }} (console {{ .Values.rustfs.service.consolePort }})
 {{- end }}
 
-本机访问：
+Open the UI locally:
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ $fullName }}-frontend 8080:{{ .Values.frontend.service.port }}
-  然后打开 http://127.0.0.1:8080
+  then browse http://127.0.0.1:8080
 
-后端直连与健康检查：
+Reach the backend directly and check health:
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "opencgp.backendHost" . }} {{ .Values.api.service.port }}:{{ .Values.api.service.port }}
   curl -s http://127.0.0.1:{{ .Values.api.service.port }}/health
   curl -s http://127.0.0.1:{{ .Values.api.service.port }}/metrics | head
 
-{{- if .Values.ingress.enabled }}
+{{- if .Values.gateway.enabled }}
 
-入口：
-  {{- range .Values.ingress.hosts }}
-  http://{{ .host }}
+Gateway API:
+  HTTPRoute {{ include "opencgp.fullname" . }} is attached to:
+  {{- range .Values.gateway.parentRefs }}
+  - Gateway {{ if .namespace }}{{ .namespace }}/{{ end }}{{ .name }}{{ with .sectionName }} (section {{ . }}){{ end }}
   {{- end }}
-{{- end }}
+  {{- range .Values.gateway.hostnames }}
+  http://{{ . }}
+  {{- end }}
+  The Gateway controller must accept routes from this namespace
+  (allowedRoutes) and offer a listener on port 80 or 443.
 
-鉴权模式：{{ .Values.config.authMode }}{{ if eq .Values.config.authMode "required" }}（首个注册用户自动成为 owner 并激活，其余用户需管理员审核）{{ end }}
+Auth mode: {{ .Values.config.authMode }}{{ if eq .Values.config.authMode "required" }} (the first signup becomes an active owner; later signups need an admin approval){{ end }}
 
-读取自动生成的敏感配置：
-  kubectl -n {{ .Release.Namespace }} get secret {{ include "opencgp.secretName" . }} -o jsonpath='{.data.COURSE_STUDIO_AUTH_SECRET}' | base64 -d
-  kubectl -n {{ .Release.Namespace }} get secret {{ include "opencgp.secretName" . }} -o jsonpath='{.data.COURSE_STUDIO_DATABASE_DSN}' | base64 -d
+Read the generated secrets:
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "opencgp.secretName" . }} -o jsonpath='{.data.OPENCGP_AUTH_SECRET}' | base64 -d
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "opencgp.secretName" . }} -o jsonpath='{.data.OPENCGP_DATABASE_DSN}' | base64 -d
 
-重要提示：
-  database backend = {{ .Values.config.databaseBackend }}，queue backend = {{ .Values.config.queueBackend }}，storage backend = {{ .Values.config.storageBackend }}，executor = {{ .Values.config.executorBackend }}。
+Current backends: database={{ .Values.config.databaseBackend }}, queue={{ .Values.config.queueBackend }}, storage={{ .Values.config.storageBackend }}, executor={{ .Values.config.executorBackend }}.
 {{- if eq .Values.mode "ha" }}
-  HA 模式下所有 API/Worker 实例共用同一个 Redis DB；不要把不同实例指向不同库编号，否则任务会被错误的实例抢走。
-  API 节点 JOB_CONCURRENCY=0 只处理 HTTP，任务全部由 worker-deployment 消费（replicas={{ .Values.worker.replicas }}）。
+
+Notes for HA:
+  All API and worker pods share one Redis DB; never point different pods at different DB indexes or jobs get picked up by the wrong pod.
+  API pods run with JOB_CONCURRENCY=0 and serve HTTP only; all jobs are consumed by worker-deployment (replicas={{ .Values.worker.replicas }}).
 {{- else }}
-  单机模式下 backend.replicas 必须为 1（内置 PG/Redis/rustfs 与 PVC 均为单副本）；需要多副本请使用 mode=ha + 外部依赖。
+
+Notes for single mode:
+  backend.replicas must stay 1 (bundled PostgreSQL, Redis, rustfs and the PVC are all single-replica); use mode=ha with external dependencies for multiple replicas.
 {{- end }}
-  /metrics 只经 Pod 注解被 Prometheus 抓取，不通过 Ingress 暴露。
+  /metrics is scraped through pod annotations only and is never exposed through the Gateway.

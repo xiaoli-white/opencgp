@@ -4,13 +4,13 @@ fullnameOverride: ""
 mode: single
 
 notes:
-  mode: "mode=single 渲染 backend-deployment（API+Worker 合一，JOB_CONCURRENCY>0）；mode=ha 渲染 api-deployment（JOB_CONCURRENCY=0）+ worker-deployment"
-  database: "统一使用 PostgreSQL；mode=single 可用内置 postgres StatefulSet，mode=ha 必须提供 externalDatabase.dsn 且内置 postgres 自动关闭"
-  api: "API 节点只处理 HTTP 请求，JOB_CONCURRENCY=0 保证不消费队列；所有实例必须共用同一个 Redis DB，否则任务会被错误的实例抢走"
-  worker: "worker-deployment 不接流量、不带 Service，扩缩容依据 CPU 或 opencgp_queue_backlog 队列积压"
-  executor: "集群内没有 docker socket，executor.backend 保持 none；需要代码实跑请部署独立 runner 或使用可信节点上的 local 后端"
-  frontend: "VITE_API_BASE 是构建期变量，构建前端镜像时必须注入 /api；运行时由 nginx 同源反代 /api 到 api/backend service"
-  images: "本 chart 假定镜像已构建并推送；backend.image 同时用于单机 backend、API 与 Worker"
+  mode: "mode=single renders backend-deployment (API and worker in one process, JOB_CONCURRENCY>0); mode=ha renders api-deployment (JOB_CONCURRENCY=0) plus worker-deployment"
+  database: "PostgreSQL only. mode=single may use the bundled postgres StatefulSet; mode=ha requires externalDatabase.dsn and disables the bundled postgres"
+  api: "API pods serve HTTP only, JOB_CONCURRENCY=0 keeps them from consuming the queue; every instance must share the same Redis DB or jobs get picked up by the wrong pod"
+  worker: "worker-deployment gets no traffic and no Service; scale it on CPU or the opencgp_queue_backlog metric"
+  executor: "There is no docker socket inside the cluster, so executor.backend stays none; to actually run code deploy a separate runner or use the local backend on a trusted node"
+  frontend: "VITE_API_BASE is a build-time variable, inject /api when building the frontend image; at runtime nginx reverse proxies /api to the api/backend service on the same origin"
+  images: "This chart assumes images are already built and pushed; backend.image is used by the single-mode backend, the API and the worker"
 
 imagePullSecrets: []
 
@@ -387,16 +387,28 @@ secrets:
   websearchApiKey: ""
   smtpPassword: ""
 
-ingress:
+gateway:
+  # Gateway API HTTPRoute. Requires a Gateway controller (Envoy Gateway,
+  # Istio, Cilium, Traefik, ...) and a Gateway resource that already exists.
   enabled: false
-  className: ""
+  # HTTPRoute hostnames; empty means "match everything the Gateway accepts"
+  hostnames:
+    - opencgp.local
+  # parentRefs point the HTTPRoute at the Gateway that should serve it
+  parentRefs:
+    - name: opencgp-gateway
+      namespace: ""
+      sectionName: ""
   annotations: {}
-  hosts:
-    - host: opencgp.local
-      paths:
-        - path: /
-          pathType: Prefix
-  tls: []
+  # Rules generated for the frontend Service; the frontend nginx already
+  # reverse proxies /api to the backend, so one rule is enough by default
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      # Optional header/query filters, rendered verbatim
+      filters: []
 
 networkPolicy:
   enabled: false

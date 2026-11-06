@@ -1,0 +1,51 @@
+{{- if .Values.gateway.enabled }}
+{{- $fullName := include "opencgp.fullname" . }}
+{{- $svcPort := .Values.frontend.service.port }}
+{{- if not .Values.gateway.parentRefs }}
+{{- fail "gateway.enabled=true requires at least one gateway.parentRefs entry pointing at an existing Gateway" }}
+{{- end }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "opencgp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+  {{- with .Values.gateway.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.gateway.parentRefs }}
+  parentRefs:
+    {{- range . }}
+    - name: {{ .name }}
+      {{- with .namespace }}
+      namespace: {{ . }}
+      {{- end }}
+      {{- with .sectionName }}
+      sectionName: {{ . }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- with .Values.gateway.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.gateway.rules }}
+    - matches:
+        {{- range .matches }}
+        - path:
+            type: {{ .path.type | default "PathPrefix" }}
+            value: {{ .path.value | default "/" }}
+        {{- end }}
+      {{- with .filters }}
+      filters:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      backendRefs:
+        - name: {{ $fullName }}-frontend
+          port: {{ $svcPort }}
+    {{- end }}
+{{- end }}
