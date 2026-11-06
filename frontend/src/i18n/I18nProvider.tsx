@@ -26,12 +26,12 @@ const STORAGE_KEY = "cs_locale";
 const I18nContext = createContext<I18nValue | null>(null);
 
 function detectLocale(): Locale {
-  if (typeof window === "undefined") return "zh";
+  if (typeof window === "undefined") return "en";
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY);
     if (saved === "zh" || saved === "en") return saved;
   } catch {
-    return "zh";
+    return "en";
   }
   const lang = (window.navigator.language || "zh").toLowerCase();
   return lang.startsWith("zh") ? "zh" : "en";
