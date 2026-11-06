@@ -16,6 +16,7 @@ import { useI18n } from "@/i18n/I18nProvider";
 import ProvidersSection from "@/components/settings/ProvidersSection";
 import RetrievalWeightsSection from "@/components/settings/RetrievalWeightsSection";
 import ServerProvidersCard from "@/components/settings/ServerProvidersCard";
+import ServerProfilesCard from "@/components/settings/ServerProfilesCard";
 import UserReviewCard from "@/components/settings/UserReviewCard";
 import SettingsBreadcrumb from "@/components/settings/SettingsBreadcrumb";
 import NoAccessCard from "@/components/common/NoAccessCard";
@@ -109,6 +110,18 @@ export default function ServerSettingsPage() {
       />
 
       <ServerProvidersCard
+        canManage={canServer}
+        onNotice={(message) => {
+          setError("");
+          setNotice(message);
+        }}
+        onError={(message) => {
+          setNotice("");
+          setError(message);
+        }}
+      />
+
+      <ServerProfilesCard
         canManage={canServer}
         onNotice={(message) => {
           setError("");

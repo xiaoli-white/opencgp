@@ -23,6 +23,7 @@ SCHEMA: tuple[str, ...] = (
         name TEXT NOT NULL DEFAULT '',
         description TEXT NOT NULL DEFAULT '',
         spec_json TEXT NOT NULL DEFAULT '{}',
+        scope TEXT NOT NULL DEFAULT 'user',
         is_builtin INTEGER NOT NULL DEFAULT 0,
         is_shared INTEGER NOT NULL DEFAULT 0,
         version INTEGER NOT NULL DEFAULT 1,
@@ -43,6 +44,14 @@ SCHEMA: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_profile_shares_user ON profile_shares(user_id)",
+)
+
+MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE work_profiles ADD COLUMN scope TEXT NOT NULL DEFAULT 'user'",
+)
+
+SCOPE_RANK_SQL = (
+    "CASE p.scope WHEN 'global' THEN 2 WHEN 'tenant' THEN 1 ELSE 0 END"
 )
 
 SELECT_PROFILE = (
@@ -70,6 +79,7 @@ def _to_profile(row: Mapping[str, Any]) -> WorkProfile:
         name=str(row["name"] or ""),
         description=str(row["description"] or ""),
         spec=spec,
+        scope=str(row["scope"] or "user") if "scope" in keys else "user",
         is_builtin=bool(row["is_builtin"]),
         is_shared=bool(row["is_shared"]),
         version=int(row["version"] or 0),
@@ -104,6 +114,11 @@ class DatabaseWorkProfileRepository(WorkProfileRepository):
             return
         for statement in SCHEMA:
             self.database.execute(statement)
+        for statement in MIGRATIONS:
+            try:
+                self.database.execute(statement)
+            except Exception:
+                pass
         self._schema_ready = True
 
     def create(self, profile: WorkProfile) -> WorkProfile:
@@ -119,8 +134,8 @@ class DatabaseWorkProfileRepository(WorkProfileRepository):
         )
         self.database.execute(
             "INSERT INTO work_profiles (id, tenant_id, owner_user_id, name, description,"
-            " spec_json, is_builtin, is_shared, version, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " spec_json, scope, is_builtin, is_shared, version, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 item.id,
                 item.tenant_id,
@@ -128,6 +143,7 @@ class DatabaseWorkProfileRepository(WorkProfileRepository):
                 item.name,
                 item.description,
                 json.dumps(item.spec.model_dump(), ensure_ascii=False),
+                item.scope or "user",
                 1 if item.is_builtin else 0,
                 1 if item.is_shared else 0,
                 int(item.version),
@@ -151,10 +167,13 @@ class DatabaseWorkProfileRepository(WorkProfileRepository):
         self.ensure_schema()
         rows = self.database.fetchall(
             f"{SELECT_PROFILE} WHERE p.is_builtin = 1"
-            " OR (p.tenant_id = ? AND (p.owner_user_id = ? OR p.is_shared = 1))"
+            " OR p.scope = 'global'"
+            " OR (p.scope = 'tenant' AND p.tenant_id = ?)"
+            " OR (p.tenant_id = ? AND p.owner_user_id = ?)"
+            " OR (p.tenant_id = ? AND p.is_shared = 1)"
             " OR p.id IN (SELECT profile_id FROM profile_shares WHERE user_id = ?)"
-            " ORDER BY p.is_builtin DESC, p.updated_at DESC",
-            (tenant_id, user_id, user_id),
+            f" ORDER BY p.is_builtin DESC, {SCOPE_RANK_SQL} DESC, p.updated_at DESC",
+            (tenant_id, tenant_id, user_id, tenant_id, user_id),
         )
         return [_to_profile(row) for row in rows]
 

@@ -11,6 +11,10 @@ VALIDATORS = ("citation", "length", "structure", "continuity")
 STRICTNESS_LEVELS = ("loose", "normal", "strict")
 EXPORT_FORMATS = ("md", "html", "epub", "pdf")
 SHARE_LEVELS = ("read", "use", "manage")
+PROFILE_SCOPES = ("user", "tenant", "global")
+SCOPE_USER = "user"
+SCOPE_TENANT = "tenant"
+SCOPE_GLOBAL = "global"
 SYSTEM_TENANT_ID = "system"
 SYSTEM_USER_ID = "system"
 BUILTIN_ID_PREFIX = "profile_builtin_"
@@ -112,6 +116,7 @@ class WorkProfile(BaseModel):
     name: str = ""
     description: str = ""
     spec: ProfileSpec = Field(default_factory=ProfileSpec)
+    scope: str = SCOPE_USER
     is_builtin: bool = False
     is_shared: bool = False
     version: int = 1

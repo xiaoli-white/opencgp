@@ -1006,6 +1006,34 @@ function filenameFromDisposition(header: string | null): string {
   return plain?.[1] ? plain[1].trim() : "";
 }
 
+async function exportProfileFile(profileId: string): Promise<ExportResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${API_BASE}/api/v1/profiles/${encodeURIComponent(profileId)}/export`,
+      { headers: authHeaders(), cache: "no-store" },
+    );
+  } catch {
+    throw new ApiError(`无法连接后端服务（${API_BASE}）`, 0);
+  }
+  if (!response.ok) {
+    let message = `导出失败（${response.status}）`;
+    try {
+      const body = (await response.json()) as Record<string, unknown> | null;
+      const detail = body?.detail;
+      if (typeof detail === "string") message = detail;
+    } catch {
+      message = `${message} ${response.statusText}`.trim();
+    }
+    throw new ApiError(message, response.status);
+  }
+  const blob = await response.blob();
+  const filename =
+    filenameFromDisposition(response.headers.get("content-disposition")) ||
+    `${profileId}.profile.json`;
+  return { blob, filename };
+}
+
 export async function exportDocument(
   sourceType: ExportSourceType,
   sourceId: string,
@@ -1142,15 +1170,20 @@ export type ProfileSpec = {
   export?: ProfileExportSpec;
 };
 
+export type ProfileScope = "user" | "tenant" | "global";
+
 export type WorkProfile = {
   id: string;
   tenant_id?: string;
   name: string;
   description: string;
   spec: ProfileSpec;
+  scope?: ProfileScope | string;
   is_builtin: boolean;
   is_owner: boolean;
+  can_edit?: boolean;
   is_shared: boolean;
+  shared_by_owner?: boolean;
   shared_to_me?: boolean;
   share_level?: string;
   owner_name?: string;
@@ -1158,6 +1191,32 @@ export type WorkProfile = {
   version: number;
   created_at?: number;
   updated_at?: number;
+};
+
+export type ProfileSampleIssue = {
+  level: string;
+  message: string;
+  where?: string;
+};
+
+export type ProfileSampleResult = {
+  name: string;
+  passed: boolean;
+  score: number;
+  issues: ProfileSampleIssue[];
+};
+
+export type ProfileSampleReport = {
+  results: ProfileSampleResult[];
+  summary?: { passed?: number; warnings?: number; errors?: number };
+};
+
+export type ProfileSample = {
+  text: string;
+  chars: number;
+  model: string;
+  elapsed_ms: number;
+  validation: ProfileSampleReport;
 };
 
 export type ProfileValidationIssue = {
@@ -2066,6 +2125,7 @@ export const api = {
     description?: string;
     spec?: ProfileSpec;
     is_shared?: boolean;
+    scope?: ProfileScope | string;
   }) =>
     request<WorkProfile>("/api/v1/profiles", {
       method: "POST",
@@ -2095,6 +2155,23 @@ export const api = {
     request<WorkProfile>(`/api/v1/profiles/${profileId}/duplicate`, {
       method: "POST",
       body: JSON.stringify(payload ?? {}),
+    }),
+
+  importWorkProfile: (
+    data: Record<string, unknown>,
+    payload?: { name?: string; scope?: ProfileScope | string },
+  ) =>
+    request<WorkProfile>("/api/v1/profiles/import", {
+      method: "POST",
+      body: JSON.stringify({ data, ...(payload ?? {}) }),
+    }),
+
+  exportWorkProfile: (profileId: string) => exportProfileFile(profileId),
+
+  sampleWorkProfile: (profileId: string, payload: { topic?: string; chars?: number }) =>
+    request<ProfileSample>(`/api/v1/profiles/${profileId}/sample`, {
+      method: "POST",
+      body: JSON.stringify(payload),
     }),
 
   validateWorkProfile: (spec: ProfileSpec) =>

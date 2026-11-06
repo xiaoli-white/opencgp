@@ -228,7 +228,11 @@ class ProfileInUseError(RuntimeError):
 
 
 class ProfileInvalidError(ValueError):
-    pass
+    def __init__(
+        self, message: str = "", errors: list[dict[str, str]] | None = None
+    ) -> None:
+        super().__init__(message)
+        self.errors = list(errors or [])
 
 
 class ShareNotFoundError(Exception):

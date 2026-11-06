@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sqlite3
 import time
 from contextlib import asynccontextmanager
@@ -4442,6 +4443,7 @@ class ProfileCreateRequest(BaseModel):
     description: str = ""
     spec: dict[str, Any] | None = None
     is_shared: bool = False
+    scope: str = "user"
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -4463,6 +4465,17 @@ class ProfilePreviewRequest(BaseModel):
     sample: dict[str, Any] | None = None
 
 
+class ProfileImportRequest(BaseModel):
+    data: dict[str, Any]
+    name: str | None = None
+    scope: str = "user"
+
+
+class ProfileSampleRequest(BaseModel):
+    topic: str | None = None
+    chars: int = 300
+
+
 class ProfileShareItem(BaseModel):
     user_id: str = Field(min_length=1)
     level: str = "read"
@@ -4475,7 +4488,15 @@ class ProfileShareReplaceRequest(BaseModel):
 def _profile_error(exc: Exception) -> HTTPException:
     if isinstance(exc, ProfileNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
-    if isinstance(exc, (BuiltinProfileError, ProfileInvalidError, ValueError)):
+    if isinstance(exc, ProfileInvalidError):
+        errors = getattr(exc, "errors", None) or []
+        if errors:
+            return HTTPException(
+                status_code=400,
+                detail={"message": str(exc), "errors": errors},
+            )
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, (BuiltinProfileError, ValueError)):
         return HTTPException(status_code=400, detail=str(exc))
     if isinstance(exc, ProfileInUseError):
         return HTTPException(status_code=409, detail=str(exc))
@@ -4507,6 +4528,20 @@ def create_work_profile(
             spec=req.spec,
             is_shared=req.is_shared,
             description=req.description,
+            scope=req.scope,
+        )
+    except Exception as exc:
+        raise _profile_error(exc) from exc
+
+
+@app.post("/api/v1/profiles/import", status_code=201)
+def import_work_profile(
+    req: ProfileImportRequest, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    try:
+        return container.profiles().import_profile(
+            ctx, req.data, name=req.name, scope=req.scope
         )
     except Exception as exc:
         raise _profile_error(exc) from exc
@@ -4573,6 +4608,67 @@ def duplicate_work_profile(
         return container.profiles().duplicate(ctx, profile_id, name=req.name)
     except Exception as exc:
         raise _profile_error(exc) from exc
+
+
+@app.get("/api/v1/profiles/{profile_id}/export")
+def export_work_profile(
+    profile_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> JSONResponse:
+    _enforce(ctx, "read")
+    try:
+        payload = container.profiles().export_payload(ctx, profile_id)
+    except Exception as exc:
+        raise _profile_error(exc) from exc
+    filename = f"{payload.get('name') or profile_id}.profile.json"
+    encoded = quote(filename)
+    disposition = f'attachment; filename="{encoded}"'
+    if encoded != filename:
+        disposition += f"; filename*=UTF-8''{encoded}"
+    return JSONResponse(
+        content=payload,
+        headers={"Content-Disposition": disposition},
+    )
+
+
+@app.post("/api/v1/profiles/{profile_id}/sample")
+async def sample_work_profile(
+    profile_id: str,
+    req: ProfileSampleRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    try:
+        profile, prompt, target = container.profiles().sample_prompt(
+            ctx, profile_id, topic=req.topic, chars=req.chars
+        )
+    except Exception as exc:
+        raise _profile_error(exc) from exc
+    provider = container.llm_for(ctx.user.id)
+    model = str(getattr(provider, "model", "") or "")
+    started = time.perf_counter()
+    try:
+        raw = await asyncio.wait_for(
+            provider.complete(prompt, max_tokens=max(256, target * 3)),
+            timeout=120,
+        )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="试写超时（120s）") from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"试写生成失败：{type(exc).__name__}: {exc}"
+        ) from exc
+    text = container.profiles().finalize_sample(profile, raw, target)
+    if not text:
+        raise HTTPException(status_code=502, detail="试写生成失败：模型返回空内容")
+    report = await container.validators().run(profile.spec, text)
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    return {
+        "text": text,
+        "chars": len(re.sub(r"\s+", "", text)),
+        "model": model,
+        "elapsed_ms": elapsed_ms,
+        "validation": report.model_dump(),
+    }
 
 
 @app.post("/api/v1/profiles/{profile_id}/preview")

@@ -5,7 +5,11 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Copy,
+  FlaskConical,
   Loader2,
+  Play,
+  RefreshCw,
   Save,
   Sparkles,
   X,
@@ -13,6 +17,8 @@ import {
 import clsx from "clsx";
 import {
   api,
+  type ProfileSample,
+  type ProfileScope,
   type ProfileSpec,
   type ProfileValidation,
   type ProfileValidationIssue,
@@ -264,19 +270,219 @@ function Toggle({
   );
 }
 
+function SamplePanel({
+  t,
+  topic,
+  onTopic,
+  onStart,
+  onCopy,
+  onRegenerate,
+  running,
+  copied,
+  error,
+  sample,
+  canRun,
+}: {
+  t: (path: string, vars?: Record<string, string | number>) => string;
+  topic: string;
+  onTopic: (value: string) => void;
+  onStart: () => void;
+  onCopy: () => void;
+  onRegenerate: () => void;
+  running: boolean;
+  copied: boolean;
+  error: string;
+  sample: ProfileSample | null;
+  canRun: boolean;
+}) {
+  const [openChip, setOpenChip] = useState<string | null>(null);
+
+  return (
+    <div
+      data-sample-panel="true"
+      className="mb-2.5 min-w-0 rounded-2xl border border-white/60 bg-white/60 p-3 dark:border-white/10 dark:bg-white/[0.04]"
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-slate-700 dark:text-slate-200">
+          <FlaskConical size={12} className="text-indigo-500" />
+          {t("profiles.sample")}
+        </span>
+        <span className="min-w-0 break-words text-[10px] text-slate-400 dark:text-slate-500">
+          {t("profiles.sampleHint")}
+        </span>
+      </div>
+      <div className="mt-2 flex min-w-0 flex-wrap items-end gap-2">
+        <label className="min-w-0 flex-1 text-[10.5px] text-slate-500 dark:text-slate-400">
+          {t("profiles.sampleTopic")}
+          <input
+            value={topic}
+            onChange={(event) => onTopic(event.target.value)}
+            className="input mt-1 h-8 text-[11.5px]"
+            placeholder={t("profiles.sampleTopicPlaceholder")}
+            data-field="sample.topic"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={onStart}
+          disabled={running || !canRun}
+          className="btn btn-primary px-2.5 py-1 text-[10.5px]"
+          data-action="sample-start"
+        >
+          {running ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
+          {running ? t("profiles.sampleRunning") : t("profiles.sampleStart")}
+        </button>
+      </div>
+
+      {!canRun && !sample ? (
+        <p className="mt-2 text-[10.5px] text-amber-600 dark:text-amber-300">
+          {t("profiles.sampleNeedSave")}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="mt-2 break-words rounded-xl border border-rose-400/40 bg-rose-500/10 px-2.5 py-2 text-[10.5px] text-rose-700 dark:text-rose-300">
+          {error}
+        </p>
+      ) : null}
+
+      {running ? (
+        <div className="mt-2 space-y-1.5" data-sample-loading="true">
+          <div className="h-2.5 w-1/3 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/10" />
+          <div className="h-2.5 w-full animate-pulse rounded-full bg-slate-200/70 dark:bg-white/[0.08]" />
+          <div className="h-2.5 w-11/12 animate-pulse rounded-full bg-slate-200/70 dark:bg-white/[0.08]" />
+          <div className="h-2.5 w-9/12 animate-pulse rounded-full bg-slate-200/70 dark:bg-white/[0.08]" />
+        </div>
+      ) : null}
+
+      {sample && !running ? (
+        <div className="mt-2 min-w-0 space-y-2">
+          <div className="rounded-xl border border-white/60 bg-white/70 p-2.5 dark:border-white/10 dark:bg-slate-950/40">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-1.5">
+              <span className="text-[10px] uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
+                {t("profiles.sample")}
+              </span>
+              <span
+                className="break-words font-mono text-[10px] text-slate-500 dark:text-slate-400"
+                data-sample-meta="true"
+              >
+                {t("profiles.sampleMeta", {
+                  chars: sample.chars,
+                  secs: (sample.elapsed_ms / 1000).toFixed(1),
+                  model: sample.model || "-",
+                })}
+              </span>
+            </div>
+            <div
+              className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-slate-700 dark:text-slate-200"
+              data-sample-text="true"
+            >
+              {sample.text}
+            </div>
+          </div>
+
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {(sample.validation?.results ?? []).map((item) => {
+              const verdict = !item.passed
+                ? "fail"
+                : item.issues.some((issue) => issue.level === "warning")
+                  ? "warn"
+                  : "pass";
+              const symbol = verdict === "pass" ? "✓" : verdict === "warn" ? "⚠" : "✗";
+              const active = openChip === item.name;
+              return (
+                <div key={item.name} className="min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setOpenChip(active ? null : item.name)}
+                    className={clsx(
+                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition",
+                      verdict === "pass"
+                        ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        : verdict === "warn"
+                          ? "border-amber-400/40 bg-amber-400/10 text-amber-700 dark:text-amber-300"
+                          : "border-rose-400/40 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+                    )}
+                    data-sample-chip={item.name}
+                    data-verdict={verdict}
+                  >
+                    <span className="font-mono">{item.name}</span>
+                    <span>{symbol}</span>
+                  </button>
+                  {active ? (
+                    <div className="mt-1 min-w-0 rounded-xl border border-white/60 bg-white/70 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-400">
+                      {item.issues.length === 0 ? (
+                        <span>{t("profiles.sampleNoIssues")}</span>
+                      ) : (
+                        <ul className="list-disc space-y-0.5 pl-3">
+                          {item.issues.map((issue, index) => (
+                            <li key={`${item.name}-${index}`} className="break-words">
+                              {issue.where ? `${issue.where}: ` : ""}
+                              {issue.message}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+            <span className="chip-muted">
+              {t("profiles.sampleIssues", {
+                count: (sample.validation?.results ?? []).reduce(
+                  (total, item) => total + item.issues.length,
+                  0,
+                ),
+              })}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onCopy}
+              className="btn btn-quiet px-2 py-1 text-[10.5px]"
+              data-action="sample-copy"
+            >
+              <Copy size={11} />
+              {copied ? t("profiles.sampleCopied") : t("profiles.sampleCopy")}
+            </button>
+            <button
+              type="button"
+              onClick={onRegenerate}
+              className="btn btn-quiet px-2 py-1 text-[10.5px]"
+              data-action="sample-regenerate"
+            >
+              <RefreshCw size={11} />
+              {t("profiles.sampleRegenerate")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ProfileEditor({
   open,
   profile,
   onClose,
   onSaved,
+  inline = false,
+  scopeOptions,
+  defaultScope = "user",
 }: {
   open: boolean;
   profile: WorkProfile | null;
   onClose: () => void;
   onSaved: (profile: WorkProfile) => void;
+  inline?: boolean;
+  scopeOptions?: { value: ProfileScope; label: string }[];
+  defaultScope?: ProfileScope;
 }) {
   const { t } = useI18n();
   const [form, setForm] = useState<EditorForm>(EMPTY_FORM);
+  const [scope, setScope] = useState<ProfileScope>(defaultScope);
   const [validation, setValidation] = useState<ProfileValidation | null>(null);
   const [validating, setValidating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -291,19 +497,30 @@ export default function ProfileEditor({
     outline_prompt: string;
     unit_prompt: string;
   } | null>(null);
+  const [sampleOpen, setSampleOpen] = useState(false);
+  const [sampleTopic, setSampleTopic] = useState("");
+  const [sample, setSample] = useState<ProfileSample | null>(null);
+  const [sampleError, setSampleError] = useState("");
+  const [sampling, setSampling] = useState(false);
+  const [sampleCopied, setSampleCopied] = useState(false);
 
   const profileKey = profile?.id ?? "";
 
   useEffect(() => {
     if (!open) return;
     setForm(formFromProfile(profile));
+    setScope((profile?.scope as ProfileScope) ?? defaultScope);
     setValidation(null);
     setFormError("");
     setSavedNotice("");
     setSavedId(profile?.id ?? "");
     setShowPrompts(false);
     setPreview(null);
-  }, [open, profileKey]);
+    setSampleOpen(false);
+    setSample(null);
+    setSampleError("");
+    setSampleTopic(profile?.name ?? "");
+  }, [open, profileKey, defaultScope]);
 
   const spec = useMemo(() => buildSpec(form), [form]);
   const specJson = useMemo(() => JSON.stringify(spec, null, 2), [spec]);
@@ -405,15 +622,15 @@ export default function ProfileEditor({
         setFormError(t("profiles.validationIssues", { count: remote.errors.length }));
         return;
       }
-      const payload = {
+      const targetId = profile?.id || savedId;
+      const base = {
         name: form.name.trim(),
         description: form.description.trim(),
         spec,
       };
-      const targetId = profile?.id || savedId;
       const saved = targetId
-        ? await api.updateWorkProfile(targetId, payload)
-        : await api.createWorkProfile(payload);
+        ? await api.updateWorkProfile(targetId, base)
+        : await api.createWorkProfile({ ...base, scope });
       setSavedId(saved.id);
       onSaved(saved);
       setSavedNotice(t("profiles.saved"));
@@ -447,6 +664,48 @@ export default function ProfileEditor({
     }
   };
 
+  const sampleReady = Boolean(profile?.id || savedId);
+
+  const runSample = async () => {
+    const targetId = profile?.id || savedId;
+    if (!targetId) {
+      setSampleError(t("profiles.sampleNeedSave"));
+      return;
+    }
+    setSampling(true);
+    setSampleError("");
+    setSampleCopied(false);
+    try {
+      const data = await api.sampleWorkProfile(targetId, {
+        topic: sampleTopic.trim() || form.name.trim(),
+        chars: 300,
+      });
+      setSample(data);
+    } catch (err) {
+      setSampleError(err instanceof Error ? err.message : t("profiles.sampleFailed"));
+    } finally {
+      setSampling(false);
+    }
+  };
+
+  const copySample = async () => {
+    if (!sample?.text) return;
+    try {
+      await navigator.clipboard.writeText(sample.text);
+      setSampleCopied(true);
+      window.setTimeout(() => setSampleCopied(false), 2000);
+    } catch {
+      setSampleCopied(false);
+    }
+  };
+
+  const toggleSample = () => {
+    setSampleOpen((prev) => {
+      if (!prev && !sampleTopic.trim()) setSampleTopic(form.name.trim());
+      return !prev;
+    });
+  };
+
   const statusPill = validating ? (
     <span className="inline-flex items-center gap-1 rounded-full border border-white/60 bg-white/70 px-2 py-0.5 text-[10.5px] text-slate-500 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-300">
       <Loader2 size={10} className="animate-spin" />
@@ -464,24 +723,15 @@ export default function ProfileEditor({
     </span>
   ) : null;
 
-  return (
-    <>
-      <AnimatePresence>
-        {open ? (
-          <motion.div
-            key="profile-editor"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[90] bg-slate-900/35 backdrop-blur-sm"
-          >
-          <motion.div
-            initial={{ y: 24, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 16, opacity: 0 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="flex h-full w-full flex-col bg-[#f6f8fc] dark:bg-[#0b1020]"
-          >
+  const shell = (
+    <div
+      className={
+        inline
+          ? "flex min-w-0 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/55 dark:border-white/10 dark:bg-white/[0.04]"
+          : "flex h-full w-full flex-col bg-[#f6f8fc] dark:bg-[#0b1020]"
+      }
+      data-profile-editor={inline ? "inline" : "overlay"}
+    >
             <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/60 bg-white/70 px-3 py-2.5 backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/70 sm:px-5">
               <div className="min-w-0">
                 <h2 className="truncate text-[13px] font-semibold text-slate-800 dark:text-slate-100 sm:text-sm">
@@ -501,7 +751,7 @@ export default function ProfileEditor({
               </button>
             </header>
 
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className={inline ? "min-h-0 flex-1" : "min-h-0 flex-1 overflow-y-auto"}>
               <div className="grid gap-4 px-3 py-4 sm:px-5 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
                 <div className="min-w-0 space-y-3">
                   <Section title={t("profiles.basicSection")}>
@@ -536,6 +786,43 @@ export default function ProfileEditor({
                       />
                       {errorText("meta.tags")}
                     </label>
+                    {scopeOptions && scopeOptions.length > 0 ? (
+                      <div data-field="scope">
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          {t("serverProfiles.scopeLabel")}
+                        </p>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                          {scopeOptions.map((option) => (
+                            <label
+                              key={option.value}
+                              className={clsx(
+                                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10.5px] transition",
+                                scope === option.value
+                                  ? "border-indigo-400/60 bg-indigo-500/15 text-indigo-700 dark:text-indigo-200"
+                                  : "border-white/60 bg-white/50 text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-400",
+                                profile ? "opacity-70" : "cursor-pointer",
+                              )}
+                            >
+                              <input
+                                type="radio"
+                                name="profile-scope"
+                                value={option.value}
+                                checked={scope === option.value}
+                                disabled={Boolean(profile)}
+                                onChange={() => setScope(option.value)}
+                                className="h-3 w-3 accent-indigo-500"
+                              />
+                              {option.label}
+                            </label>
+                          ))}
+                        </div>
+                        {profile ? (
+                          <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
+                            {t("serverProfiles.scopeLocked")}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </Section>
 
                   <Section title={t("profiles.unitSection")}>
@@ -895,6 +1182,21 @@ export default function ProfileEditor({
             </div>
 
             <footer className="shrink-0 border-t border-white/60 bg-white/75 px-3 py-2.5 backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/75 sm:px-5">
+              {sampleOpen ? (
+                <SamplePanel
+                  t={t}
+                  topic={sampleTopic}
+                  onTopic={setSampleTopic}
+                  onStart={() => void runSample()}
+                  onCopy={() => void copySample()}
+                  onRegenerate={() => void runSample()}
+                  running={sampling}
+                  copied={sampleCopied}
+                  error={sampleError}
+                  sample={sample}
+                  canRun={sampleReady}
+                />
+              ) : null}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0 flex-1 text-[10.5px]">
                   {formError ? (
@@ -925,6 +1227,16 @@ export default function ProfileEditor({
                   </button>
                   <button
                     type="button"
+                    onClick={toggleSample}
+                    className={clsx("btn btn-ghost", sampleOpen && "text-indigo-600 dark:text-indigo-300")}
+                    data-action="sample"
+                    aria-expanded={sampleOpen}
+                  >
+                    <FlaskConical size={13} />
+                    {t("profiles.sample")}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void save()}
                     disabled={saving}
                     className="btn btn-primary"
@@ -940,12 +1252,11 @@ export default function ProfileEditor({
                 </div>
               </div>
             </footer>
-          </motion.div>
-        </motion.div>
-      ) : null}
-      </AnimatePresence>
+    </div>
+  );
 
-      <Modal
+  const previewModal = (
+    <Modal
         open={previewOpen}
         title={t("profiles.previewTitle")}
         onClose={() => setPreviewOpen(false)}
@@ -982,6 +1293,41 @@ export default function ProfileEditor({
           </div>
         </div>
       </Modal>
+  );
+
+  if (inline) {
+    return (
+      <>
+        {open ? shell : null}
+        {previewModal}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <AnimatePresence>
+        {open ? (
+          <motion.div
+            key="profile-editor"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[90] bg-slate-900/35 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ y: 24, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 16, opacity: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="flex h-full w-full flex-col"
+            >
+              {shell}
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+      {previewModal}
     </>
   );
 }

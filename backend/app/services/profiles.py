@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+import re
 from typing import Any, Iterable, Sequence
 
 from app.models.auth import AuthContext
@@ -8,6 +9,10 @@ from app.models.course import Course
 from app.models.longform import Longform
 from app.models.work_profile import (
     BUILTIN_ID_PREFIX,
+    PROFILE_SCOPES,
+    SCOPE_GLOBAL,
+    SCOPE_TENANT,
+    SCOPE_USER,
     SHARE_LEVELS,
     SYSTEM_USER_ID,
     ProfileShare,
@@ -23,6 +28,13 @@ from app.services.errors import (
     ProfileInvalidError,
     ProfileNotFoundError,
 )
+
+EXPORT_FORMAT = "opencgp.profile"
+EXPORT_VERSION = 1
+SAMPLE_TEXT_MAX = 4000
+SAMPLE_CHARS_MIN = 50
+SAMPLE_CHARS_MAX = 2000
+CITATION_MARKER = re.compile(r"\s*\[E\d+\]")
 
 BUILTIN_TENANT_ID = "system"
 BUILTIN_TUTORIAL_ID = f"{BUILTIN_ID_PREFIX}tutorial"
@@ -216,12 +228,26 @@ class ProfileService:
         if profile.is_builtin:
             return True
         user_id = ctx.user.id
+        tenant_id = ctx.tenant.id if ctx.tenant is not None else ""
+        if profile.scope == SCOPE_GLOBAL:
+            return True
+        if profile.scope == SCOPE_TENANT and profile.tenant_id == tenant_id:
+            return True
         if profile.owner_user_id == user_id:
             return True
-        tenant_id = ctx.tenant.id if ctx.tenant is not None else ""
         if profile.tenant_id == tenant_id and profile.is_shared:
             return True
         return self.repository.get_share(profile.id, user_id) is not None
+
+    def can_edit(self, profile: WorkProfile, ctx: AuthContext) -> bool:
+        if profile.is_builtin:
+            return False
+        if profile.scope == SCOPE_GLOBAL:
+            return bool(ctx.can("manage_server"))
+        if profile.scope == SCOPE_TENANT:
+            tenant_id = ctx.tenant.id if ctx.tenant is not None else ""
+            return profile.tenant_id == tenant_id and bool(ctx.can("manage_server"))
+        return bool(profile.owner_user_id) and profile.owner_user_id == ctx.user.id
 
     def _require_readable(self, profile_id: str, ctx: AuthContext) -> WorkProfile:
         profile = self._load(profile_id)
@@ -229,12 +255,12 @@ class ProfileService:
             raise ProfileNotFoundError(f"创作配置不存在: {profile_id}")
         return profile
 
-    def _require_owner(self, profile_id: str, ctx: AuthContext) -> WorkProfile:
+    def _require_editable(self, profile_id: str, ctx: AuthContext) -> WorkProfile:
         profile = self._load(profile_id)
         if profile.is_builtin:
             raise BuiltinProfileError("内置预设不可修改，请先复制")
-        if profile.owner_user_id != ctx.user.id:
-            raise PermissionDeniedError("只有创建者可以修改该创作配置")
+        if not self.can_edit(profile, ctx):
+            raise PermissionDeniedError("没有修改该创作配置的权限")
         return profile
 
     def payload(self, profile: WorkProfile, ctx: AuthContext) -> dict[str, Any]:
@@ -250,8 +276,10 @@ class ProfileService:
             "name": profile.name,
             "description": profile.description,
             "spec": profile.spec.model_dump(),
+            "scope": profile.scope or SCOPE_USER,
             "is_builtin": profile.is_builtin,
             "is_owner": is_owner,
+            "can_edit": self.can_edit(profile, ctx),
             "is_shared": profile.is_shared,
             "shared_by_owner": shared_by_owner,
             "shared_to_me": bool(share is not None),
@@ -283,10 +311,16 @@ class ProfileService:
         spec: Any = None,
         is_shared: bool = False,
         description: str = "",
+        scope: str = SCOPE_USER,
     ) -> dict[str, Any]:
         label = (name or "").strip()
         if not label:
             raise ProfileInvalidError("创作配置名称不能为空")
+        resolved_scope = (scope or SCOPE_USER).strip().lower()
+        if resolved_scope not in PROFILE_SCOPES:
+            raise ProfileInvalidError(f"未知作用域: {scope}")
+        if resolved_scope != SCOPE_USER and not ctx.can("manage_server"):
+            raise PermissionDeniedError("非个人作用域需要 manage_server 权限")
         normalized, errors, _warnings = normalize_spec(spec)
         if errors:
             raise ProfileInvalidError(self._error_message(errors))
@@ -298,6 +332,7 @@ class ProfileService:
                 name=label,
                 description=(description or "").strip(),
                 spec=normalized,
+                scope=resolved_scope,
                 is_builtin=False,
                 is_shared=bool(is_shared),
                 version=1,
@@ -334,7 +369,7 @@ class ProfileService:
         is_shared: bool | None = None,
         description: str | None = None,
     ) -> dict[str, Any]:
-        current = self._require_owner(profile_id, ctx)
+        current = self._require_editable(profile_id, ctx)
         normalized: ProfileSpec | None = None
         if spec is not None:
             normalized, errors, _warnings = normalize_spec(spec)
@@ -356,7 +391,7 @@ class ProfileService:
         return self.payload(updated, ctx)
 
     def delete(self, ctx: AuthContext, profile_id: str) -> dict[str, Any]:
-        self._require_owner(profile_id, ctx)
+        self._require_editable(profile_id, ctx)
         used = self.repository.count_usage(profile_id)
         if used > 0:
             raise ProfileInUseError(f"仍有 {used} 个作品在使用该配置")
@@ -371,6 +406,150 @@ class ProfileService:
             "warnings": warnings,
             "spec": normalized.model_dump(),
         }
+
+    def export_payload(self, ctx: AuthContext, profile_id: str) -> dict[str, Any]:
+        profile = self._require_readable(profile_id, ctx)
+        return {
+            "format": EXPORT_FORMAT,
+            "version": EXPORT_VERSION,
+            "name": profile.name,
+            "spec": profile.spec.model_dump(),
+        }
+
+    def import_profile(
+        self,
+        ctx: AuthContext,
+        data: Any,
+        name: str | None = None,
+        scope: str = SCOPE_USER,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any]
+        if isinstance(data, dict):
+            payload = data
+        else:
+            raise ProfileInvalidError("导入数据必须是 JSON 对象")
+        if "format" in payload:
+            if str(payload.get("format") or "") != EXPORT_FORMAT:
+                raise ProfileInvalidError(
+                    f"不支持的导入格式: {payload.get('format') or '空'}"
+                )
+            try:
+                version = int(payload.get("version"))
+            except (TypeError, ValueError):
+                raise ProfileInvalidError("导入版本号必须是整数")
+            if version != EXPORT_VERSION:
+                raise ProfileInvalidError(f"不支持的导入版本: {version}")
+        if "spec" not in payload:
+            raise ProfileInvalidError("导入数据缺少 spec 字段")
+        spec_raw = payload.get("spec")
+        normalized, errors, _warnings = normalize_spec(spec_raw)
+        if errors:
+            raise ProfileInvalidError(self._error_message(errors), errors=errors)
+        resolved_scope = (scope or SCOPE_USER).strip().lower()
+        if resolved_scope not in PROFILE_SCOPES:
+            raise ProfileInvalidError(f"未知作用域: {scope}")
+        if resolved_scope != SCOPE_USER and not ctx.can("manage_server"):
+            raise PermissionDeniedError("非个人作用域需要 manage_server 权限")
+        label = (name or "").strip()
+        if not label:
+            label = str(payload.get("name") or "").strip()
+        if not label:
+            label = str(payload.get("spec", {}).get("meta", {}).get("name") or "").strip() if isinstance(payload.get("spec"), dict) else ""
+        if not label:
+            label = "导入配置"
+        unique = self._unique_name(label, ctx)
+        profile = self.repository.create(
+            WorkProfile(
+                id="",
+                tenant_id=ctx.tenant.id if ctx.tenant is not None else "",
+                owner_user_id=ctx.user.id,
+                name=unique,
+                description=str(payload.get("description") or "").strip(),
+                spec=normalized,
+                scope=resolved_scope,
+                is_builtin=False,
+                is_shared=False,
+                version=1,
+            )
+        )
+        return self.payload(profile, ctx)
+
+    def _unique_name(self, label: str, ctx: AuthContext) -> str:
+        tenant_id = ctx.tenant.id if ctx.tenant is not None else ""
+        existing = {
+            item.name
+            for item in self.repository.list_visible(tenant_id, ctx.user.id)
+        }
+        if label not in existing:
+            return label
+        index = 2
+        while f"{label} ({index})" in existing:
+            index += 1
+        return f"{label} ({index})"
+
+    def sample_prompt(
+        self,
+        ctx: AuthContext,
+        profile_id: str,
+        topic: str | None = None,
+        chars: int = 300,
+    ) -> tuple[WorkProfile, str, int]:
+        profile = self._require_readable(profile_id, ctx)
+        spec = profile.spec
+        target = int(chars or 300)
+        target = max(SAMPLE_CHARS_MIN, min(SAMPLE_CHARS_MAX, target))
+        subject = (topic or "").strip()
+        if not subject:
+            subject = f"围绕「{profile.name or spec.meta.name or '示例'}」的一个典型场景"
+        unit_name = spec.unit.name
+        values = {
+            "title": subject,
+            "profile_name": profile.name or spec.meta.name,
+            "unit_name": unit_name,
+            "unit_plural": spec.unit.plural or unit_name,
+            "min_units": spec.unit.min_units,
+            "max_units": spec.unit.max_units,
+            "words": target,
+            "audience": "通用读者",
+            "tone": spec.voice.tone or "默认语气",
+            "pov_label": POV_LABELS.get(spec.voice.pov, spec.voice.pov),
+            "tense_label": TENSE_LABELS.get(spec.voice.tense, spec.voice.tense),
+            "policy_label": POLICY_LABELS.get(
+                spec.grounding.citation_policy, spec.grounding.citation_policy
+            ),
+            "forbidden": "、".join(spec.voice.forbidden_phrases) or "无",
+            "depth": spec.structure.depth,
+            "sections_lo": spec.structure.sections_per_unit[0],
+            "sections_hi": spec.structure.sections_per_unit[1],
+            "index": 1,
+            "unit_title": subject,
+            "sections": "核心场景、关键细节、情绪推进",
+            "instruction": "更清晰、更具体",
+        }
+        base = self._render(spec.prompts.unit or UNIT_TEMPLATE, values)
+        policy = (spec.grounding.citation_policy or "").strip()
+        citation_rule = (
+            "正文禁止出现任何 [E数字] 形式的引用标记。"
+            if policy == "forbidden"
+            else "如需引用证据，请使用 [E数字] 标记。"
+            if policy == "required"
+            else "引用证据可选。"
+        )
+        prompt = (
+            f"{base}\n\n试写要求：这是该{unit_name}的开头一小段，篇幅约 {target} 字，"
+            f"不要写完整{unit_name}，不要输出大纲、标题说明或创作说明。{citation_rule}"
+        )
+        return profile, prompt, target
+
+    def finalize_sample(
+        self, profile: WorkProfile, text: str, target: int
+    ) -> str:
+        content = (text or "").strip()
+        if (profile.spec.grounding.citation_policy or "").strip() == "forbidden":
+            content = CITATION_MARKER.sub("", content).strip()
+        if len(content) > SAMPLE_TEXT_MAX:
+            content = content[:SAMPLE_TEXT_MAX]
+        return content
 
     def preview(
         self, ctx: AuthContext, profile_id: str, sample: dict[str, Any] | None = None
