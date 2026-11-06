@@ -60,7 +60,7 @@ def detect_image_type(filename: str, content_type: str) -> tuple[str, str]:
     mime = (content_type or "").split(";")[0].strip().lower()
     if mime in IMAGE_EXTENSIONS:
         return mime, IMAGE_EXTENSIONS[mime]
-    raise MediaInvalidError("图片仅支持 png/jpg/jpeg/webp")
+    raise MediaInvalidError("images support only png/jpg/jpeg/webp")
 
 
 class MediaService:
@@ -86,17 +86,17 @@ class MediaService:
         source: str = SOURCE_UPLOAD,
     ) -> MediaAsset:
         if not data:
-            raise MediaInvalidError("图片内容为空")
+            raise MediaInvalidError("image content is empty")
         if len(data) > self.max_bytes:
             raise MediaInvalidError(
-                f"图片不能超过 {self.max_bytes // (1024 * 1024)}MB"
+                f"images must not exceed {self.max_bytes // (1024 * 1024)}MB"
             )
         mime = (content_type or "").split(";")[0].strip().lower()
         extension = IMAGE_EXTENSIONS.get(mime, "")
         if not extension:
             sniffed = _sniff_content_type(data)
             if not sniffed:
-                raise MediaInvalidError("图片仅支持 png/jpg/jpeg/webp")
+                raise MediaInvalidError("images support only png/jpg/jpeg/webp")
             mime, extension = sniffed, IMAGE_EXTENSIONS[sniffed]
         tenant_id = _tenant_of(ctx)
         user_id = ctx.user.id if ctx is not None and ctx.user is not None else ""
@@ -105,7 +105,7 @@ class MediaService:
         try:
             self.storage.put(object_key, data, content_type=mime)
         except Exception as exc:  # noqa: BLE001
-            raise MediaInvalidError(f"图片保存失败: {exc}") from exc
+            raise MediaInvalidError(f"failed to save the image: {exc}") from exc
         width, height = _dimensions(data)
         asset = MediaAsset(
             id=asset_id,
@@ -130,7 +130,7 @@ class MediaService:
     def get_asset(self, ctx: AuthContext, asset_id: str) -> MediaAsset:
         asset = self.repository.get(asset_id, _tenant_of(ctx))
         if asset is None:
-            raise MediaAssetNotFoundError("图片不存在")
+            raise MediaAssetNotFoundError("image not found")
         return asset
 
     def delete_asset(self, ctx: AuthContext, asset_id: str) -> bool:
@@ -147,9 +147,9 @@ class MediaService:
         try:
             return self.storage.get(asset.object_key)
         except FileNotFoundError as exc:
-            raise MediaAssetNotFoundError("图片不存在") from exc
+            raise MediaAssetNotFoundError("image not found") from exc
         except Exception as exc:  # noqa: BLE001
-            raise MediaAssetNotFoundError(f"图片读取失败: {exc}") from exc
+            raise MediaAssetNotFoundError(f"failed to read the image: {exc}") from exc
 
     def provider(self) -> ImageProvider | None:
         return self.image_provider
@@ -163,10 +163,10 @@ class MediaService:
     ) -> list[MediaAsset]:
         text = (prompt or "").strip()
         if not text:
-            raise MediaInvalidError("提示词不能为空")
+            raise MediaInvalidError("prompt must not be empty")
         provider = self.image_provider
         if provider is None or getattr(provider, "is_placeholder", False):
-            raise ImageGenerationUnavailableError("未配置图片生成服务")
+            raise ImageGenerationUnavailableError("image generation service is not configured")
         count = max(1, min(int(n or 1), MAX_BATCH))
         images = await provider.generate(text, size=size or "1024x1024", n=count)
         assets: list[MediaAsset] = []

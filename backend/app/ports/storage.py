@@ -1,12 +1,13 @@
-"""对象存储抽象端口（StorageBackend）。
+"""Object storage abstract port (StorageBackend).
 
-统一文件/对象存储接口，用于存放课程资产（配图、代码、封面、导出产物等）。
-M0 内置本地文件实现（``local``），生产可切换 S3 兼容 / rustfs / OSS 等，
-同一端口、只改配置。
+Unified file/object storage interface used to store course assets (images, code,
+covers, export artifacts, etc.). M0 ships a built-in local-file implementation
+(``local``); production can switch to S3-compatible storage / rustfs / OSS, etc.
+through the same port by changing configuration only.
 
-约定：
-- ``key`` 为受控的相对路径风格对象键，例如 ``series/1/assets/cover.png``。
-- 实现必须拒绝 ``..`` 等路径穿越，key 不允许是绝对路径。
+Conventions:
+- ``key`` is a controlled relative-path-style object key, e.g. ``series/1/assets/cover.png``.
+- Implementations must reject path traversal such as ``..``; keys must not be absolute paths.
 """
 
 from __future__ import annotations
@@ -16,24 +17,24 @@ from typing import Optional, Protocol, runtime_checkable
 
 @runtime_checkable
 class StorageBackend(Protocol):
-    """通用对象存储端口。"""
+    """Generic object storage port."""
 
     def put(self, key: str, data: bytes, content_type: Optional[str] = None) -> str:
-        """写入对象，返回最终对象键。"""
+        """Write an object and return the final object key."""
         ...
 
     def get(self, key: str) -> bytes:
-        """读取对象，不存在时抛 :class:`FileNotFoundError`。"""
+        """Read an object; raise :class:`FileNotFoundError` when it does not exist."""
         ...
 
     def delete(self, key: str) -> None:
-        """删除对象（不存在则静默成功）。"""
+        """Delete an object (succeeds silently when it does not exist)."""
         ...
 
     def exists(self, key: str) -> bool:
-        """判断对象是否存在。"""
+        """Return whether the object exists."""
         ...
 
     def healthcheck(self) -> bool:
-        """探活：能否对后端执行一次最小读写。"""
+        """Health check: whether a minimal read/write against the backend succeeds."""
         ...

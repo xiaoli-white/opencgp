@@ -22,12 +22,12 @@ class BuiltinDocumentParser(DocumentParser):
             return self._parse_docx(data, filename)
         if suffix in PLAIN_SUFFIXES:
             return self._parse_plain(data, filename)
-        raise ValueError(f"不支持的文档类型: {suffix or filename!r}")
+        raise ValueError(f"unsupported document type: {suffix or filename!r}")
 
     def _parse_plain(self, data: bytes, filename: str) -> ParsedDocument:
         text = _decode(data)
         if not text.strip():
-            raise ValueError("文档内容为空")
+            raise ValueError("document content is empty")
         return ParsedDocument(
             source_name=filename,
             text=text,
@@ -39,20 +39,20 @@ class BuiltinDocumentParser(DocumentParser):
         try:
             from pypdf import PdfReader
         except ImportError as exc:
-            raise ValueError("缺少 pypdf 依赖，无法解析 PDF") from exc
+            raise ValueError("missing the pypdf dependency; cannot parse PDF") from exc
 
         reader = PdfReader(BytesIO(data))
         if reader.is_encrypted:
             try:
                 reader.decrypt("")
             except Exception as exc:
-                raise ValueError("PDF 已加密，无法解析") from exc
+                raise ValueError("PDF is encrypted and cannot be parsed") from exc
         pages: list[str] = []
         for page in reader.pages:
             pages.append((page.extract_text() or "").strip())
         text = "\n\n".join(part for part in pages if part)
         if not text.strip():
-            raise ValueError("PDF 未提取到文本（可能是扫描件，需 OCR）")
+            raise ValueError("no text extracted from the PDF (it may be a scan and require OCR)")
         return ParsedDocument(
             source_name=filename,
             text=text,
@@ -64,7 +64,7 @@ class BuiltinDocumentParser(DocumentParser):
         try:
             import docx
         except ImportError as exc:
-            raise ValueError("缺少 python-docx 依赖，无法解析 DOCX") from exc
+            raise ValueError("missing the python-docx dependency; cannot parse DOCX") from exc
 
         document = docx.Document(BytesIO(data))
         blocks: list[str] = []
@@ -80,7 +80,7 @@ class BuiltinDocumentParser(DocumentParser):
                     blocks.append(line)
         text = "\n".join(blocks)
         if not text.strip():
-            raise ValueError("DOCX 未提取到文本")
+            raise ValueError("no text extracted from the DOCX")
         return ParsedDocument(
             source_name=filename,
             text=text,

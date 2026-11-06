@@ -15,9 +15,9 @@ SUPPORTED_THRESHOLD = 0.45
 UNSURE_THRESHOLD = 0.15
 
 VERDICT_LABELS = {
-    VERDICT_SUPPORTED: "有证据支撑",
-    VERDICT_UNSURE: "证据不足需核实",
-    VERDICT_UNSUPPORTED: "无证据支撑",
+    VERDICT_SUPPORTED: "Supported by evidence",
+    VERDICT_UNSURE: "Insufficient evidence; needs verification",
+    VERDICT_UNSUPPORTED: "Not supported by evidence",
 }
 
 

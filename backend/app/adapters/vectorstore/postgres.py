@@ -142,7 +142,7 @@ class PostgresVectorStore(VectorStore):
                 self.trigram_index = True
             except Exception as exc:  # noqa: BLE001
                 self.trigram_index = False
-                self.last_warning = f"pg_trgm 不可用，退回 LIKE 全扫: {exc!r}"[:200]
+                self.last_warning = f"pg_trgm unavailable, falling back to a full LIKE scan: {exc!r}"[:200]
             self._schema_ready = True
 
     def _migrate_embeddings(self) -> None:
@@ -218,7 +218,7 @@ class PostgresVectorStore(VectorStore):
                     vector = vectors[0] if vectors else None
                 query_vector = list(vector) if vector else None
             except Exception as exc:
-                print(f"[vectorstore] 查询向量化失败，降级为关键词检索: {exc!r}")
+                print(f"[vectorstore] query embedding failed, falling back to keyword search: {exc!r}")
                 warnings.append("embedding_failed")
                 query_vector = None
         else:

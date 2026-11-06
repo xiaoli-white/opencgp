@@ -25,16 +25,16 @@ def render(
         lines.extend(["", f"> {document.subtitle}"])
     meta_bits: list[str] = []
     if document.author:
-        meta_bits.append(f"作者：{document.author}")
+        meta_bits.append(f"Author: {document.author}")
     if document.created_at:
-        meta_bits.append(f"创建：{_date(document.created_at)}")
+        meta_bits.append(f"Created: {_date(document.created_at)}")
     if document.chapters:
-        meta_bits.append(f"章节数：{len(document.chapters)}")
+        meta_bits.append(f"Chapters: {len(document.chapters)}")
     if meta_bits:
         lines.extend(["", " · ".join(meta_bits)])
 
     if document.front_matter.strip():
-        lines.extend(["", "## 课程信息" if document.source_type == "series" else "## 文档信息"])
+        lines.extend(["", "## Course information" if document.source_type == "series" else "## Document information"])
         lines.extend(["", document.front_matter.strip()])
 
     for chapter in document.chapters:
@@ -43,7 +43,7 @@ def render(
     if include_citations:
         citations = unique_citations(document.chapters, document.citations)
         if citations:
-            lines.extend(["", "## 参考来源", ""])
+            lines.extend(["", "## References", ""])
             for line in format_appendix(citations):
                 lines.append(f"- {line}")
 

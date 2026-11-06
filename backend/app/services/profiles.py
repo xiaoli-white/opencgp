@@ -44,13 +44,13 @@ SPEC_CACHE_SIZE = 128
 BUILTIN_PRESETS: tuple[dict[str, Any], ...] = (
     {
         "key": "tutorial",
-        "name": "技术教程",
-        "description": "面向工程实践的分步教程，强调可引用证据与结构完整性",
+        "name": "Technical tutorial",
+        "description": "A step-by-step tutorial for engineering practice, emphasizing citable evidence and structural completeness",
         "spec": {
-            "meta": {"name": "技术教程", "description": "分步技术教程", "tags": ["技术", "教程"], "icon": "book"},
-            "unit": {"name": "讲", "plural": "讲", "min_units": 1, "max_units": 60, "default_words": 900},
+            "meta": {"name": "Technical tutorial", "description": "Step-by-step technical tutorial", "tags": ["technical", "tutorial"], "icon": "book"},
+            "unit": {"name": "Chapter", "plural": "Chapters", "min_units": 1, "max_units": 60, "default_words": 900},
             "structure": {"depth": 2, "sections_per_unit": [2, 5], "requires_outline": True},
-            "voice": {"tone": "清晰、务实", "pov": "third_limited", "tense": "present"},
+            "voice": {"tone": "clear, pragmatic", "pov": "third_limited", "tense": "present"},
             "grounding": {"citation_policy": "required", "min_evidence": 1, "allow_web": False},
             "assets": {"glossary": True, "setting_book": False, "character_sheet": False},
             "validation": {"validators": ["citation", "structure"], "strictness": "strict"},
@@ -59,13 +59,13 @@ BUILTIN_PRESETS: tuple[dict[str, Any], ...] = (
     },
     {
         "key": "article",
-        "name": "技术长文",
-        "description": "适合技术博客与深度文章的自由写作配置",
+        "name": "Technical long-form article",
+        "description": "A free-writing profile suited to technical blogs and in-depth articles",
         "spec": {
-            "meta": {"name": "技术长文", "description": "技术深度长文", "tags": ["技术", "长文"], "icon": "article"},
-            "unit": {"name": "节", "plural": "节", "min_units": 3, "max_units": 20, "default_words": 1200},
+            "meta": {"name": "Technical long-form article", "description": "In-depth technical article", "tags": ["technical", "long-form"], "icon": "article"},
+            "unit": {"name": "Section", "plural": "Sections", "min_units": 3, "max_units": 20, "default_words": 1200},
             "structure": {"depth": 2, "sections_per_unit": [2, 4], "requires_outline": True},
-            "voice": {"tone": "专业、克制", "pov": "third_limited", "tense": "present"},
+            "voice": {"tone": "professional, restrained", "pov": "third_limited", "tense": "present"},
             "grounding": {"citation_policy": "optional", "min_evidence": 0, "allow_web": True},
             "assets": {"glossary": False, "setting_book": False, "character_sheet": False},
             "validation": {"validators": ["length"], "strictness": "normal"},
@@ -74,13 +74,13 @@ BUILTIN_PRESETS: tuple[dict[str, Any], ...] = (
     },
     {
         "key": "novel",
-        "name": "小说",
-        "description": "长篇虚构叙事配置，包含设定集与人物卡",
+        "name": "Novel",
+        "description": "A long-form fiction profile with a setting book and character sheets",
         "spec": {
-            "meta": {"name": "小说", "description": "虚构叙事", "tags": ["小说", "叙事"], "icon": "feather"},
-            "unit": {"name": "章", "plural": "章", "min_units": 5, "max_units": 200, "default_words": 3000},
+            "meta": {"name": "Novel", "description": "Fictional narrative", "tags": ["novel", "narrative"], "icon": "feather"},
+            "unit": {"name": "Chapter", "plural": "Chapters", "min_units": 5, "max_units": 200, "default_words": 3000},
             "structure": {"depth": 3, "sections_per_unit": [3, 6], "requires_outline": True},
-            "voice": {"tone": "叙事性强", "pov": "third_limited", "tense": "past"},
+            "voice": {"tone": "highly narrative", "pov": "third_limited", "tense": "past"},
             "grounding": {"citation_policy": "forbidden", "min_evidence": 0, "allow_web": False},
             "assets": {"glossary": False, "setting_book": True, "character_sheet": True},
             "validation": {"validators": ["continuity", "length"], "strictness": "normal"},
@@ -89,13 +89,13 @@ BUILTIN_PRESETS: tuple[dict[str, Any], ...] = (
     },
     {
         "key": "report",
-        "name": "研究报告",
-        "description": "结构化的研究报告，要求引用与篇幅双重校验",
+        "name": "Research report",
+        "description": "A structured research report requiring both citation and length validation",
         "spec": {
-            "meta": {"name": "研究报告", "description": "研究分析报告", "tags": ["研究", "报告"], "icon": "chart"},
-            "unit": {"name": "部分", "plural": "部分", "min_units": 3, "max_units": 12, "default_words": 1500},
+            "meta": {"name": "Research report", "description": "Research analysis report", "tags": ["research", "report"], "icon": "chart"},
+            "unit": {"name": "Part", "plural": "Parts", "min_units": 3, "max_units": 12, "default_words": 1500},
             "structure": {"depth": 3, "sections_per_unit": [2, 5], "requires_outline": True},
-            "voice": {"tone": "客观、严谨", "pov": "third_omniscient", "tense": "present"},
+            "voice": {"tone": "objective, rigorous", "pov": "third_omniscient", "tense": "present"},
             "grounding": {"citation_policy": "required", "min_evidence": 1, "allow_web": True},
             "assets": {"glossary": True, "setting_book": False, "character_sheet": False},
             "validation": {"validators": ["citation", "length"], "strictness": "strict"},
@@ -104,13 +104,13 @@ BUILTIN_PRESETS: tuple[dict[str, Any], ...] = (
     },
     {
         "key": "essay",
-        "name": "随笔",
-        "description": "第一人称自由随笔，不要求引用",
+        "name": "Essay",
+        "description": "A first-person free-form essay that does not require citations",
         "spec": {
-            "meta": {"name": "随笔", "description": "个人随笔", "tags": ["随笔", "散文"], "icon": "pen"},
-            "unit": {"name": "段", "plural": "段", "min_units": 1, "max_units": 30, "default_words": 600},
+            "meta": {"name": "Essay", "description": "Personal essay", "tags": ["essay", "prose"], "icon": "pen"},
+            "unit": {"name": "Passage", "plural": "Passages", "min_units": 1, "max_units": 30, "default_words": 600},
             "structure": {"depth": 1, "sections_per_unit": [1, 3], "requires_outline": False},
-            "voice": {"tone": "松弛、个人化", "pov": "first", "tense": "present"},
+            "voice": {"tone": "relaxed, personal", "pov": "first", "tense": "present"},
             "grounding": {"citation_policy": "forbidden", "min_evidence": 0, "allow_web": False},
             "assets": {"glossary": False, "setting_book": False, "character_sheet": False},
             "validation": {"validators": ["length"], "strictness": "loose"},
@@ -119,36 +119,36 @@ BUILTIN_PRESETS: tuple[dict[str, Any], ...] = (
     },
 )
 
-POV_LABELS = {"first": "第一人称", "third_limited": "第三人称限知", "third_omniscient": "第三人称全知"}
-TENSE_LABELS = {"present": "现在时", "past": "过去时"}
-POLICY_LABELS = {"required": "必须引用证据", "optional": "可选引用", "forbidden": "不得引用"}
+POV_LABELS = {"first": "first person", "third_limited": "third person limited", "third_omniscient": "third person omniscient"}
+TENSE_LABELS = {"present": "present tense", "past": "past tense"}
+POLICY_LABELS = {"required": "citations required", "optional": "citations optional", "forbidden": "citations forbidden"}
 
 SYSTEM_TEMPLATE = (
-    "你是《{title}》的创作助手，正在按「{profile_name}」配置写作。\n"
-    "写作单位：{unit_name}，每个{unit_name}约 {words} 字，共 {min_units}-{max_units} 个{unit_name}。\n"
-    "目标读者：{audience}。\n"
-    "语气：{tone}；人称：{pov_label}；时态：{tense_label}。\n"
-    "引用策略：{policy_label}；禁止使用以下表达：{forbidden}。\n"
-    "每个{unit_name}需拆成 {sections_lo}-{sections_hi} 个要点，大纲深度 {depth} 层。"
+    "You are the writing assistant for \"{title}\", writing under the \"{profile_name}\" profile.\n"
+    "Writing unit: {unit_name}; each {unit_name} is about {words} words, and there are {min_units}-{max_units} {unit_name} in total.\n"
+    "Target audience: {audience}.\n"
+    "Tone: {tone}; person: {pov_label}; tense: {tense_label}.\n"
+    "Citation policy: {policy_label}; never use the following expressions: {forbidden}.\n"
+    "Each {unit_name} must be split into {sections_lo}-{sections_hi} key points, with an outline depth of {depth} levels."
 )
 
 OUTLINE_TEMPLATE = (
-    "为《{title}》设计大纲，配置为「{profile_name}」。\n"
-    "要求：共 {min_units}-{max_units} 个{unit_name}，每个{unit_name}包含 {sections_lo}-{sections_hi} 个要点，"
-    "每个{unit_name}标注约 {words} 字。\n"
-    "输出 JSON 数组，元素包含 id、title、summary、target_words 字段。"
+    "Design an outline for \"{title}\" with the \"{profile_name}\" profile.\n"
+    "Requirements: {min_units}-{max_units} {unit_name} in total; each {unit_name} contains {sections_lo}-{sections_hi} key points, "
+    "and each {unit_name} is about {words} words.\n"
+    "Output a JSON array whose elements contain the fields id, title, summary, and target_words."
 )
 
 UNIT_TEMPLATE = (
-    "撰写《{title}》的第 {index} 个{unit_name}，标题为「{unit_title}」，约 {words} 字。\n"
-    "读者：{audience}；语气：{tone}；人称：{pov_label}。\n"
-    "需要覆盖的要点：{sections}。\n"
-    "引用策略：{policy_label}。"
+    "Write {unit_name} number {index} of \"{title}\", titled \"{unit_title}\", about {words} words.\n"
+    "Reader: {audience}; tone: {tone}; person: {pov_label}.\n"
+    "Key points to cover: {sections}.\n"
+    "Citation policy: {policy_label}."
 )
 
 REVISE_TEMPLATE = (
-    "根据以下意见修改《{title}》中「{unit_title}」的内容，保持{unit_name}结构与 {words} 字左右篇幅。\n"
-    "修改意见：{instruction}"
+    "Revise the content of \"{unit_title}\" in \"{title}\" according to the feedback below, keeping the {unit_name} structure and a length of about {words} words.\n"
+    "Feedback: {instruction}"
 )
 
 
@@ -221,7 +221,7 @@ class ProfileService:
         self.ensure_builtin()
         profile = self.repository.get(profile_id)
         if profile is None:
-            raise ProfileNotFoundError(f"创作配置不存在: {profile_id}")
+            raise ProfileNotFoundError(f"creation profile not found: {profile_id}")
         return profile
 
     def _readable(self, profile: WorkProfile, ctx: AuthContext) -> bool:
@@ -252,21 +252,21 @@ class ProfileService:
     def _require_readable(self, profile_id: str, ctx: AuthContext) -> WorkProfile:
         profile = self._load(profile_id)
         if not self._readable(profile, ctx):
-            raise ProfileNotFoundError(f"创作配置不存在: {profile_id}")
+            raise ProfileNotFoundError(f"creation profile not found: {profile_id}")
         return profile
 
     def _require_editable(self, profile_id: str, ctx: AuthContext) -> WorkProfile:
         profile = self._load(profile_id)
         if profile.is_builtin:
-            raise BuiltinProfileError("内置预设不可修改，请先复制")
+            raise BuiltinProfileError("built-in presets cannot be modified; copy one first")
         if not self.can_edit(profile, ctx):
-            raise PermissionDeniedError("没有修改该创作配置的权限")
+            raise PermissionDeniedError("you do not have permission to modify this creation profile")
         return profile
 
     def payload(self, profile: WorkProfile, ctx: AuthContext) -> dict[str, Any]:
         share = self.repository.get_share(profile.id, ctx.user.id)
         is_owner = bool(profile.owner_user_id) and profile.owner_user_id == ctx.user.id
-        owner_name = profile.owner_name or ("系统内置" if profile.is_builtin else "")
+        owner_name = profile.owner_name or ("Built-in" if profile.is_builtin else "")
         shared_by_owner = bool(share is not None) or bool(
             profile.is_shared and not is_owner and not profile.is_builtin
         )
@@ -315,12 +315,12 @@ class ProfileService:
     ) -> dict[str, Any]:
         label = (name or "").strip()
         if not label:
-            raise ProfileInvalidError("创作配置名称不能为空")
+            raise ProfileInvalidError("creation profile name must not be empty")
         resolved_scope = (scope or SCOPE_USER).strip().lower()
         if resolved_scope not in PROFILE_SCOPES:
-            raise ProfileInvalidError(f"未知作用域: {scope}")
+            raise ProfileInvalidError(f"unknown scope: {scope}")
         if resolved_scope != SCOPE_USER and not ctx.can("manage_server"):
-            raise PermissionDeniedError("非个人作用域需要 manage_server 权限")
+            raise PermissionDeniedError("non-personal scopes require the manage_server permission")
         normalized, errors, _warnings = normalize_spec(spec)
         if errors:
             raise ProfileInvalidError(self._error_message(errors))
@@ -344,7 +344,7 @@ class ProfileService:
         self, ctx: AuthContext, profile_id: str, name: str | None = None
     ) -> dict[str, Any]:
         source = self._require_readable(profile_id, ctx)
-        label = (name or "").strip() or f"{source.name} 副本"
+        label = (name or "").strip() or f"{source.name} copy"
         profile = self.repository.create(
             WorkProfile(
                 id="",
@@ -377,7 +377,7 @@ class ProfileService:
                 raise ProfileInvalidError(self._error_message(errors))
         label = current.name if name is None else (name or "").strip()
         if not label:
-            raise ProfileInvalidError("创作配置名称不能为空")
+            raise ProfileInvalidError("creation profile name must not be empty")
         updated = self.repository.update(
             profile_id,
             name=label,
@@ -387,14 +387,14 @@ class ProfileService:
             bump_version=normalized is not None,
         )
         if updated is None:
-            raise ProfileNotFoundError(f"创作配置不存在: {profile_id}")
+            raise ProfileNotFoundError(f"creation profile not found: {profile_id}")
         return self.payload(updated, ctx)
 
     def delete(self, ctx: AuthContext, profile_id: str) -> dict[str, Any]:
         self._require_editable(profile_id, ctx)
         used = self.repository.count_usage(profile_id)
         if used > 0:
-            raise ProfileInUseError(f"仍有 {used} 个作品在使用该配置")
+            raise ProfileInUseError(f"{used} works still use this profile")
         removed = self.repository.delete(profile_id)
         return {"ok": bool(removed), "profile_id": profile_id}
 
@@ -427,36 +427,36 @@ class ProfileService:
         if isinstance(data, dict):
             payload = data
         else:
-            raise ProfileInvalidError("导入数据必须是 JSON 对象")
+            raise ProfileInvalidError("imported data must be a JSON object")
         if "format" in payload:
             if str(payload.get("format") or "") != EXPORT_FORMAT:
                 raise ProfileInvalidError(
-                    f"不支持的导入格式: {payload.get('format') or '空'}"
+                    f"unsupported import format: {payload.get('format') or 'empty'}"
                 )
             try:
                 version = int(payload.get("version"))
             except (TypeError, ValueError):
-                raise ProfileInvalidError("导入版本号必须是整数")
+                raise ProfileInvalidError("the import version must be an integer")
             if version != EXPORT_VERSION:
-                raise ProfileInvalidError(f"不支持的导入版本: {version}")
+                raise ProfileInvalidError(f"unsupported import version: {version}")
         if "spec" not in payload:
-            raise ProfileInvalidError("导入数据缺少 spec 字段")
+            raise ProfileInvalidError("imported data is missing the spec field")
         spec_raw = payload.get("spec")
         normalized, errors, _warnings = normalize_spec(spec_raw)
         if errors:
             raise ProfileInvalidError(self._error_message(errors), errors=errors)
         resolved_scope = (scope or SCOPE_USER).strip().lower()
         if resolved_scope not in PROFILE_SCOPES:
-            raise ProfileInvalidError(f"未知作用域: {scope}")
+            raise ProfileInvalidError(f"unknown scope: {scope}")
         if resolved_scope != SCOPE_USER and not ctx.can("manage_server"):
-            raise PermissionDeniedError("非个人作用域需要 manage_server 权限")
+            raise PermissionDeniedError("non-personal scopes require the manage_server permission")
         label = (name or "").strip()
         if not label:
             label = str(payload.get("name") or "").strip()
         if not label:
             label = str(payload.get("spec", {}).get("meta", {}).get("name") or "").strip() if isinstance(payload.get("spec"), dict) else ""
         if not label:
-            label = "导入配置"
+            label = "Imported profile"
         unique = self._unique_name(label, ctx)
         profile = self.repository.create(
             WorkProfile(
@@ -500,7 +500,7 @@ class ProfileService:
         target = max(SAMPLE_CHARS_MIN, min(SAMPLE_CHARS_MAX, target))
         subject = (topic or "").strip()
         if not subject:
-            subject = f"围绕「{profile.name or spec.meta.name or '示例'}」的一个典型场景"
+            subject = f"A typical scenario around \"{profile.name or spec.meta.name or 'Example'}\""
         unit_name = spec.unit.name
         values = {
             "title": subject,
@@ -510,34 +510,34 @@ class ProfileService:
             "min_units": spec.unit.min_units,
             "max_units": spec.unit.max_units,
             "words": target,
-            "audience": "通用读者",
-            "tone": spec.voice.tone or "默认语气",
+            "audience": "general readers",
+            "tone": spec.voice.tone or "default tone",
             "pov_label": POV_LABELS.get(spec.voice.pov, spec.voice.pov),
             "tense_label": TENSE_LABELS.get(spec.voice.tense, spec.voice.tense),
             "policy_label": POLICY_LABELS.get(
                 spec.grounding.citation_policy, spec.grounding.citation_policy
             ),
-            "forbidden": "、".join(spec.voice.forbidden_phrases) or "无",
+            "forbidden": ", ".join(spec.voice.forbidden_phrases) or "none",
             "depth": spec.structure.depth,
             "sections_lo": spec.structure.sections_per_unit[0],
             "sections_hi": spec.structure.sections_per_unit[1],
             "index": 1,
             "unit_title": subject,
-            "sections": "核心场景、关键细节、情绪推进",
-            "instruction": "更清晰、更具体",
+            "sections": "core scenarios, key details, emotional progression",
+            "instruction": "clearer and more specific",
         }
         base = self._render(spec.prompts.unit or UNIT_TEMPLATE, values)
         policy = (spec.grounding.citation_policy or "").strip()
         citation_rule = (
-            "正文禁止出现任何 [E数字] 形式的引用标记。"
+            "The body must not contain any citation marker of the form [E<number>]."
             if policy == "forbidden"
-            else "如需引用证据，请使用 [E数字] 标记。"
+            else "If you cite evidence, use markers of the form [E<number>]."
             if policy == "required"
-            else "引用证据可选。"
+            else "Citing evidence is optional."
         )
         prompt = (
-            f"{base}\n\n试写要求：这是该{unit_name}的开头一小段，篇幅约 {target} 字，"
-            f"不要写完整{unit_name}，不要输出大纲、标题说明或创作说明。{citation_rule}"
+            f"{base}\n\nTrial-writing requirement: this is a short opening excerpt of the {unit_name}, about {target} words long. "
+            f"Do not write the full {unit_name}, and do not output an outline, title description, or creation notes. {citation_rule}"
         )
         return profile, prompt, target
 
@@ -566,21 +566,21 @@ class ProfileService:
             "min_units": spec.unit.min_units,
             "max_units": spec.unit.max_units,
             "words": spec.unit.default_words,
-            "audience": str(data.get("audience") or "通用读者"),
-            "tone": spec.voice.tone or "默认语气",
+            "audience": str(data.get("audience") or "general readers"),
+            "tone": spec.voice.tone or "default tone",
             "pov_label": POV_LABELS.get(spec.voice.pov, spec.voice.pov),
             "tense_label": TENSE_LABELS.get(spec.voice.tense, spec.voice.tense),
             "policy_label": POLICY_LABELS.get(
                 spec.grounding.citation_policy, spec.grounding.citation_policy
             ),
-            "forbidden": "、".join(spec.voice.forbidden_phrases) or "无",
+            "forbidden": ", ".join(spec.voice.forbidden_phrases) or "none",
             "depth": spec.structure.depth,
             "sections_lo": spec.structure.sections_per_unit[0],
             "sections_hi": spec.structure.sections_per_unit[1],
             "index": int(data.get("index") or 1),
-            "unit_title": str(data.get("unit_title") or data.get("title") or "第一节"),
-            "sections": str(data.get("sections") or "核心概念、实践步骤、常见误区"),
-            "instruction": str(data.get("instruction") or "更清晰、更具体"),
+            "unit_title": str(data.get("unit_title") or data.get("title") or "Section one"),
+            "sections": str(data.get("sections") or "core concepts, practice steps, common pitfalls"),
+            "instruction": str(data.get("instruction") or "clearer and more specific"),
         }
         return {
             "profile_id": profile.id,
@@ -596,7 +596,7 @@ class ProfileService:
     ) -> list[ProfileShare]:
         profile = self._require_readable(profile_id, ctx)
         if not self._can_manage_shares(profile, ctx, privileged):
-            raise PermissionDeniedError("没有查看该创作配置共享列表的权限")
+            raise PermissionDeniedError("you do not have permission to view this creation profile's share list")
         return self.repository.list_shares(profile_id)
 
     def replace_shares(
@@ -608,7 +608,7 @@ class ProfileService:
     ) -> list[ProfileShare]:
         profile = self._load(profile_id)
         if not self._can_manage_shares(profile, ctx, privileged):
-            raise PermissionDeniedError("只有创建者可以修改共享列表")
+            raise PermissionDeniedError("only the creator can modify the share list")
         normalized: list[tuple[str, str]] = []
         for user_id, level in items:
             target = (user_id or "").strip()
@@ -616,7 +616,7 @@ class ProfileService:
                 continue
             resolved = (level or "read").strip().lower()
             if resolved not in SHARE_LEVELS:
-                raise ProfileInvalidError(f"未知共享等级: {level}")
+                raise ProfileInvalidError(f"unknown share level: {level}")
             normalized.append((target, resolved))
         return self.repository.replace_shares(profile_id, normalized)
 
@@ -651,4 +651,4 @@ class ProfileService:
 
     def _error_message(self, errors: Sequence[dict[str, str]]) -> str:
         first = errors[0]
-        return f"创作配置校验失败：{first.get('path') or 'spec'} {first.get('message')}"
+        return f"creation profile validation failed: {first.get('path') or 'spec'} {first.get('message')}"

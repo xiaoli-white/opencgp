@@ -1,4 +1,4 @@
-"""向量检索适配器实现。"""
+"""Vector search adapter implementations."""
 
 from app.adapters.vectorstore.simple import SimpleVectorStore
 

@@ -29,19 +29,18 @@ export function setFormatLocale(locale: "zh" | "en") {
 export function formatRelative(timestamp: number): string {
   if (!timestamp) return "—";
   const diff = Date.now() / 1000 - timestamp;
-  const en = formatLocale === "en";
-  if (diff < 60) return en ? "just now" : "刚刚";
+  if (diff < 60) return "just now";
   if (diff < 3600) {
     const n = Math.floor(diff / 60);
-    return en ? `${n} min ago` : `${n} 分钟前`;
+    return `${n} min ago`;
   }
   if (diff < 86400) {
     const n = Math.floor(diff / 3600);
-    return en ? `${n} h ago` : `${n} 小时前`;
+    return `${n} h ago`;
   }
   if (diff < 86400 * 30) {
     const n = Math.floor(diff / 86400);
-    return en ? `${n} d ago` : `${n} 天前`;
+    return `${n} d ago`;
   }
   if (formatLocale === "en") {
     return new Intl.DateTimeFormat("en-US", {
@@ -91,14 +90,9 @@ export function statusTone(value: string): StatusTone {
 }
 
 export function formatChars(count: number): string {
-  if (formatLocale === "en") {
-    if (count >= 10000) return `${Math.round(count / 1000)}k chars`;
-    if (count >= 1000) return `${(count / 1000).toFixed(1)}k chars`;
-    return `${count} chars`;
-  }
-  if (count >= 10000) return `${(count / 10000).toFixed(1)} 万字`;
-  if (count >= 1000) return `${(count / 1000).toFixed(1)}k 字`;
-  return `${count} 字`;
+  if (count >= 10000) return `${Math.round(count / 1000)}k chars`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}k chars`;
+  return `${count} chars`;
 }
 
 export function contentLength(content: string): number {
@@ -106,11 +100,21 @@ export function contentLength(content: string): number {
 }
 
 export function sourceLabel(name: string): string {
-  if (!name) return "未知来源";
+  if (!name) return "Unknown source";
   return name.length > 28 ? `${name.slice(0, 26)}…` : name;
 }
 
-export const LOOSE_NOTICE_KEYWORD = "由大模型编写";
+// Loose-mode content carries a generated-by-model notice on its first line.
+// Some backends still emit the notice in Chinese, so both spellings are matched.
+// The Chinese literal is written with escapes to keep this file ASCII-only.
+const LOOSE_NOTICE_MARKERS = [
+  "\u7531\u5927\u6a21\u578b\u7f16\u5199",
+  "written by ai",
+  "written by a large language model",
+  "written by an llm",
+];
+
+export const LOOSE_NOTICE_KEYWORD = LOOSE_NOTICE_MARKERS[0];
 
 export function modeLabel(mode: string): string {
   return modeLabelI18n(getActiveTranslate(), mode);
@@ -124,7 +128,8 @@ export function splitLooseNotice(content: string): {
   let notice = "";
   const kept: string[] = [];
   content.split("\n").forEach((line) => {
-    if (line.includes(LOOSE_NOTICE_KEYWORD)) {
+    const lowered = line.toLowerCase();
+    if (LOOSE_NOTICE_MARKERS.some((marker) => lowered.includes(marker))) {
       if (!notice) {
         notice = line
           .replace(/^[>\s]+/, "")

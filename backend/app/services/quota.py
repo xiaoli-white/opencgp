@@ -121,7 +121,7 @@ class QuotaService:
         elif resolved in ("upload", "storage"):
             amount = max(0, amount)
         else:
-            raise ValueError(f"不支持的用量类型: {kind!r}")
+            raise ValueError(f"unsupported usage kind: {kind!r}")
         limits = self.limits(tenant_id)
         usage = self.usage(tenant_id)
         if resolved in GENERATION_KINDS:
@@ -131,7 +131,7 @@ class QuotaService:
         else:
             used, cap = usage.storage_bytes, limits.storage_bytes
         if not self._unlimited(cap) and used + amount > cap:
-            raise QuotaExceededError(f"本月已达上限 {used}/{cap}，请升级或联系管理员")
+            raise QuotaExceededError(f"monthly limit reached ({used}/{cap}); upgrade your plan or contact the administrator")
         self.repository.record(tenant_id, user_id, resolved, amount, ref_id)
         return self.usage(tenant_id)
 

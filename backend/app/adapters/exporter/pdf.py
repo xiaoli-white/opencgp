@@ -27,7 +27,7 @@ def render(
 ) -> bytes:
     if not available():
         raise ExportUnavailableError(
-            "PDF 导出不可用：当前环境缺少 weasyprint，请安装后重试；markdown/html/epub 不受影响"
+            "PDF export is unavailable: weasyprint is missing in this environment. Install it and try again; markdown/html/epub are unaffected"
         )
     from weasyprint import HTML
 

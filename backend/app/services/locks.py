@@ -54,7 +54,7 @@ class LockService:
     def heartbeat(self, unit_id: str, token: str) -> UnitLock:
         current = self.get(unit_id)
         if current is None or current.token != (token or ""):
-            raise UnitLockLostError("锁已失效，请重新获取编辑锁")
+            raise UnitLockLostError("the lock is no longer valid; acquire the edit lock again")
         now = time.time()
         current.heartbeat_at = now
         current.expires_at = now + self.ttl_seconds
@@ -65,7 +65,7 @@ class LockService:
         if current is None:
             return
         if current.token != (token or ""):
-            raise LockTokenMismatchError("锁令牌不匹配，无法释放他人持有的编辑锁")
+            raise LockTokenMismatchError("lock token mismatch; cannot release an edit lock held by someone else")
         self.repository.delete_lock(unit_id)
 
     def guard(self, unit_id: str, user_id: str) -> None:

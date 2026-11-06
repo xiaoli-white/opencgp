@@ -60,9 +60,9 @@ class HTTPReranker:
                 scores = _parse_response(data, len(items))
                 if scores is not None:
                     return scores
-                print("[rerank] http 响应格式不兼容，跳过重排")
+                print("[rerank] incompatible http response format, skipping rerank")
             except Exception as exc:
-                print(f"[rerank] http 打分失败（第 {attempt + 1} 次）: {exc!r}")
+                print(f"[rerank] http scoring failed (attempt {attempt + 1}): {exc!r}")
             if attempt >= attempts - 1:
                 break
             wait = _BACKOFFS[min(attempt, len(_BACKOFFS) - 1)]

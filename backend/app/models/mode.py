@@ -15,7 +15,7 @@ class GenerationMode(str, Enum):
         return cls.strict
 
 
-LOOSE_NOTICE = "⚠️ 本文由大模型编写，未经知识库证据核实"
+LOOSE_NOTICE = "⚠️ This article was written by an LLM and has not been verified against knowledge-base evidence"
 
 LOOSE_BANNER = f"> {LOOSE_NOTICE}"
 

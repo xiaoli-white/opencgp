@@ -33,10 +33,14 @@ export function profileGenre(profile: WorkProfile | null | undefined): string {
   if (id.includes("essay")) return "essay";
   if (id.includes("article")) return "article";
   const tags = profile.spec?.meta?.tags ?? [];
-  if (tags.some((tag) => tag.includes("教程"))) return "tutorial";
-  if (tags.some((tag) => tag.includes("报告") || tag.includes("研究"))) return "report";
-  if (tags.some((tag) => tag.includes("随笔") || tag.includes("散文"))) return "essay";
-  if (tags.some((tag) => tag.includes("长文") || tag.includes("技术"))) return "article";
+  // Built-in profiles may carry localized tags. Chinese keywords are written as
+  // escapes so this file stays ASCII-only; English keywords are matched too.
+  const hasTag = (...keywords: string[]) =>
+    tags.some((tag) => keywords.some((keyword) => tag.includes(keyword)));
+  if (hasTag("tutorial", "\u6559\u7a0b")) return "tutorial";
+  if (hasTag("report", "research", "\u62a5\u544a", "\u7814\u7a76")) return "report";
+  if (hasTag("essay", "\u968f\u7b14", "\u6563\u6587")) return "essay";
+  if (hasTag("article", "long-form", "\u957f\u6587", "\u6280\u672f")) return "article";
   return "custom";
 }
 

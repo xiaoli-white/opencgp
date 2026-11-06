@@ -55,7 +55,7 @@ class DockerExecutor:
         try:
             version = self._docker(["version", "--format", "{{.Server.Version}}"])
         except Exception as exc:  # noqa: BLE001
-            self.last_error = f"docker 不可用: {exc!r}"
+            self.last_error = f"docker is unavailable: {exc!r}"
             return False
         if version.returncode != 0:
             self.last_error = version.stderr.decode("utf-8", errors="replace")[:300]
@@ -65,13 +65,13 @@ class DockerExecutor:
             try:
                 probe = self._docker(["image", "inspect", image], timeout=10.0)
             except Exception as exc:  # noqa: BLE001
-                self.last_error = f"镜像探测失败: {exc!r}"
+                self.last_error = f"image probe failed: {exc!r}"
                 return False
             if probe.returncode != 0:
                 missing.append(image)
         if len(missing) == len(set(self.images.values())):
             self.last_error = (
-                "缺少执行镜像，请先拉取: "
+                "execution image is missing, pull it first: "
                 + ", ".join(sorted(set(self.images.values())))
             )
             return False
@@ -102,12 +102,12 @@ class DockerExecutor:
     ) -> ExecResult:
         resolved = (language or "").strip().lower()
         if resolved not in LANGUAGES:
-            raise ExecLanguageError(f"不支持的代码语言: {language!r}")
+            raise ExecLanguageError(f"unsupported code language: {language!r}")
         image, command = RUN_SPECS[resolved]
         image = self.images.get(resolved, image)
         if not self._image_ready(image):
-            self.last_error = f"缺少执行镜像: {image}"
-            raise ExecUnavailableError(f"缺少执行镜像 {image}，请先执行 docker pull")
+            self.last_error = f"execution image is missing: {image}"
+            raise ExecUnavailableError(f"execution image {image} is missing; run docker pull first")
         limit = int(timeout or self.default_timeout)
         container_name = CONTAINER_PREFIX + secrets.token_hex(6)
         args = [
@@ -152,7 +152,7 @@ class DockerExecutor:
             )
         except Exception as exc:  # noqa: BLE001
             self.last_error = str(exc)
-            raise ExecUnavailableError(f"代码执行后端不可用: {exc}") from exc
+            raise ExecUnavailableError(f"code execution backend is unavailable: {exc}") from exc
         try:
             out, err = process.communicate(
                 input=payload.encode("utf-8"), timeout=limit
@@ -173,7 +173,7 @@ class DockerExecutor:
         stderr, err_truncated = _decode(err or b"", self.max_bytes)
         exit_code = process.returncode if process.returncode is not None else -1
         if timed_out:
-            stderr = (stderr + f"\n执行超时（{limit}s），已终止容器").strip()
+            stderr = (stderr + f"\nTimed out after {limit}s; the container was terminated").strip()
             exit_code = 124
         return ExecResult(
             language=resolved,

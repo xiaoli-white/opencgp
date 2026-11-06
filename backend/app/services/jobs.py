@@ -102,7 +102,7 @@ class JobService:
         resolved = (kind or "").strip().lower()
         if resolved not in JOB_KINDS or resolved not in self.runners:
             raise UnsupportedJobKindError(
-                f"不支持的任务类型: {kind!r}，可选: {', '.join(JOB_KINDS)}"
+                f"unsupported job kind: {kind!r}; valid kinds: {', '.join(JOB_KINDS)}"
             )
         body = dict(payload or {})
         quota_kind = QUOTA_KIND_BY_JOB_KIND.get(resolved, "generate")
@@ -122,9 +122,9 @@ class JobService:
                 self.queue.enqueue(job.id)
             except Exception as exc:
                 self.repository.update_status(
-                    job.id, "failed", error=f"队列不可用: {exc}"
+                    job.id, "failed", error=f"queue unavailable: {exc}"
                 )
-                raise QueueUnavailableError(f"任务队列不可用: {exc}") from exc
+                raise QueueUnavailableError(f"job queue is unavailable: {exc}") from exc
         return job
 
     def get(self, job_id: str, tenant_id: str | None = None) -> Job | None:
@@ -164,7 +164,7 @@ class JobService:
     def delete(self, job_id: str, tenant_id: str | None = None) -> Job:
         job = self.require(job_id, tenant_id)
         if not is_terminal(job.status):
-            raise JobNotTerminalError("任务尚未结束，无法删除")
+            raise JobNotTerminalError("the job has not finished yet and cannot be deleted")
         self.repository.delete(job.id)
         return job
 
@@ -190,7 +190,7 @@ class JobService:
                 },
             )
         except Exception as exc:
-            print(f"[jobs] 事件发布失败 {job_id}: {exc!r}")
+            print(f"[jobs] failed to publish the event for {job_id}: {exc!r}")
 
     def _set_status(self, job_id: str, status: str, result=None, error: str = "") -> None:
         self.repository.update_status(job_id, status, result, error)
@@ -220,7 +220,7 @@ class JobService:
                 try:
                     setter(self.repository)
                 except Exception as exc:
-                    print(f"[jobs] 注入任务仓库到队列失败: {exc!r}")
+                    print(f"[jobs] failed to inject the job repository into the queue: {exc!r}")
             self.queue.start(self.handle)
 
     async def aclose(self) -> None:
@@ -234,7 +234,7 @@ class JobService:
         if job.status in (STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED):
             return
         if self.repository.has_cancel_request(job_id):
-            self._set_status(job_id, STATUS_CANCELED, None, "已取消")
+            self._set_status(job_id, STATUS_CANCELED, None, "Canceled")
             return
         self._set_status(job_id, STATUS_RUNNING)
         retrieval = None
@@ -242,7 +242,7 @@ class JobService:
             try:
                 retrieval = self.retrieval_for(job.tenant_id, job.user_id)
             except Exception as exc:  # noqa: BLE001
-                print(f"[jobs] 检索配置解析失败，回落环境默认: {exc!r}")
+                print(f"[jobs] failed to resolve the retrieval configuration; falling back to environment defaults: {exc!r}")
         context = JobContext(
             tenant_id=job.tenant_id,
             user_id=job.user_id,
@@ -256,13 +256,13 @@ class JobService:
         runner = self.runners.get(job.kind)
         if runner is None:
             self._set_status(
-                job_id, STATUS_FAILED, None, f"不支持的任务类型: {job.kind}"
+                job_id, STATUS_FAILED, None, f"unsupported job kind: {job.kind}"
             )
             return
         try:
             result = await runner(job, job.payload, context)
         except JobCanceled:
-            self._set_status(job_id, STATUS_CANCELED, None, "已取消")
+            self._set_status(job_id, STATUS_CANCELED, None, "Canceled")
             return
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
@@ -270,7 +270,7 @@ class JobService:
             self._set_status(job_id, STATUS_FAILED, None, message)
             raise JobFailure(message) from exc
         if self.repository.has_cancel_request(job_id):
-            self._set_status(job_id, STATUS_CANCELED, result, "已取消")
+            self._set_status(job_id, STATUS_CANCELED, result, "Canceled")
             return
         context.report(STAGE_DONE)
         self._set_status(job_id, STATUS_SUCCEEDED, result, "")
@@ -410,7 +410,7 @@ class JobService:
         ctx.report(0.1)
         piece_id = str(payload.get("piece_id") or "").strip()
         if not piece_id:
-            raise ValueError("缺少 piece_id")
+            raise ValueError("missing piece_id")
 
         def on_progress(done: int, total: int) -> None:
             ctx.report(0.1 + 0.8 * (done / max(1, total)))
@@ -444,10 +444,10 @@ class JobService:
         ctx.report(0.3)
         piece_id = str(payload.get("piece_id") or "").strip()
         if not piece_id:
-            raise ValueError("缺少 piece_id")
+            raise ValueError("missing piece_id")
         piece = await self.piece.rewrite(
             piece_id,
-            str(payload.get("instruction") or "润色"),
+            str(payload.get("instruction") or "polish"),
             mode=payload.get("mode") or self.default_mode,
             expected_version=payload.get("expected_version"),
             llm=ctx.llm,
@@ -466,7 +466,7 @@ class JobService:
         ctx.report(0.2)
         unit_id = str(payload.get("unit_id") or "").strip()
         if not unit_id:
-            raise ValueError("缺少 unit_id")
+            raise ValueError("missing unit_id")
         result = await self.generation.generate_unit(
             unit_id,
             topic=payload.get("topic"),
@@ -496,7 +496,7 @@ class JobService:
         ctx.report(0.2)
         series_id = str(payload.get("series_id") or "").strip()
         if not series_id:
-            raise ValueError("缺少 series_id")
+            raise ValueError("missing series_id")
         blueprint = await self.blueprint.generate(
             series_id,
             mode=payload.get("mode"),

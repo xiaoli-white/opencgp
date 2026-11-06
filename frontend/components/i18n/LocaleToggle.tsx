@@ -3,7 +3,7 @@ import { Languages } from "lucide-react";
 import { useI18n, type Locale } from "@/i18n/I18nProvider";
 
 const OPTIONS: { value: Locale; label: string }[] = [
-  { value: "zh", label: "中" },
+  { value: "zh", label: "ZH" },
   { value: "en", label: "EN" },
 ];
 

@@ -14,7 +14,7 @@ class DummyProvider(LLMProvider):
 
     async def complete(self, prompt: str, **kwargs: Any) -> str:
         await asyncio.sleep(self.delay)
-        return f"[dummy] 收到：{prompt}"
+        return f"[dummy] received: {prompt}"
 
     async def stream_complete(
         self, prompt: str, **kwargs: Any

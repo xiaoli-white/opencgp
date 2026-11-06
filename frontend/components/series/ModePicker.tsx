@@ -13,16 +13,16 @@ type ModeOption = {
 const OPTIONS: ModeOption[] = [
   {
     value: "strict",
-    label: "严格模式",
-    short: "严格",
-    desc: "每段必须带 [En] 出处，无据不写",
+    label: "Strict mode",
+    short: "Strict",
+    desc: "Every section needs an [En] source; never write without evidence",
     icon: ShieldCheck,
   },
   {
     value: "loose",
-    label: "非严格模式",
-    short: "非严格",
-    desc: "允许模型自由写作，正文标注由大模型编写",
+    label: "Loose mode",
+    short: "Loose",
+    desc: "Let the model write freely; the body is marked as written by AI",
     icon: PenLine,
   },
 ];
@@ -118,7 +118,7 @@ export default function ModePicker({
               </span>
               {option.value === "strict" ? (
                 <span className="text-[9px] text-slate-400 dark:text-slate-500">
-                  默认
+                  Default
                 </span>
               ) : null}
             </span>

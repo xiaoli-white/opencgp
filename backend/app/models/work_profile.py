@@ -18,7 +18,7 @@ SCOPE_GLOBAL = "global"
 SYSTEM_TENANT_ID = "system"
 SYSTEM_USER_ID = "system"
 BUILTIN_ID_PREFIX = "profile_builtin_"
-DEFAULT_UNIT_NAME = "讲"
+DEFAULT_UNIT_NAME = "Chapter"
 DEFAULT_WORDS = 900
 MIN_WORDS = 100
 MAX_WORDS = 20000
@@ -134,7 +134,7 @@ def _as_dict(value: Any, path: str, errors: list[dict[str, str]]) -> dict[str, A
         return {}
     if isinstance(value, dict):
         return value
-    errors.append(error_item(path, "必须是对象"))
+    errors.append(error_item(path, "must be an object"))
     return {}
 
 
@@ -147,7 +147,7 @@ def _as_str(
         return value.strip()
     if isinstance(value, (int, float, bool)):
         return str(value).strip()
-    errors.append(error_item(path, "必须是字符串"))
+    errors.append(error_item(path, "must be a string"))
     return default
 
 
@@ -164,13 +164,13 @@ def _as_int(
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        errors.append(error_item(path, "必须是整数"))
+        errors.append(error_item(path, "must be an integer"))
         return default
     if low is not None and parsed < low:
-        errors.append(error_item(path, f"不能小于 {low}"))
+        errors.append(error_item(path, f"must be at least {low}"))
         return default
     if high is not None and parsed > high:
-        errors.append(error_item(path, f"不能大于 {high}"))
+        errors.append(error_item(path, f"must be at most {high}"))
         return default
     return parsed
 
@@ -188,7 +188,7 @@ def _as_bool(value: Any, path: str, errors: list[dict[str, str]], default: bool)
             return True
         if lowered in ("false", "0", "no", "off", ""):
             return False
-    errors.append(error_item(path, "必须是布尔值"))
+    errors.append(error_item(path, "must be a boolean"))
     return default
 
 
@@ -206,12 +206,12 @@ def _as_str_list(value: Any, path: str, errors: list[dict[str, str]]) -> list[st
             elif isinstance(entry, (int, float)):
                 text = str(entry)
             else:
-                errors.append(error_item(path, "列表元素必须是字符串"))
+                errors.append(error_item(path, "list items must be strings"))
                 continue
             if text:
                 items.append(text)
         return items
-    errors.append(error_item(path, "必须是字符串数组"))
+    errors.append(error_item(path, "must be an array of strings"))
     return []
 
 
@@ -223,7 +223,7 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
     elif isinstance(raw, dict):
         data = raw
     else:
-        errors.append(error_item("", "spec 必须是对象"))
+        errors.append(error_item("", "spec must be an object"))
         data = {}
 
     meta_raw = _as_dict(data.get("meta"), "meta", errors)
@@ -249,11 +249,11 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
         else DEFAULT_UNIT_NAME
     )
     if not unit_name:
-        errors.append(error_item("unit.name", "写作单位名称不能为空"))
+        errors.append(error_item("unit.name", "unit name must not be empty"))
         unit_name = DEFAULT_UNIT_NAME
     if len(unit_name) > MAX_UNIT_NAME_LENGTH:
         errors.append(
-            error_item("unit.name", f"写作单位名称不能超过 {MAX_UNIT_NAME_LENGTH} 个字")
+            error_item("unit.name", f"unit name must not exceed {MAX_UNIT_NAME_LENGTH} characters")
         )
         unit_name = unit_name[:MAX_UNIT_NAME_LENGTH]
     plural = _as_str(unit_raw.get("plural"), "unit.plural", errors, unit_name) or unit_name
@@ -264,7 +264,7 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
         unit_raw.get("max_units"), "unit.max_units", errors, DEFAULT_UNIT_MAX, 1, 200
     )
     if max_units < min_units:
-        errors.append(error_item("unit.max_units", "最大单位数不能小于最小单位数"))
+        errors.append(error_item("unit.max_units", "max_units must not be less than min_units"))
         max_units = min_units
     default_words = _as_int(
         unit_raw.get("default_words"),
@@ -293,12 +293,12 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
             high = _as_int(sections_raw[1], "structure.sections_per_unit", errors, 5, 1, 20)
             if high < low:
                 errors.append(
-                    error_item("structure.sections_per_unit", "上限不能小于下限")
+                    error_item("structure.sections_per_unit", "upper bound must not be less than lower bound")
                 )
                 high = low
             sections = [low, high]
         else:
-            errors.append(error_item("structure.sections_per_unit", "必须是两个整数"))
+            errors.append(error_item("structure.sections_per_unit", "must be two integers"))
     structure = ProfileStructure(
         depth=depth,
         sections_per_unit=sections,
@@ -309,11 +309,11 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
 
     pov = _as_str(voice_raw.get("pov"), "voice.pov", errors, "third_limited") or "third_limited"
     if pov not in POVS:
-        errors.append(error_item("voice.pov", f"未知视角: {pov}"))
+        errors.append(error_item("voice.pov", f"unknown point of view: {pov}"))
         pov = "third_limited"
     tense = _as_str(voice_raw.get("tense"), "voice.tense", errors, "present") or "present"
     if tense not in TENSES:
-        errors.append(error_item("voice.tense", f"未知时态: {tense}"))
+        errors.append(error_item("voice.tense", f"unknown tense: {tense}"))
         tense = "present"
     voice = ProfileVoice(
         tone=_as_str(voice_raw.get("tone"), "voice.tone", errors),
@@ -329,7 +329,7 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
         or "optional"
     )
     if policy not in CITATION_POLICIES:
-        errors.append(error_item("grounding.citation_policy", f"未知引用策略: {policy}"))
+        errors.append(error_item("grounding.citation_policy", f"unknown citation policy: {policy}"))
         policy = "optional"
     grounding = ProfileGrounding(
         citation_policy=policy,
@@ -357,7 +357,7 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
     kept: list[str] = []
     for item in validators:
         if item not in VALIDATORS:
-            errors.append(error_item("validation.validators", f"未知校验器: {item}"))
+            errors.append(error_item("validation.validators", f"unknown validator: {item}"))
             continue
         if item not in kept:
             kept.append(item)
@@ -366,7 +366,7 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
         warnings.append(
             error_item(
                 "validation.validators",
-                "引用策略为 forbidden，已自动剔除 citation 校验器",
+                "citation policy is forbidden; the citation validator was removed automatically",
             )
         )
     strictness = (
@@ -374,7 +374,7 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
         or "normal"
     )
     if strictness not in STRICTNESS_LEVELS:
-        errors.append(error_item("validation.strictness", f"未知严格度: {strictness}"))
+        errors.append(error_item("validation.strictness", f"unknown strictness: {strictness}"))
         strictness = "normal"
     validation = ProfileValidation(validators=kept, strictness=strictness)
 
@@ -383,7 +383,7 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
         text = _as_str(prompts_raw.get(field), f"prompts.{field}", errors)
         if len(text) > MAX_PROMPT_LENGTH:
             errors.append(
-                error_item(f"prompts.{field}", f"提示词不能超过 {MAX_PROMPT_LENGTH} 字")
+                error_item(f"prompts.{field}", f"prompt must not exceed {MAX_PROMPT_LENGTH} characters")
             )
             text = text[:MAX_PROMPT_LENGTH]
         setattr(prompts, field, text)
@@ -392,7 +392,7 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
         _as_str(export_raw.get("default_format"), "export.default_format", errors, "md") or "md"
     )
     if export_format not in EXPORT_FORMATS:
-        errors.append(error_item("export.default_format", f"未知导出格式: {export_format}"))
+        errors.append(error_item("export.default_format", f"unknown export format: {export_format}"))
         export_format = "md"
     export = ProfileExport(
         default_format=export_format,

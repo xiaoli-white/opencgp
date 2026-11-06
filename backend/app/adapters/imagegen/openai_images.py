@@ -37,11 +37,23 @@ class OpenAIImageProvider(ImageProvider):
     def healthcheck(self) -> bool:
         return bool(self.base_url and self.api_key)
 
+    async def _download(self, url: str, headers: dict[str, str]) -> bytes:
+        """Fetch a generated image that came back as a URL instead of base64."""
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return response.content
+        except Exception as exc:  # noqa: BLE001
+            raise ImageGenerationError(
+                f"failed to download the generated image: {type(exc).__name__}"
+            ) from exc
+
     async def generate(
         self, prompt: str, size: str = "1024x1024", n: int = 1
     ) -> list[bytes]:
         if not self.api_key:
-            raise ImageGenerationUnavailableError("未配置图片生成服务")
+            raise ImageGenerationUnavailableError("image generation service is not configured")
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -60,23 +72,28 @@ class OpenAIImageProvider(ImageProvider):
             raise ImageGenerationError(str(exc)[:ERROR_LIMIT]) from exc
         if resp.status_code >= 400:
             raise ImageGenerationError(
-                f"图片生成失败 {resp.status_code}: {resp.text[:ERROR_LIMIT]}"
+                f"image generation failed {resp.status_code}: {resp.text[:ERROR_LIMIT]}"
             )
         try:
             body: Any = resp.json()
         except Exception as exc:  # noqa: BLE001
             raise ImageGenerationError(
-                f"图片生成返回非 JSON: {resp.text[:ERROR_LIMIT]}"
+                f"image generation returned non-JSON: {resp.text[:ERROR_LIMIT]}"
             ) from exc
         images: list[bytes] = []
         for item in (body or {}).get("data") or []:
-            encoded = (item or {}).get("b64_json")
-            if not encoded:
+            item = item or {}
+            encoded = item.get("b64_json")
+            if encoded:
+                try:
+                    images.append(base64.b64decode(encoded))
+                except Exception as exc:  # noqa: BLE001
+                    raise ImageGenerationError("failed to decode the image data") from exc
                 continue
-            try:
-                images.append(base64.b64decode(encoded))
-            except Exception as exc:  # noqa: BLE001
-                raise ImageGenerationError("图片数据解码失败") from exc
+            # Several providers ignore response_format=b64_json and return a URL.
+            remote_url = item.get("url")
+            if remote_url:
+                images.append(await self._download(remote_url, headers))
         if not images:
-            raise ImageGenerationError("图片生成返回为空")
+            raise ImageGenerationError("image generation returned an empty result")
         return images

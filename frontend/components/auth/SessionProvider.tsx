@@ -108,7 +108,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const actions: RoleAction[] =
       caps?.role?.actions ?? me?.actions ?? [];
     const roleName =
-      caps?.role?.name || me?.role_name || (role === "owner" ? "所有者" : "");
+      caps?.role?.name || me?.role_name || (role === "owner" ? "Owner" : "");
     return {
       me,
       loading,

@@ -47,15 +47,15 @@ class OpenAIEmbedding:
             data = await self._post(payload)
             rows = data.get("data")
             if not isinstance(rows, list) or len(rows) != len(chunk):
-                raise ValueError(f"embedding 响应条目数不匹配: {len(rows) if isinstance(rows, list) else 'invalid'}")
+                raise ValueError(f"embedding response item count mismatch: {len(rows) if isinstance(rows, list) else 'invalid'}")
             ordered: list[tuple[int, list[float]]] = []
             for position, row in enumerate(rows):
                 if not isinstance(row, dict):
-                    raise ValueError("embedding 响应结构异常")
+                    raise ValueError("unexpected embedding response structure")
                 index = int(row.get("index", position))
                 vector = row.get("embedding")
                 if not isinstance(vector, list) or not vector:
-                    raise ValueError("embedding 向量为空")
+                    raise ValueError("embedding vector is empty")
                 ordered.append((index, [float(value) for value in vector]))
             ordered.sort(key=lambda item: item[0])
             vectors.extend(vector for _, vector in ordered)
@@ -68,7 +68,7 @@ class OpenAIEmbedding:
     async def probe(self) -> dict[str, Any]:
         vectors = await self.embed(["ping"])
         if not vectors:
-            return {"ok": False, "dim": 0, "model": self.model, "error": "空向量"}
+            return {"ok": False, "dim": 0, "model": self.model, "error": "empty vector"}
         actual = len(vectors[0])
         return {
             "ok": actual == self.dim,
@@ -88,7 +88,7 @@ class OpenAIEmbedding:
                     response.raise_for_status()
                     data = response.json()
                 if not isinstance(data, dict):
-                    raise ValueError("embedding 响应不是对象")
+                    raise ValueError("embedding response is not an object")
                 return data
             except Exception as exc:
                 last_error = exc
@@ -96,7 +96,7 @@ class OpenAIEmbedding:
                     break
                 await asyncio.sleep(0.5 * (2**attempt))
         if last_error is None:
-            raise RuntimeError("embedding 请求失败")
+            raise RuntimeError("embedding request failed")
         raise last_error
 
     def healthcheck(self) -> bool:

@@ -10,10 +10,10 @@ type NoAccessCardProps = {
 };
 
 export default function NoAccessCard({
-  title = "需要访问权限",
-  message = "当前角色没有访问该页面的权限，请联系空间管理员申请。",
+  title = "Access required",
+  message = "Your role does not have access to this page. Contact a workspace admin to request access.",
   backTo = "/",
-  backLabel = "返回创作工作台",
+  backLabel = "Back to the workspace",
 }: NoAccessCardProps) {
   return (
     <div className="mx-auto w-full max-w-2xl">

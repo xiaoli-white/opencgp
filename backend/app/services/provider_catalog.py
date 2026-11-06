@@ -163,7 +163,7 @@ class ProviderCatalogService:
     def _normalize_kind(self, kind: str) -> str:
         value = (kind or "").strip()
         if value not in PROVIDER_KINDS:
-            raise ValueError("kind 仅支持 openai_compat 或 dummy")
+            raise ValueError("kind supports only openai_compat or dummy")
         return value
 
     def _normalize_models(self, models: list[str] | None) -> list[str]:
@@ -187,7 +187,7 @@ class ProviderCatalogService:
         self.ensure_seed()
         label = (name or "").strip()
         if not label:
-            raise ValueError("provider 名称不能为空")
+            raise ValueError("provider name must not be empty")
         record = ServerProvider(
             id=f"provider_{int(time.time() * 1000)}_{time.perf_counter_ns() % 100000}",
             name=label,
@@ -219,7 +219,7 @@ class ProviderCatalogService:
     ) -> ServerProvider:
         current = self.get(provider_id)
         if current is None:
-            raise ProviderNotFoundError("provider 不存在")
+            raise ProviderNotFoundError("provider not found")
         cipher = current.api_key_cipher
         raw_key = (api_key or "").strip()
         if raw_key:
@@ -249,12 +249,12 @@ class ProviderCatalogService:
     def delete(self, provider_id: str, references: int = 0) -> None:
         current = self.get(provider_id)
         if current is None:
-            raise ProviderNotFoundError("provider 不存在")
+            raise ProviderNotFoundError("provider not found")
         if current.is_default:
-            raise DefaultProviderError("默认 provider 不可删除，请先切换默认 provider")
+            raise DefaultProviderError("the default provider cannot be deleted; switch the default provider first")
         if references > 0:
             raise ProviderInUseError(
-                f"该 provider 仍被 {references} 个用户设置引用，请先让用户切换 provider"
+                f"this provider is still referenced by {references} user settings; have those users switch providers first"
             )
         self.repository.delete_provider(provider_id)
 

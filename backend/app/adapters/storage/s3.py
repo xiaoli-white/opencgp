@@ -109,14 +109,14 @@ class S3StorageBackend(StorageBackend):
             try:
                 resp = self._send(method, key, query, body, headers, bucket_level)
             except httpx.HTTPError as exc:
-                self.last_error = f"{method} 网络异常: {exc!r}"
+                self.last_error = f"{method} network error: {exc!r}"
                 if attempt >= len(RETRY_DELAYS):
                     raise
                 delay = RETRY_DELAYS[attempt]
                 attempt += 1
                 self.retries += 1
                 print(
-                    f"[s3] {method} {key or self.bucket} 网络异常，第 {attempt} 次重试（{delay}s）: {exc!r}"
+                    f"[s3] {method} {key or self.bucket} network error, retry {attempt} ({delay}s): {exc!r}"
                 )
                 time.sleep(delay)
                 continue
@@ -129,8 +129,8 @@ class S3StorageBackend(StorageBackend):
             attempt += 1
             self.retries += 1
             print(
-                f"[s3] {method} {key or self.bucket} 返回 {resp.status_code}，"
-                f"第 {attempt} 次重试（{delay}s）"
+                f"[s3] {method} {key or self.bucket} returned {resp.status_code}, "
+                f"retry {attempt} ({delay}s)"
             )
             time.sleep(delay)
 
@@ -166,9 +166,9 @@ class S3StorageBackend(StorageBackend):
             if resp.status_code in (200, 201, 403, 409):
                 self._bucket_ready = True
                 return True
-            self.last_error = f"建桶失败 {resp.status_code}: {resp.text[:200]}"
+            self.last_error = f"bucket creation failed {resp.status_code}: {resp.text[:200]}"
         except Exception as exc:
-            self.last_error = f"建桶异常: {exc!r}"
+            self.last_error = f"bucket creation error: {exc!r}"
         return False
 
     def object_key(self, tenant_id: str, source_id: str, filename: str) -> str:
@@ -184,7 +184,7 @@ class S3StorageBackend(StorageBackend):
         headers = {"content-type": content_type or "application/octet-stream"}
         resp = self._request("PUT", key=key, body=data, headers=headers)
         if resp.status_code not in (200, 201):
-            raise RuntimeError(f"S3 put 失败 {resp.status_code}: {resp.text[:200]}")
+            raise RuntimeError(f"S3 put failed {resp.status_code}: {resp.text[:200]}")
         return key
 
     def _put_multipart(
@@ -213,16 +213,16 @@ class S3StorageBackend(StorageBackend):
         )
         if resp.status_code not in (200, 201):
             raise RuntimeError(
-                f"S3 multipart 初始化失败 {resp.status_code}: {resp.text[:200]}"
+                f"S3 multipart init failed {resp.status_code}: {resp.text[:200]}"
             )
         try:
             root = ET.fromstring(resp.text)
         except Exception as exc:
-            raise RuntimeError(f"S3 multipart 响应无法解析: {exc!r}") from exc
+            raise RuntimeError(f"cannot parse S3 multipart response: {exc!r}") from exc
         for element in root.iter():
             if element.tag.split("}")[-1] == "UploadId" and element.text:
                 return element.text
-        raise RuntimeError("S3 multipart 未返回 UploadId")
+        raise RuntimeError("S3 multipart did not return an UploadId")
 
     def upload_part(
         self, key: str, upload_id: str, part_number: int, body: bytes
@@ -236,7 +236,7 @@ class S3StorageBackend(StorageBackend):
         )
         if resp.status_code not in (200, 201):
             raise RuntimeError(
-                f"S3 upload_part 失败 {resp.status_code}: {resp.text[:200]}"
+                f"S3 upload_part failed {resp.status_code}: {resp.text[:200]}"
             )
         return (resp.headers.get("etag") or "").strip('"')
 
@@ -259,7 +259,7 @@ class S3StorageBackend(StorageBackend):
         )
         if resp.status_code not in (200, 201):
             raise RuntimeError(
-                f"S3 multipart 完成失败 {resp.status_code}: {resp.text[:200]}"
+                f"S3 multipart completion failed {resp.status_code}: {resp.text[:200]}"
             )
 
     def abort_multipart_upload(self, key: str, upload_id: str) -> None:
@@ -268,20 +268,20 @@ class S3StorageBackend(StorageBackend):
                 "DELETE", key=key, query={"uploadId": upload_id}
             )
         except Exception as exc:
-            print(f"[s3] multipart 中止失败 {key}: {exc!r}")
+            print(f"[s3] multipart abort failed {key}: {exc!r}")
 
     def get(self, key: str) -> bytes:
         resp = self._request("GET", key=key)
         if resp.status_code == 404:
             raise FileNotFoundError(key)
         if resp.status_code != 200:
-            raise RuntimeError(f"S3 get 失败 {resp.status_code}: {resp.text[:200]}")
+            raise RuntimeError(f"S3 get failed {resp.status_code}: {resp.text[:200]}")
         return resp.content
 
     def delete(self, key: str) -> None:
         resp = self._request("DELETE", key=key)
         if resp.status_code not in (200, 204, 404):
-            raise RuntimeError(f"S3 delete 失败 {resp.status_code}: {resp.text[:200]}")
+            raise RuntimeError(f"S3 delete failed {resp.status_code}: {resp.text[:200]}")
 
     def exists(self, key: str) -> bool:
         resp = self._request("HEAD", key=key)
@@ -294,7 +294,7 @@ class S3StorageBackend(StorageBackend):
             query["prefix"] = prefix
         resp = self._request("GET", bucket_level=True, query=query)
         if resp.status_code != 200:
-            raise RuntimeError(f"S3 list 失败 {resp.status_code}: {resp.text[:200]}")
+            raise RuntimeError(f"S3 list failed {resp.status_code}: {resp.text[:200]}")
         import xml.etree.ElementTree as ET
 
         try:
@@ -321,10 +321,10 @@ class S3StorageBackend(StorageBackend):
                 if self.ensure_bucket():
                     ok = self._request("HEAD", bucket_level=True).status_code == 200
                     if not ok:
-                        self.last_error = "桶创建后 HEAD 仍失败"
+                        self.last_error = "HEAD still fails after bucket creation"
                     return ok
             self.last_error = f"HEAD bucket {resp.status_code}: {resp.text[:200]}"
             return False
         except Exception as exc:
-            self.last_error = f"探活异常: {exc!r}"
+            self.last_error = f"health check error: {exc!r}"
             return False

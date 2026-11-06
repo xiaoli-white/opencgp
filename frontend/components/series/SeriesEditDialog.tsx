@@ -8,7 +8,7 @@ import { useI18n } from "@/i18n/I18nProvider";
 const DIFFICULTIES = ["beginner", "intermediate", "advanced"];
 
 const LANGUAGES: { value: string; label: { zh: string; en: string } }[] = [
-  { value: "zh", label: { zh: "中文", en: "Chinese" } },
+  { value: "zh", label: { zh: "Chinese", en: "Chinese" } },
   { value: "en", label: { zh: "English", en: "English" } },
 ];
 

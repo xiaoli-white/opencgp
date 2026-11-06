@@ -1,7 +1,7 @@
-"""端口（Port）层：定义全部抽象接口。
+"""Port layer: defines all abstract interfaces.
 
-每个端口对应一类可插拔能力，业务代码只依赖这些 Protocol，
-不 import 任何具体 adapter 实现。
+Each port corresponds to one pluggable capability. Business code depends only on
+these Protocols and never imports a concrete adapter implementation.
 """
 
 from app.ports.conversation_repository import ConversationRepository

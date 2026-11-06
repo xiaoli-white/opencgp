@@ -18,7 +18,7 @@ from app.ports.llm import LLMProvider
 from app.ports.vectorstore import VectorStore
 from app.services.retrieval_providers import RetrievalContext
 
-CLAIM_PATTERN = re.compile(r"\d+\s*%?|最好|最强|一定|必然|绝对|所有|从不|唯一|最新|最高|最低")
+CLAIM_PATTERN = re.compile(r"\d+\s*%?|best|strongest|always|inevitable|absolutely|all|never|only|latest|highest|lowest")
 HEADING_PATTERN = re.compile(r"^(#{1,6}\s|>|\||```|~~~)")
 LIST_PATTERN = re.compile(r"^([-*+]\s+|\d+[.)]\s+)")
 MAX_CLAIMS = 12
@@ -133,16 +133,16 @@ class FactCheckService:
         targets = results[:LLM_REVIEW_LIMIT]
         if not targets:
             return results
-        lines = ["你是事实核查助手。请判断下列陈述是否有充分依据，只能输出 JSON 数组。"]
+        lines = ["You are a fact-checking assistant. Decide whether each claim below is sufficiently supported, and output only a JSON array."]
         for index, item in enumerate(targets, start=1):
             evidence = " ".join(
                 (citation.snippet or citation.text or "")[:120] for citation in item.evidence
             )
             lines.append(
-                f'{index}. 陈述：{item.claim[:200]}\n   证据：{evidence or "（无检索证据）"}'
+                f'{index}. Claim: {item.claim[:200]}\n   Evidence: {evidence or "(no evidence retrieved)"}'
             )
         lines.append(
-            '输出格式：[{"index": 1, "verdict": "supported|unsure|unsupported"}]，不要输出其它内容。'
+            'Output format: [{"index": 1, "verdict": "supported|unsure|unsupported"}]; do not output anything else.'
         )
         try:
             raw = await provider.complete("\n".join(lines))
@@ -155,7 +155,7 @@ class FactCheckService:
             verdict = verdicts.get(index)
             if verdict and verdict != item.verdict:
                 item.llm_verdict = verdict
-                item.llm_reason = "模型复核与检索判定不一致"
+                item.llm_reason = "model review disagrees with the retrieval verdict"
                 item.source = "retrieval+llm"
         return results
 

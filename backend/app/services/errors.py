@@ -56,14 +56,14 @@ class EmailAlreadyRegisteredError(ValueError):
 
 class VersionConflictError(RuntimeError):
     def __init__(self, expected: int, current: int) -> None:
-        super().__init__("版本冲突：内容已被他人更新")
+        super().__init__("version conflict: the content has been updated by someone else")
         self.expected = int(expected)
         self.current = int(current)
 
 
 class UnitLockedError(RuntimeError):
     def __init__(self, name: str, lock: object | None = None) -> None:
-        super().__init__(f"该讲正被 {name} 编辑")
+        super().__init__(f"this chapter is currently being edited by {name}")
         self.name = name
         self.lock = lock
 
@@ -210,8 +210,8 @@ class MediaInvalidError(ValueError):
 
 class ProviderCallError(RuntimeError):
     def __init__(self, detail: str = "") -> None:
-        reason = (detail or "未知原因").strip()[:120]
-        super().__init__(f"模型通道调用失败：{reason}")
+        reason = (detail or "unknown reason").strip()[:120]
+        super().__init__(f"model channel call failed: {reason}")
         self.detail = reason
 
 

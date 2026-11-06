@@ -6,17 +6,17 @@ from typing import Any, Mapping
 from app.models.work_profile import ProfileSpec
 
 POV_LABELS = {
-    "first": "第一人称",
-    "third_limited": "第三人称限知",
-    "third_omniscient": "第三人称全知",
+    "first": "first person",
+    "third_limited": "third person limited",
+    "third_omniscient": "third person omniscient",
 }
-TENSE_LABELS = {"present": "现在时", "past": "过去时"}
+TENSE_LABELS = {"present": "present tense", "past": "past tense"}
 POLICY_LABELS = {
-    "required": "必须引用知识库证据",
-    "optional": "有证据则引用，无证据可自由写作",
-    "forbidden": "不得引用知识库证据",
+    "required": "must cite knowledge-base evidence",
+    "optional": "cite when evidence exists; write freely otherwise",
+    "forbidden": "must not cite knowledge-base evidence",
 }
-DEFAULT_UNIT = "讲"
+DEFAULT_UNIT = "Chapter"
 DEFAULT_STRICT_WORDS = (600, 1200)
 DEFAULT_LOOSE_WORDS = (800, 1500)
 
@@ -78,16 +78,16 @@ def voice_lines(spec: ProfileSpec | None) -> list[str]:
     lines: list[str] = []
     tone = (spec.voice.tone or "").strip()
     if tone:
-        lines.append(f"- 语气：{tone}")
+        lines.append(f"- Tone: {tone}")
     pov = POV_LABELS.get((spec.voice.pov or "").strip())
     if pov:
-        lines.append(f"- 叙述人称：{pov}")
+        lines.append(f"- Narrative person: {pov}")
     tense = TENSE_LABELS.get((spec.voice.tense or "").strip())
     if tense:
-        lines.append(f"- 叙述时态：{tense}")
+        lines.append(f"- Narrative tense: {tense}")
     forbidden = [item.strip() for item in spec.voice.forbidden_phrases if item.strip()]
     if forbidden:
-        lines.append("- 严禁出现以下措辞：" + "、".join(forbidden))
+        lines.append("- Never use the following wording: " + ", ".join(forbidden))
     return lines
 
 
@@ -96,8 +96,8 @@ def glossary_lines(spec: ProfileSpec | None, unit: str | None = None) -> list[st
         return []
     label = unit or unit_name(spec)
     return [
-        f"- 正文结尾必须追加「## 术语」小节，列出本{label}出现的关键术语，"
-        "每条写成「- 术语：一句话解释」，不得省略。"
+        f"- End the body with a \"## Glossary\" section listing the key terms that appear in this {label}; "
+        "write each item as \"- Term: one-sentence explanation\" and do not omit the section."
     ]
 
 
@@ -129,7 +129,7 @@ def system_prefix(spec: ProfileSpec | None, values: Mapping[str, Any]) -> str:
     text = render_template(spec.prompts.system, values)
     if not text:
         return ""
-    return "## 追加系统要求\n" + text
+    return "## Additional system requirements\n" + text
 
 
 def extra_requirement(spec: ProfileSpec | None, kind: str, values: Mapping[str, Any]) -> str:
@@ -140,8 +140,8 @@ def extra_requirement(spec: ProfileSpec | None, kind: str, values: Mapping[str, 
     if not text:
         return ""
     label = {
-        "unit": "额外写作要求",
-        "outline": "额外大纲要求",
-        "revise": "额外修改要求",
-    }.get(kind, "额外要求")
+        "unit": "Additional writing requirements",
+        "outline": "Additional outline requirements",
+        "revise": "Additional revision requirements",
+    }.get(kind, "Additional requirements")
     return f"## {label}\n" + text

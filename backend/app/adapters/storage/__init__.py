@@ -1,4 +1,4 @@
-"""对象存储适配器实现。"""
+"""Object storage adapter implementations."""
 
 from app.adapters.storage.local import LocalStorageBackend
 

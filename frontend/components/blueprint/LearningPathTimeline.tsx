@@ -18,7 +18,9 @@ type LearningPathTimelineProps = {
 };
 
 function nodeMinutes(node: OutlineNode): string {
-  return node.estimated_minutes > 0 ? `${node.estimated_minutes} 分钟` : "时长待定";
+  return node.estimated_minutes > 0
+    ? `${node.estimated_minutes} min`
+    : "Duration TBD";
 }
 
 export default function LearningPathTimeline({
@@ -94,13 +96,13 @@ export default function LearningPathTimeline({
             {node.objectives.length > 0 ? (
               <span className="chip-muted">
                 <ListChecks size={10} />
-                目标 {node.objectives.length}
+                Objectives {node.objectives.length}
               </span>
             ) : null}
             {node.prerequisites.length > 0 ? (
               <span className="chip-muted">
                 <Lock size={10} />
-                前置 {node.prerequisites.length}
+                Prerequisites {node.prerequisites.length}
               </span>
             ) : null}
             {node.unit_id ? (
@@ -110,11 +112,11 @@ export default function LearningPathTimeline({
                 className="btn-quiet !px-2 !py-1 text-[10px]"
               >
                 <CornerDownRight size={10} />
-                打开阅读
+                Open reader
               </button>
             ) : (
               <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                未绑定讲次
+                Not linked to a unit
               </span>
             )}
           </div>
@@ -131,7 +133,7 @@ export default function LearningPathTimeline({
           className="mx-auto text-slate-400 dark:text-slate-500"
         />
         <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-          这份蓝图还没有学习路径与节点。
+          This blueprint has no learning path or nodes yet.
         </p>
       </div>
     );
@@ -170,12 +172,12 @@ export default function LearningPathTimeline({
                           </p>
                         ) : null}
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                          <span className="chip">{nodes.length} 个节点</span>
+                          <span className="chip">{nodes.length} nodes</span>
                           <span className="chip-muted">
                             <Clock3 size={10} />
                             {stage.estimated_minutes > 0
-                              ? `${stage.estimated_minutes} 分钟`
-                              : "时长待定"}
+                              ? `${stage.estimated_minutes} min`
+                              : "Duration TBD"}
                           </span>
                         </div>
                       </div>
@@ -212,7 +214,7 @@ export default function LearningPathTimeline({
       {orphanNodes.length > 0 ? (
         <div className="rounded-2xl border border-slate-200/70 bg-white/40 p-3 dark:border-white/10 dark:bg-white/[0.03]">
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
-            未归入阶段
+            Unassigned to a stage
           </p>
           <ul className="relative mt-2 space-y-1.5">{orphanNodes.map(renderNode)}</ul>
         </div>

@@ -1,18 +1,23 @@
-"""追问、局部修改与沉淀服务（Ask & Amend）。
+"""Follow-up, local revision, and consolidation service (Ask & Amend).
 
-让每一讲成为可追问、可局部修改的活文档：
+Turns every chapter into a living document that can be questioned and locally revised:
 
-- ``ask``：以该讲当前正文 + 引用证据 + 该讲对话线历史为上下文回答追问，
-  并保证 user / assistant 两条消息都落库（即使没有真实 key）。
-- ``amend``：按自然语言指令重写正文，走 Sprint 3 的追加式版本机制落新版本，
-  指令原文写入版本 note，历史版本永不覆盖。
-- ``amend`` 支持 ``strict`` / ``loose`` 两种模式：loose 允许模型基于自身知识自由改写，
-  但正文首行强制保留「由大模型编写」声明。
-- ``drilldown``：把某次追问的回答沉淀为正文新章节，同样追加新版本（note=drilldown）。
+- ``ask``: answers a follow-up using the chapter's current body + cited evidence +
+  the chapter's conversation history as context, and persists both the user and
+  assistant messages (even without a real key).
+- ``amend``: rewrites the body from a natural-language instruction and persists a new
+  version through the append-only versioning mechanism, writing the raw instruction
+  into the version note; historical versions are never overwritten.
+- ``amend`` supports both ``strict`` and ``loose`` modes: loose lets the model rewrite
+  freely from its own knowledge, but the first line of the body must keep the
+  "written by an LLM" notice.
+- ``drilldown``: consolidates the answer to a follow-up into a new section of the
+  body, also appending a new version (note=drilldown).
 
-幻觉抑制沿用生成期的约定：只允许使用正文与证据，覆盖不到就显式说明。
-未配置真实 LLM key 时（占位 provider）由正文与证据编排占位内容，
-链路（消息、版本、引用）仍然完整可验证。
+Hallucination suppression follows the generation-time convention: only the body and
+evidence may be used, and anything not covered must be stated explicitly. When no real
+LLM key is configured (placeholder provider), placeholder content is assembled from the
+body and evidence while the chain (messages, versions, citations) stays fully verifiable.
 """
 
 from __future__ import annotations
@@ -42,7 +47,7 @@ from app.services.errors import (
 )
 
 DRILLDOWN_NOTE = "drilldown"
-DRILLDOWN_HEADING = "追问补充"
+DRILLDOWN_HEADING = "Follow-up addendum"
 SELECTION_CHAR_LIMIT = 1200
 
 
@@ -87,7 +92,7 @@ class ConversationService:
         else:
             answer = (await llm_provider.complete(prompt)).strip()
             if not answer:
-                raise EmptyLLMResponseError("模型未返回追问回答")
+                raise EmptyLLMResponseError("the model returned no answer to the follow-up question")
 
         user_message = self.conversations.append_message(thread.id, "user", question)
         assistant_message = self.conversations.append_message(
@@ -142,7 +147,7 @@ class ConversationService:
         else:
             new_content = (await llm_provider.complete(prompt)).strip()
             if not new_content:
-                raise EmptyLLMResponseError("模型未返回修改后的正文")
+                raise EmptyLLMResponseError("the model returned no revised body")
         if resolved_mode is GenerationMode.loose:
             new_content = with_loose_notice(new_content)
 
@@ -167,7 +172,7 @@ class ConversationService:
         self.conversations.append_message(
             thread.id,
             "assistant",
-            f"已按指令生成第 {record.version} 版正文（{resolved_mode.value} 模式）。\n\n{updated.content}",
+            f"Generated version {record.version} of the body from the instruction ({resolved_mode.value} mode).\n\n{updated.content}",
             citations,
         )
 
@@ -201,7 +206,7 @@ class ConversationService:
         if source is None:
             raise MessageNotFoundError(message_id or question or unit_id)
 
-        source_question = self._question_before(messages, source.id) or (question or "追问")
+        source_question = self._question_before(messages, source.id) or (question or "Follow-up")
         appended = self._drilldown_section(source_question, source.content)
         base = unit.content.rstrip()
         new_content = f"{base}\n\n{appended}" if base else appended
@@ -246,7 +251,7 @@ class ConversationService:
 
     def _unit_thread(self, unit: Unit) -> Thread:
         return self.conversations.get_or_create_unit_thread(
-            unit.id, unit.series_id, f"{unit.title} · 对话"
+            unit.id, unit.series_id, f"{unit.title} · Conversation"
         )
 
     def _build_ask_prompt(
@@ -259,51 +264,51 @@ class ConversationService:
         selection: str | None = None,
     ) -> str:
         lines: list[str] = [
-            "你是这门课程的助教，负责基于这一讲已写好的正文与引用证据回答读者追问。",
+            "You are the teaching assistant for this course and answer reader follow-ups based on the chapter's completed body and cited evidence.",
             "",
-            "## 讲次",
-            f"- 课程：{series.title if series else '未命名课程'}",
-            f"- 讲次：第 {unit.order_index} 讲 · {unit.title}",
+            "## Chapter",
+            f"- Series: {series.title if series else 'Untitled series'}",
+            f"- Chapter {unit.order_index} · {unit.title}",
         ]
         if unit.learning_objectives:
-            lines.append("- 学习目标：" + "；".join(unit.learning_objectives))
+            lines.append("- Learning objectives: " + "; ".join(unit.learning_objectives))
 
-        lines.extend(["", "## 当前正文（Markdown）"])
+        lines.extend(["", "## Current body (Markdown)"])
         content = unit.content.strip()
         if content:
             lines.append(self._clip(content, self.content_char_limit))
         else:
-            lines.append("（该讲尚无正文，正文为空）")
+            lines.append("(This chapter has no body yet; the body is empty)")
 
-        lines.extend(["", "## 证据（正文引用来源）"])
+        lines.extend(["", "## Evidence (sources cited by the body)"])
         if citations:
             for index, citation in enumerate(citations, start=1):
                 snippet = citation.text or citation.snippet
                 lines.append(
-                    f"[E{index}] 来源：{citation.source_name}｜片段 #{citation.chunk_index}"
+                    f"[E{index}] Source: {citation.source_name} | chunk #{citation.chunk_index}"
                 )
                 lines.append(self._clip(snippet.strip(), self.evidence_char_limit))
                 lines.append("")
         else:
-            lines.extend(["（无引用证据）", ""])
+            lines.extend(["(No cited evidence)", ""])
 
-        lines.extend(["## 对话历史"])
+        lines.extend(["## Conversation history"])
         if history:
             for message in history:
-                speaker = "读者" if message.role == "user" else "助教"
+                speaker = "Reader" if message.role == "user" else "Assistant"
                 spoken = " ".join(message.content.split())
-                lines.append(f"- {speaker}：{self._clip(spoken, self.history_char_limit)}")
+                lines.append(f"- {speaker}: {self._clip(spoken, self.history_char_limit)}")
         else:
-            lines.append("- （本轮为对话起点）")
+            lines.append("- (This turn starts the conversation)")
 
-        lines.extend(["", "## 读者追问"])
+        lines.extend(["", "## Reader follow-up"])
         if selection:
             excerpt = self._clip(selection.strip(), SELECTION_CHAR_LIMIT)
             lines.extend(
                 [
-                    "用户选中了正文中的以下片段：",
+                    "The user selected the following excerpt from the body:",
                     f'"""{excerpt}"""',
-                    f"请针对这段选中内容回答：{question.strip()}",
+                    f"Answer this follow-up about the selected content: {question.strip()}",
                 ]
             )
         else:
@@ -312,15 +317,15 @@ class ConversationService:
         lines.extend(
             [
                 "",
-                "## 回答约束",
-                "1. 只能依据「当前正文」与「证据」作答；两者都未覆盖的内容，明确说明"
-                "「现有正文与证据未覆盖」，并指出需要补充什么资料，禁止编造事实、数据、案例或结论。",
-                "2. 引用依据时标注来源：正文写「正文」，证据写 [E1] 形式。",
-                "3. 用 Markdown 简洁作答，控制在 400 字内，必要时用要点列表。",
-                "4. 不要整段复述正文，只回答被追问的部分。",
+                "## Answer constraints",
+                "1. Answer only from the \"Current body\" and \"Evidence\"; for anything neither covers, state explicitly "
+                "\"not covered by the existing body or evidence\" and point out what material is needed. Never fabricate facts, data, cases, or conclusions.",
+                "2. Mark the basis of citations: write \"body\" for the body and [E1] for evidence.",
+                "3. Answer concisely in Markdown, within 400 characters, using bullet lists where helpful.",
+                "4. Do not restate the body in full; answer only the part asked about.",
                 "",
-                "## 输出",
-                "只输出回答正文，不要输出解释、前言或对回答过程的说明。",
+                "## Output",
+                "Output only the answer body; do not output explanations, prefaces, or commentary about the answering process.",
             ]
         )
         return "\n".join(lines)
@@ -336,62 +341,62 @@ class ConversationService:
         mode: GenerationMode = GenerationMode.strict,
     ) -> str:
         lines: list[str] = [
-            "你是严谨的课程编辑，负责按读者的自然语言指令对一讲正文做局部修改。"
+            "You are a rigorous course editor responsible for making local revisions to a chapter's body according to the reader's natural-language instruction."
             if mode is GenerationMode.strict
-            else "你是经验丰富的课程编辑，负责按读者的自然语言指令修改一讲正文。",
+            else "You are an experienced course editor responsible for revising a chapter's body according to the reader's natural-language instruction.",
             "",
-            "## 讲次",
-            f"- 课程：{series.title if series else '未命名课程'}",
-            f"- 讲次：第 {unit.order_index} 讲 · {unit.title}",
+            "## Chapter",
+            f"- Series: {series.title if series else 'Untitled series'}",
+            f"- Chapter {unit.order_index} · {unit.title}",
             "",
-            "## 修改指令",
+            "## Revision instruction",
             instruction.strip(),
             "",
-            "## 修改范围",
-            target or "整讲正文",
+            "## Revision scope",
+            target or "the whole chapter body",
             "",
-            "## 当前正文（Markdown）",
+            "## Current body (Markdown)",
             self._clip(content, self.content_char_limit),
             "",
-            "## 证据（正文引用来源）",
+            "## Evidence (sources cited by the body)",
         ]
         if citations:
             for index, citation in enumerate(citations, start=1):
                 snippet = citation.text or citation.snippet
                 lines.append(
-                    f"[E{index}] 来源：{citation.source_name}｜片段 #{citation.chunk_index}"
+                    f"[E{index}] Source: {citation.source_name} | chunk #{citation.chunk_index}"
                 )
                 lines.append(self._clip(snippet.strip(), self.evidence_char_limit))
                 lines.append("")
         else:
-            lines.extend(["（无引用证据）", ""])
+            lines.extend(["(No cited evidence)", ""])
 
         if mode is GenerationMode.loose:
             lines.extend(
                 [
-                    "## 修改约束（自由写作模式）",
-                    "1. 允许基于自身通用知识补充、扩写或重写与指令相关的部分，不强制逐段引用证据。",
-                    f"2. 正文第一行必须保留声明：「{LOOSE_BANNER}」。",
-                    "3. 其余章节的顺序与标题层级保持原样，除非指令明确要求调整。",
-                    "4. 对时效性或争议性结论标注「建议核实」，不要伪装成已核实事实。",
-                    "5. 输出修改后的完整正文，不要输出 diff、解释或前后缀。",
+                    "## Revision constraints (free-writing mode)",
+                    "1. You may add to, expand, or rewrite the parts related to the instruction from your own general knowledge; per-paragraph citations are not required.",
+                    f"2. The first line of the body must keep the notice: \"{LOOSE_BANNER}\".",
+                    "3. Keep the order of the remaining sections and the heading hierarchy unchanged unless the instruction explicitly asks otherwise.",
+                    "4. Mark time-sensitive or disputed conclusions as \"recommend verifying\"; do not present them as verified facts.",
+                    "5. Output the complete revised body; do not output a diff, explanations, or prefixes/suffixes.",
                     "",
-                    "## 输出",
-                    "只输出修改后的完整正文 Markdown。",
+                    "## Output",
+                    "Output only the complete revised body Markdown.",
                 ]
             )
         else:
             lines.extend(
                 [
-                    "## 修改约束",
-                    "1. 只改与指令相关的部分，其余章节、引用标记 [E1]、标题层级与列表结构保持原样。",
-                    "2. 不得引入正文与证据之外的新事实、数据、案例或结论；确实需要补充时写"
-                    "「资料不足：<缺口说明>」。",
-                    "3. 保留 Markdown 结构（标题、列表、代码块围栏及其语言标注）。",
-                    "4. 输出修改后的完整正文，不要输出 diff、解释或前后缀。",
+                    "## Revision constraints",
+                    "1. Change only the parts related to the instruction; keep the other sections, citation markers [E1], heading hierarchy, and list structure unchanged.",
+                    "2. Do not introduce new facts, data, cases, or conclusions beyond the body and evidence; if something really must be added, write "
+                    "\"Insufficient material: <gap description>\".",
+                    "3. Preserve the Markdown structure (headings, lists, code-fence blocks, and their language tags).",
+                    "4. Output the complete revised body; do not output a diff, explanations, or prefixes/suffixes.",
                     "",
-                    "## 输出",
-                    "只输出修改后的完整正文 Markdown。",
+                    "## Output",
+                    "Output only the complete revised body Markdown.",
                 ]
             )
         return "\n".join(lines)
@@ -403,37 +408,37 @@ class ConversationService:
         citations: Sequence[Citation],
     ) -> str:
         lines: list[str] = [
-            "> 占位回答（未配置 LLM API key）：以下内容由该讲正文与引用证据直接编排，"
-            "用于验证追问链路（问题、回答、证据均已落库）。",
+            "> Placeholder answer (no LLM API key configured): the content below is assembled directly from the chapter body and cited evidence "
+            "to verify the follow-up pipeline (question, answer, and evidence are all persisted).",
             "",
-            "## 你的问题",
+            "## Your question",
             question.strip(),
             "",
-            "## 正文中的相关片段",
+            "## Relevant excerpts from the body",
         ]
         excerpts = self._relevant_excerpts(unit.content, question)
         if excerpts:
             lines.extend(f"- {excerpt}" for excerpt in excerpts)
         else:
-            lines.append("- 正文为空或未命中与问题相关的片段。")
+            lines.append("- The body is empty or contains no excerpt related to the question.")
 
-        lines.extend(["", "## 相关证据"])
+        lines.extend(["", "## Related evidence"])
         if citations:
             for index, citation in enumerate(citations[:3], start=1):
                 snippet = (citation.text or citation.snippet).strip()
                 lines.append(
-                    f"- [E{index}] {citation.source_name}｜片段 #{citation.chunk_index}："
+                    f"- [E{index}] {citation.source_name} | chunk #{citation.chunk_index}: "
                     f"{self._clip(snippet, 200)}"
                 )
         else:
-            lines.append("- 该讲暂无引用证据。")
+            lines.append("- This chapter has no cited evidence yet.")
 
         lines.extend(
             [
                 "",
-                "## 不确定说明",
-                "未配置真实模型，无法给出推理型回答；以上仅为正文与证据的摘录，不应视为结论。"
-                "配置真实 LLM key 后，同一问题会基于同一上下文重新作答。",
+                "## Uncertainty note",
+                "No real model is configured, so no reasoning answer can be produced; the above is only an excerpt of the body and evidence and should not be treated as a conclusion. "
+                "Once a real LLM key is configured, the same question will be answered again from the same context.",
             ]
         )
         return "\n".join(lines)
@@ -445,20 +450,20 @@ class ConversationService:
         target: str,
         mode: GenerationMode = GenerationMode.strict,
     ) -> str:
-        label = "非严格（自由写作）" if mode is GenerationMode.loose else "严格"
+        label = "non-strict (free writing)" if mode is GenerationMode.loose else "strict"
         lines: list[str] = [
             content,
             "",
-            "## 待应用修改（占位）",
+            "## Pending revision (placeholder)",
             "",
-            f"> 占位修改（未配置 LLM API key，{label}模式）：指令已记录在该版本 note 中，"
-            "配置真实模型后由模型按同一指令重写正文。",
+            f"> Placeholder revision (no LLM API key configured, {label} mode): the instruction is recorded in this version's note; "
+            "once a real model is configured, it will rewrite the body from the same instruction.",
             "",
-            f"- 修改指令：{instruction.strip()}",
-            f"- 修改范围：{target or '整讲正文'}",
+            f"- Revision instruction: {instruction.strip()}",
+            f"- Revision scope: {target or 'the whole chapter body'}",
         ]
         if mode is GenerationMode.loose:
-            lines.append("- 写作模式：loose（允许模型基于自身知识自由写作，需保留声明行）")
+            lines.append("- Writing mode: loose (the model may write freely from its own knowledge; the notice line must be kept)")
         return "\n".join(lines)
 
     @staticmethod
@@ -531,8 +536,8 @@ class ConversationService:
 
     @staticmethod
     def _drilldown_section(question: str, answer: str) -> str:
-        cleaned_question = question.strip().splitlines()[0] if question.strip() else "追问"
-        return f"## {DRILLDOWN_HEADING}：{cleaned_question}\n\n{answer.strip()}"
+        cleaned_question = question.strip().splitlines()[0] if question.strip() else "Follow-up"
+        return f"## {DRILLDOWN_HEADING}: {cleaned_question}\n\n{answer.strip()}"
 
 
 def _tokens(text: str) -> list[str]:

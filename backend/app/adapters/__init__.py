@@ -1,7 +1,8 @@
-"""适配器（Adapter）层：端口的具体实现。
+"""Adapter layer: concrete implementations of the ports.
 
-每个子包对应一类端口，内置 ``builtin``（单机默认）实现，
-生产环境可新增 ``external`` 实现并接入同一端口。
+Each subpackage corresponds to one kind of port and ships a ``builtin``
+(single-node default) implementation; production can add an ``external``
+implementation and plug it into the same port.
 """
 
-# 各子包在 container 中按需惰性导入，这里仅做命名空间组织。
+# Subpackages are imported lazily on demand by the container; this file only organizes the namespace.

@@ -78,11 +78,11 @@ class OpenAICompatLLM(LLMProvider):
         except httpx.HTTPError as exc:
             raise ProviderCallError(_describe(exc)) from exc
         except (KeyError, IndexError, ValueError) as exc:
-            raise ProviderCallError(f"响应结构异常: {exc!r}") from exc
+            raise ProviderCallError(f"unexpected response structure: {exc!r}") from exc
         try:
             return data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise ProviderCallError(f"响应缺少正文: {exc!r}") from exc
+            raise ProviderCallError(f"response is missing its body: {exc!r}") from exc
 
     async def stream_complete(
         self, prompt: str, **kwargs: Any
@@ -133,5 +133,5 @@ def _describe(exc: Exception) -> str:
             body = ""
         return f"HTTP {exc.response.status_code} {body or exc.response.reason_phrase}"
     if isinstance(exc, httpx.TimeoutException):
-        return f"请求超时 {exc}"
+        return f"request timed out: {exc}"
     return f"{type(exc).__name__}: {exc}"

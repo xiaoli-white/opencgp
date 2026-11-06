@@ -1,19 +1,25 @@
-"""单讲生成服务：严格（grounded）与非严格（loose）两种写作模式。
+"""Single-chapter generation service: strict (grounded) and loose writing modes.
 
-流程：检索 → 组装证据 → 模式化提示词 → LLM 写作 → 落版本。
+Flow: retrieve -> assemble evidence -> mode-specific prompt -> LLM writing -> persist version.
 
-``strict``（默认）沿用 grounded writing，硬约束通过提示词与结构双重保证：
+``strict`` (default) keeps grounded writing, with hard constraints enforced by both
+prompt and structure:
 
-- 写作只允许使用检索到的证据，每段必须带 ``[En]`` 来源标记。
-- 检索不到证据时不调用 LLM，直接返回「资料不足」而不是让模型自由发挥。
-- 未配置真实 LLM key 时（占位 provider），正文由证据直接编排为占位草稿，
-  引用链路仍然完整可验证。
+- Writing may only use retrieved evidence, and every paragraph must carry an ``[En]`` source marker.
+- When no evidence is retrieved, the LLM is not called; the service returns
+  "insufficient material" instead of letting the model improvise.
+- When no real LLM key is configured (placeholder provider), the body is assembled
+  directly from the evidence as a placeholder draft, while the citation chain stays
+  complete and verifiable.
 
-``loose`` 允许模型基于自身通用知识自由写作，证据仅作可选参考：
+``loose`` lets the model write freely from its own general knowledge, with evidence as
+optional reference only:
 
-- 检索结果照常返回，但缺失证据不阻断生成，也不要求逐段引用。
-- 正文首行强制写入「本文由大模型编写，未经知识库证据核实」声明，
-  由服务端在落库前统一注入，不依赖模型自觉遵守。
+- Retrieval results are still returned, but missing evidence does not block generation
+  and per-paragraph citations are not required.
+- The first line of the body must contain the notice "This article was written by an
+  LLM and has not been verified against knowledge-base evidence", injected by the
+  server before persisting rather than relying on the model's compliance.
 """
 
 from __future__ import annotations
@@ -48,9 +54,9 @@ from app.services.prompting import (
 from app.services.validators import ValidatorRunner
 
 NO_EVIDENCE_NOTICE = (
-    "资料不足：知识库中未检索到与本节主题相关的证据，暂不生成正文。\n\n"
-    "请先上传相关资料到知识库，或调整本节主题后重试；"
-    "如需模型基于自身知识自由写作，请改用 loose 模式。"
+    "Insufficient material: no evidence related to this section's topic was found in the knowledge base, so no body text will be generated.\n\n"
+    "Upload relevant material to the knowledge base first, or adjust this section's topic and try again; "
+    "if you want the model to write freely from its own knowledge, switch to loose mode."
 )
 
 
@@ -347,7 +353,7 @@ class GenerationService:
         evidence: Sequence[Evidence],
         spec: ProfileSpec | None = None,
     ) -> str:
-        unit = unit_name(spec)
+        unit_label = unit_name(spec)
         low, high = word_range(spec, DEFAULT_STRICT_WORDS)
         values = self._prompt_values(series, unit, topic, evidence, spec)
         lines: list[str] = []
@@ -356,12 +362,12 @@ class GenerationService:
             lines.extend([prefix, ""])
         lines.extend(
             [
-                f"你是严谨的课程作者，负责为一门课程撰写其中一{unit}的正文。",
+                f"You are a rigorous author responsible for writing the body of one {unit_label} of a series.",
                 "",
-                "## 讲次信息",
-                f"- 课程：{series.title if series else '未命名课程'}",
-                f"- 第 {unit.order_index} {unit} · {unit.title}",
-                f"- 本{unit}主题：{topic}",
+                "## Series information",
+                f"- Series: {series.title if series else 'Untitled series'}",
+                f"- {unit_label} #{unit.order_index} · {unit.title}",
+                f"- Topic of this {unit_label}: {topic}",
             ]
         )
         lines.extend(self._unit_context(unit, spec))
@@ -369,13 +375,13 @@ class GenerationService:
         lines.extend(
             [
                 "",
-                "## 写作硬约束",
-                "1. 只能使用「证据」中明确陈述的内容，不得引入证据之外的事实、数据、案例、人物或结论。",
-                "2. 每个自然段至少标注一个来源标记，格式为 [E1]；一段引用多条证据时写作 [E1][E3]。",
-                "3. 证据不足以支撑的小节，必须显式写明「资料不足：<缺口说明>」，禁止用常识或推测补全。",
-                f"4. 输出 Markdown：用二级标题组织小节，正文 {low}-{high} 字，术语首次出现时给出简要解释。",
-                "4.1 语气要求：面向读者直接讲解，像老师在讲，不要反复使用「证据指出」「这说明」「由此可见」这类转述句式；事实直接陈述，句末保留来源标记即可。",
-                f"5. 结尾追加「## 延伸问题」小节，列出 2-3 个需要补充资料才能回答的问题。",
+                "## Hard writing constraints",
+                "1. Only use content explicitly stated in the \"Evidence\" section; do not introduce facts, data, cases, people, or conclusions beyond the evidence.",
+                "2. Every paragraph must carry at least one source marker in the form [E1]; when one paragraph cites multiple items, write [E1][E3].",
+                "3. For subsections the evidence cannot support, explicitly write \"Insufficient material: <gap description>\"; never fill gaps with common knowledge or speculation.",
+                f"4. Output Markdown: organize subsections with level-2 headings, keep the body between {low} and {high} characters, and briefly explain terms on first use.",
+                "4.1 Tone: address the reader directly, like a teacher explaining. Do not repeatedly use reporting phrases such as \"evidence shows\", \"this indicates\", or \"it can be seen\"; state facts directly and keep the source marker at the end of the sentence.",
+                f"5. End with a \"## Further questions\" section listing 2-3 questions that need additional material to answer.",
             ]
         )
         lines.extend(voice_lines(spec))
@@ -383,10 +389,10 @@ class GenerationService:
         extra = extra_requirement(spec, "unit", values)
         if extra:
             lines.extend(["", extra])
-        lines.extend(["", "## 证据"])
+        lines.extend(["", "## Evidence"])
         lines.extend(self._evidence_block(evidence))
-        lines.append("## 输出")
-        lines.append("只输出正文 Markdown，不要输出解释、前言或对写作过程的说明。")
+        lines.append("## Output")
+        lines.append("Output only the body Markdown; do not output explanations, prefaces, or commentary about the writing process.")
         return "\n".join(lines)
 
     def _build_loose_prompt(
@@ -397,7 +403,7 @@ class GenerationService:
         evidence: Sequence[Evidence],
         spec: ProfileSpec | None = None,
     ) -> str:
-        unit = unit_name(spec)
+        unit_label = unit_name(spec)
         low, high = word_range(spec, DEFAULT_LOOSE_WORDS)
         values = self._prompt_values(series, unit, topic, evidence, spec)
         lines: list[str] = []
@@ -406,15 +412,14 @@ class GenerationService:
             lines.extend([prefix, ""])
         lines.extend(
             [
-                f"你是经验丰富的课程作者，负责为一门课程撰写其中一{unit}的正文。",
-                "本{unit_label}使用「自由写作」模式：允许你基于自身通用知识展开，不要求逐段引用知识库证据。".replace(
-                    "{unit_label}", unit
-                ),
+                f"You are an experienced author responsible for writing the body of one {unit_label} of a series.",
+                f"This {unit_label} uses \"free writing\" mode: you may expand from your own general knowledge, "
+                "and per-paragraph citations of knowledge-base evidence are not required.",
                 "",
-                "## 讲次信息",
-                f"- 课程：{series.title if series else '未命名课程'}",
-                f"- 第 {unit.order_index} {unit} · {unit.title}",
-                f"- 本{unit}主题：{topic}",
+                "## Series information",
+                f"- Series: {series.title if series else 'Untitled series'}",
+                f"- {unit_label} #{unit.order_index} · {unit.title}",
+                f"- Topic of this {unit_label}: {topic}",
             ]
         )
         lines.extend(self._unit_context(unit, spec))
@@ -422,13 +427,13 @@ class GenerationService:
         lines.extend(
             [
                 "",
-                "## 写作要求",
-                "1. 可以使用自身的通用知识、常见实践与教学经验自由组织内容，不必局限于「参考证据」。",
-                "2. 正文第一行必须输出声明：「> ⚠️ 本文由大模型编写，未经知识库证据核实」。",
-                "3. 不强制逐段标注来源；若引用了参考证据中的具体说法，可选择性标注 [E1]。",
-                f"4. 输出 Markdown：用二级标题组织小节，正文 {low}-{high} 字，术语首次出现时给出简要解释。",
-                "5. 对不确定或时效性强的结论，用「建议核实」等方式提示读者，不要伪装成已核实事实。",
-                "6. 结尾追加「## 延伸阅读建议」小节，列出 2-3 个可进一步查证的方向。",
+                "## Writing requirements",
+                "1. You may freely organize content from your own general knowledge, common practice, and teaching experience; you are not limited to the \"reference evidence\".",
+                "2. The first line of the body must contain the notice: \"> ⚠️ This article was written by an LLM and has not been verified against knowledge-base evidence\".",
+                "3. Per-paragraph source markers are not required; if you cite a specific claim from the reference evidence, you may optionally mark it [E1].",
+                f"4. Output Markdown: organize subsections with level-2 headings, keep the body between {low} and {high} characters, and briefly explain terms on first use.",
+                "5. For uncertain or time-sensitive conclusions, advise readers to verify them (e.g. \"recommend verifying\"); do not present them as verified facts.",
+                "6. End with a \"## Further reading\" section listing 2-3 directions for further verification.",
             ]
         )
         lines.extend(voice_lines(spec))
@@ -436,13 +441,13 @@ class GenerationService:
         extra = extra_requirement(spec, "unit", values)
         if extra:
             lines.extend(["", extra])
-        lines.extend(["", "## 参考证据（可选，缺失时忽略）"])
+        lines.extend(["", "## Reference evidence (optional; ignore when absent)"])
         if evidence:
             lines.extend(self._evidence_block(evidence))
         else:
-            lines.extend(["（本次未检索到相关知识库证据，可完全依据模型自身知识写作）", ""])
-        lines.append("## 输出")
-        lines.append("只输出正文 Markdown，不要输出解释、前言或对写作过程的说明。")
+            lines.extend(["(No relevant knowledge-base evidence was retrieved this time; you may write entirely from the model's own knowledge)", ""])
+        lines.append("## Output")
+        lines.append("Output only the body Markdown; do not output explanations, prefaces, or commentary about the writing process.")
         return "\n".join(lines)
 
     def _build_free_prompt(
@@ -454,7 +459,7 @@ class GenerationService:
         spec: ProfileSpec | None,
         mode: GenerationMode,
     ) -> str:
-        unit = unit_name(spec)
+        unit_label = unit_name(spec)
         low, high = word_range(spec, DEFAULT_LOOSE_WORDS)
         values = self._prompt_values(series, unit, topic, evidence, spec)
         lines: list[str] = []
@@ -463,49 +468,49 @@ class GenerationService:
             lines.extend([prefix, ""])
         lines.extend(
             [
-                f"你是经验丰富的作者，负责撰写一门课程中一{unit}的正文。",
+                f"You are an experienced author responsible for writing the body of one {unit_label} of a series.",
                 "",
-                "## 讲次信息",
-                f"- 课程：{series.title if series else '未命名课程'}",
-                f"- 第 {unit.order_index} {unit} · {unit.title}",
-                f"- 本{unit}主题：{topic}",
+                "## Series information",
+                f"- Series: {series.title if series else 'Untitled series'}",
+                f"- {unit_label} #{unit.order_index} · {unit.title}",
+                f"- Topic of this {unit_label}: {topic}",
             ]
         )
         lines.extend(self._unit_context(unit, spec))
         lines.extend(
             [
                 "",
-                "## 写作要求",
-                "1. 依据自身知识、常见实践与教学经验组织内容，不需要引用知识库证据。",
-                "2. 严禁输出任何形如 [E1] 的来源标记，也不要编造来源名称。",
-                f"3. 输出 Markdown：用二级标题组织小节，正文 {low}-{high} 字，术语首次出现时给出简要解释。",
-                "4. 对不确定或时效性强的结论，用「建议核实」等方式提示读者，不要伪装成已核实事实。",
+                "## Writing requirements",
+                "1. Organize the content from your own knowledge, common practice, and teaching experience; no knowledge-base citations are needed.",
+                "2. Never output source markers such as [E1], and do not fabricate source names.",
+                f"3. Output Markdown: organize subsections with level-2 headings, keep the body between {low} and {high} characters, and briefly explain terms on first use.",
+                "4. For uncertain or time-sensitive conclusions, advise readers to verify them (e.g. \"recommend verifying\"); do not present them as verified facts.",
             ]
         )
         if mode is GenerationMode.loose:
-            lines.append("5. 正文第一行必须输出声明：「> ⚠️ 本文由大模型编写，未经知识库证据核实」。")
+            lines.append("5. The first line of the body must contain the notice: \"> ⚠️ This article was written by an LLM and has not been verified against knowledge-base evidence\".")
         lines.extend(voice_lines(spec))
         lines.extend(glossary_lines(spec, unit))
         extra = extra_requirement(spec, "unit", values)
         if extra:
             lines.extend(["", extra])
         if evidence:
-            lines.extend(["", "## 参考背景（不得输出来源标记）"])
+            lines.extend(["", "## Reference background (do not output source markers)"])
             for item in evidence[:3]:
                 snippet = (item.citation.text or item.citation.snippet).strip()
                 lines.append(snippet[:300])
                 lines.append("")
-        lines.append("## 输出")
-        lines.append("只输出正文 Markdown，不要输出解释、前言或对写作过程的说明。")
+        lines.append("## Output")
+        lines.append("Output only the body Markdown; do not output explanations, prefaces, or commentary about the writing process.")
         return "\n".join(lines)
 
     @staticmethod
     def _unit_context(unit: Unit, spec: ProfileSpec | None = None) -> list[str]:
         lines: list[str] = []
         if unit.learning_objectives:
-            lines.append("- 学习目标：" + "；".join(unit.learning_objectives))
+            lines.append("- Learning objectives: " + "; ".join(unit.learning_objectives))
         if unit.prerequisites:
-            lines.append("- 前置知识：" + "；".join(unit.prerequisites))
+            lines.append("- Prerequisites: " + "; ".join(unit.prerequisites))
         return lines
 
     def _evidence_block(self, evidence: Sequence[Evidence]) -> list[str]:
@@ -515,7 +520,7 @@ class GenerationService:
             snippet = citation.text or citation.snippet
             if len(snippet) > self.evidence_char_limit:
                 snippet = snippet[: self.evidence_char_limit] + "…"
-            lines.append(f"[{item.marker}] 来源：{citation.source_name}｜片段 #{citation.chunk_index}")
+            lines.append(f"[{item.marker}] Source: {citation.source_name} | chunk #{citation.chunk_index}")
             lines.append(snippet)
             lines.append("")
         return lines
@@ -527,41 +532,41 @@ class GenerationService:
         evidence: Sequence[Evidence],
         spec: ProfileSpec | None = None,
     ) -> str:
-        unit = unit_name(spec)
+        unit_label = unit_name(spec)
         lines: list[str] = [
             f"# {unit.title}",
             "",
-            "> 占位草稿（未配置 LLM API key，严格模式）：正文由检索证据直接编排，用于验证带引用的写作链路。",
+            "> Placeholder draft (no LLM API key configured, strict mode): the body is assembled directly from retrieved evidence to verify the citation-carrying writing pipeline.",
             "",
-            f"## 本{unit}主题",
+            f"## Topic of this {unit_label}",
             topic,
             "",
         ]
         if unit.learning_objectives:
-            lines.append("## 学习目标")
+            lines.append("## Learning objectives")
             lines.extend(f"- {item}" for item in unit.learning_objectives)
             lines.append("")
 
-        lines.append("## 证据要点")
+        lines.append("## Evidence highlights")
         lines.append("")
         for item in evidence:
             snippet = (item.citation.text or item.citation.snippet).strip()
             if len(snippet) > self.evidence_char_limit:
                 snippet = snippet[: self.evidence_char_limit] + "…"
-            lines.append(f"### 要点 {item.marker[1:]}")
+            lines.append(f"### Point {item.marker[1:]}")
             lines.append(f"{snippet} [{item.marker}]")
-            lines.append(f"来源：{item.citation.source_name}｜片段 #{item.citation.chunk_index}")
+            lines.append(f"Source: {item.citation.source_name} | chunk #{item.citation.chunk_index}")
             lines.append("")
 
-        lines.append("## 资料不足说明")
+        lines.append("## Insufficient-material notes")
         lines.append(
-            f"本{unit}仅覆盖检索到的 {len(evidence)} 条证据，尚未对主题做完整展开；"
-            "配置真实模型后将基于同一批证据生成连贯正文。"
+            f"This {unit_label} only covers the {len(evidence)} pieces of evidence retrieved and does not yet develop the topic fully; "
+            "once a real model is configured, a coherent body will be generated from the same evidence."
         )
         lines.append("")
-        lines.append("## 延伸问题")
-        lines.append("- 这些证据之间是否存在相互矛盾或适用条件差异？")
-        lines.append("- 该主题在真实项目中还有哪些证据未覆盖的场景？")
+        lines.append("## Further questions")
+        lines.append("- Do these pieces of evidence contradict each other or differ in applicable conditions?")
+        lines.append("- Which scenarios relevant to this topic are still not covered by the evidence?")
         if spec is not None and spec.assets.glossary:
             lines.extend(self._placeholder_glossary(evidence, spec))
         return "\n".join(lines)
@@ -573,45 +578,45 @@ class GenerationService:
         evidence: Sequence[Evidence],
         spec: ProfileSpec | None = None,
     ) -> str:
-        unit = unit_name(spec)
+        unit_label = unit_name(spec)
         lines: list[str] = [
             f"# {unit.title}",
             "",
-            "> 占位草稿（未配置 LLM API key，非严格模式）：本节允许模型基于自身知识自由写作，"
-            "因此不承诺逐段引用；配置真实模型后将由模型生成完整正文。",
+            "> Placeholder draft (no LLM API key configured, non-strict mode): this section allows the model to write freely from its own knowledge, "
+            "so per-paragraph citations are not promised; once a real model is configured, it will generate the full body.",
             "",
-            f"## 本{unit}主题",
+            f"## Topic of this {unit_label}",
             topic,
             "",
-            "## 写作要点（占位）",
-            f"- 围绕「{topic}」给出概念定义、典型使用场景与常见误区。",
-            "- 用教学化语言逐步展开，必要时补充示例与对比。",
-            "- 对时效性或争议性结论标注「建议核实」。",
+            "## Writing outline (placeholder)",
+            f"- Around \"{topic}\", give a concept definition, typical use cases, and common pitfalls.",
+            "- Develop it step by step in a teaching style, adding examples and comparisons where necessary.",
+            "- Mark time-sensitive or disputed conclusions as \"recommend verifying\".",
             "",
         ]
         if unit.learning_objectives:
-            lines.append("## 学习目标")
+            lines.append("## Learning objectives")
             lines.extend(f"- {item}" for item in unit.learning_objectives)
             lines.append("")
         if unit.prerequisites:
-            lines.append("## 前置知识")
+            lines.append("## Prerequisites")
             lines.extend(f"- {item}" for item in unit.prerequisites)
             lines.append("")
 
-        lines.append("## 可选参考证据")
+        lines.append("## Optional reference evidence")
         if evidence:
             for item in evidence[:3]:
                 snippet = (item.citation.text or item.citation.snippet).strip()
                 lines.append(
-                    f"- {item.citation.source_name}｜片段 #{item.citation.chunk_index}："
+                    f"- {item.citation.source_name} | chunk #{item.citation.chunk_index}: "
                     f"{snippet[:200]}…"
                 )
         else:
-            lines.append("- 本次未检索到证据，本节完全依赖模型自身知识。")
+            lines.append("- No evidence was retrieved this time; this section relies entirely on the model's own knowledge.")
         lines.append("")
-        lines.append("## 延伸阅读建议")
-        lines.append("- 查阅该主题的官方文档与规范原文。")
-        lines.append("- 对比不同实现方案的取舍与适用边界。")
+        lines.append("## Further reading")
+        lines.append("- Consult the official documentation and specification for this topic.")
+        lines.append("- Compare the trade-offs and applicable boundaries of different implementation approaches.")
         if spec is not None and spec.assets.glossary:
             lines.extend(self._placeholder_glossary(evidence, spec))
         return "\n".join(lines)
@@ -623,34 +628,34 @@ class GenerationService:
         evidence: Sequence[Evidence],
         spec: ProfileSpec | None = None,
     ) -> str:
-        unit = unit_name(spec)
-        profile_name = (spec.meta.name if spec is not None else "") or "自由写作"
+        unit_label = unit_name(spec)
+        profile_name = (spec.meta.name if spec is not None else "") or "Free writing"
         lines: list[str] = [
             f"# {unit.title}",
             "",
-            f"> 占位草稿（未配置 LLM API key）：按创作配置「{profile_name}」自由写作，"
-            "不引用知识库证据，也不输出来源标记。",
+            f"> Placeholder draft (no LLM API key configured): free writing according to the creation profile \"{profile_name}\", "
+            "without citing knowledge-base evidence or outputting source markers.",
             "",
-            f"## 本{unit}主题",
+            f"## Topic of this {unit_label}",
             topic,
             "",
-            f"## 内容框架（占位）",
-            f"- 从「{topic}」的核心问题切入，交代它解决的痛点与适用边界。",
-            "- 拆解关键概念与常见做法，给出可对照的判断标准。",
-            "- 以可执行的步骤收束，并提示需要核实的事实性细节。",
+            f"## Content outline (placeholder)",
+            f"- Start from the core question of \"{topic}\" and explain the pain point it solves and its applicable boundaries.",
+            "- Break down key concepts and common practices, and give criteria you can compare against.",
+            "- Close with actionable steps and flag factual details that need verification.",
             "",
         ]
         if unit.learning_objectives:
-            lines.append("## 学习目标")
+            lines.append("## Learning objectives")
             lines.extend(f"- {item}" for item in unit.learning_objectives)
             lines.append("")
         if unit.prerequisites:
-            lines.append("## 前置知识")
+            lines.append("## Prerequisites")
             lines.extend(f"- {item}" for item in unit.prerequisites)
             lines.append("")
-        lines.append("## 延伸阅读建议")
-        lines.append("- 查阅该主题的官方文档与规范原文。")
-        lines.append("- 对比不同实现方案的取舍与适用边界。")
+        lines.append("## Further reading")
+        lines.append("- Consult the official documentation and specification for this topic.")
+        lines.append("- Compare the trade-offs and applicable boundaries of different implementation approaches.")
         if spec is not None and spec.assets.glossary:
             lines.extend(self._placeholder_glossary(evidence, spec))
         return "\n".join(lines)
@@ -658,7 +663,7 @@ class GenerationService:
     def _placeholder_glossary(
         self, evidence: Sequence[Evidence], spec: ProfileSpec | None
     ) -> list[str]:
-        lines: list[str] = ["", "## 术语"]
+        lines: list[str] = ["", "## Glossary"]
         candidates: list[str] = []
         for item in evidence:
             text = (item.citation.text or item.citation.snippet or "").strip()
@@ -671,7 +676,7 @@ class GenerationService:
             if len(candidates) >= 5:
                 break
         if not candidates:
-            candidates = ["核心概念", "工作流程", "常见误区"]
+            candidates = ["Core concept", "Workflow", "Common pitfalls"]
         for term in candidates[:5]:
-            lines.append(f"- {term}：占位释义，待补充资料后定稿。")
+            lines.append(f"- {term}: placeholder definition, to be finalized once more material is available.")
         return lines

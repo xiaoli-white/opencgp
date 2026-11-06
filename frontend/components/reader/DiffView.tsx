@@ -12,8 +12,8 @@ type DiffViewProps = {
 export default function DiffView({
   before,
   after,
-  beforeLabel = "旧版本",
-  afterLabel = "新版本",
+  beforeLabel = "Previous version",
+  afterLabel = "New version",
 }: DiffViewProps) {
   const lines = useMemo(() => diffLines(before, after), [before, after]);
   const stats = useMemo(() => diffStats(lines), [lines]);
@@ -36,7 +36,7 @@ export default function DiffView({
       <div className="no-scrollbar max-h-[52vh] overflow-auto rounded-2xl border border-slate-200/70 bg-white/60 py-2 dark:border-white/10 dark:bg-slate-950/40">
         {lines.length === 0 ? (
           <p className="px-4 py-6 text-center text-xs text-slate-400">
-            两个版本内容一致，没有差异。
+            No differences between the two versions.
           </p>
         ) : (
           lines.map((line, index) => (

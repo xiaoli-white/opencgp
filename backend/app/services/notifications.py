@@ -21,13 +21,13 @@ class NotificationService:
     def registration_pending(self, user: Any) -> None:
         try:
             recipients = self._admins()
-            subject = f"[{BRAND}] 新用户待审核 / New user pending review"
+            subject = f"[{BRAND}] New user pending review"
             body = (
-                f"有新用户注册并等待审核：\n\n"
-                f"昵称：{getattr(user, 'display_name', '')}\n"
-                f"邮箱：{getattr(user, 'email', '')}\n"
-                f"时间：{_fmt(time.time())}\n\n"
-                f"请登录 OpenCGP → 服务器设置 → 用户管理 完成审核。\n\n"
+                f"A new user has registered and is awaiting review:\n\n"
+                f"Display name: {getattr(user, 'display_name', '')}\n"
+                f"Email: {getattr(user, 'email', '')}\n"
+                f"Time: {_fmt(time.time())}\n\n"
+                f"Sign in to OpenCGP -> Server settings -> User management to complete the review.\n\n"
                 f"A new user is waiting for approval.\n"
                 f"Name: {getattr(user, 'display_name', '')}\nEmail: {getattr(user, 'email', '')}\n"
             )
@@ -39,14 +39,14 @@ class NotificationService:
     def registration_received(self, user: Any) -> None:
         self._notify_user(
             user,
-            "注册已提交 / Registration received",
+            "Registration received",
             (
-                f"你好 {getattr(user, 'display_name', '') or getattr(user, 'email', '')}：\n\n"
-                f"你的注册申请已提交，正在等待管理员审核。\n\n"
-                f"昵称：{getattr(user, 'display_name', '')}\n"
-                f"邮箱：{getattr(user, 'email', '')}\n"
-                f"时间：{_fmt(time.time())}\n\n"
-                f"审核通过后我们会再次邮件通知你。\n\n"
+                f"Hello {getattr(user, 'display_name', '') or getattr(user, 'email', '')}:\n\n"
+                f"Your registration has been submitted and is awaiting administrator review.\n\n"
+                f"Display name: {getattr(user, 'display_name', '')}\n"
+                f"Email: {getattr(user, 'email', '')}\n"
+                f"Time: {_fmt(time.time())}\n\n"
+                f"We will email you again once the review is complete.\n\n"
                 f"Hello {getattr(user, 'display_name', '') or getattr(user, 'email', '')},\n\n"
                 f"Your registration has been submitted and is waiting for administrator review.\n"
                 f"Name: {getattr(user, 'display_name', '')}\n"
@@ -59,27 +59,27 @@ class NotificationService:
     def registration_approved(self, user: Any) -> None:
         self._notify_user(
             user,
-            "账号已通过审核 / Account approved",
-            "你的账号已通过审核，现在可以登录 OpenCGP 开始创作。\n\nYour account has been approved. You can sign in now.",
+            "Account approved",
+            "Your account has been approved. You can now sign in to OpenCGP and start creating.",
         )
 
     def registration_rejected(self, user: Any, reason: str = "") -> None:
-        tail = f"\n\n原因：{reason}" if reason else ""
+        tail = f"\n\nReason: {reason}" if reason else ""
         self._notify_user(
             user,
-            "账号审核未通过 / Account rejected",
-            f"你的注册申请未通过审核。{tail}\n\nYour registration was not approved."
+            "Account rejected",
+            f"Your registration was not approved.{tail}"
             + (f"\nReason: {reason}" if reason else ""),
         )
 
     def password_reset(self, user: Any, password: str = "") -> None:
         self._notify_user(
             user,
-            "密码已被管理员重置 / Password reset by admin",
+            "Password reset by admin",
             (
-                f"你的登录密码已被管理员重置。\n\n"
-                f"新密码：{password}\n\n"
-                f"登录后请立即修改密码。\n\n"
+                f"Your sign-in password has been reset by an administrator.\n\n"
+                f"New password: {password}\n\n"
+                f"Please change it immediately after signing in.\n\n"
                 f"Your password has been reset by an administrator.\n\n"
                 f"New password: {password}\n\n"
                 f"Please change it immediately after signing in."
@@ -89,14 +89,14 @@ class NotificationService:
     def send_test(self, to: str) -> dict[str, Any]:
         backend = getattr(self.notifier, "name", "none")
         if not self.notifier.available():
-            return {"ok": False, "backend": backend, "detail": "未配置 SMTP"}
+            return {"ok": False, "backend": backend, "detail": "SMTP is not configured"}
         ok = self.notifier.send(
-            to, f"[{BRAND}] 邮件通道测试 / SMTP test", "这是一封来自 OpenCGP 的测试邮件。"
+            to, f"[{BRAND}] SMTP test", "This is a test email from OpenCGP."
         )
         return {
             "ok": bool(ok),
             "backend": backend,
-            "detail": "" if ok else "发送失败，请检查 SMTP 配置与日志",
+            "detail": "" if ok else "sending failed; check the SMTP configuration and logs",
         }
 
     def _notify_user(self, user: Any, subject: str, body: str) -> None:

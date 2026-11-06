@@ -1,4 +1,4 @@
-"""数据库适配器实现。"""
+"""Database adapter implementations."""
 
 from app.adapters.database.sqlite import SQLiteDatabase
 

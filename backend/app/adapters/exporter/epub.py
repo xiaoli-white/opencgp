@@ -95,7 +95,7 @@ def render(
 
     if document.front_matter.strip():
         body = "<h2>" + escape(
-            "课程信息" if document.source_type == "series" else "文档信息"
+            "Course information" if document.source_type == "series" else "Document information"
         ) + "</h2>" + markdown_to_html(document.front_matter.strip())
         files.append(("OEBPS/frontmatter.xhtml", _page(document.title, body)))
         manifest.append(
@@ -103,22 +103,22 @@ def render(
             'media-type="application/xhtml+xml" />'
         )
         spine.append('<itemref idref="frontmatter" />')
-        nav_items.append(("frontmatter.xhtml", "文档信息"))
+        nav_items.append(("frontmatter.xhtml", "Document information"))
 
     for index, chapter in enumerate(chapters, start=1):
         name = f"ch{index:03d}.xhtml"
         body = (
             "<h2>"
-            + escape(chapter.title or f"第 {index} 章")
+            + escape(chapter.title or f"Chapter {index}")
             + "</h2>"
             + markdown_to_html(chapter.markdown)
         )
-        files.append((f"OEBPS/{name}", _page(chapter.title or f"第 {index} 章", body)))
+        files.append((f"OEBPS/{name}", _page(chapter.title or f"Chapter {index}", body)))
         manifest.append(
             f'<item id="ch{index}" href="{name}" media-type="application/xhtml+xml" />'
         )
         spine.append(f'<itemref idref="ch{index}" />')
-        nav_items.append((name, chapter.title or f"第 {index} 章"))
+        nav_items.append((name, chapter.title or f"Chapter {index}"))
 
     if include_citations:
         citations = unique_citations(chapters, document.citations)
@@ -131,17 +131,17 @@ def render(
                     f"<li>[{marker}] {escape(citation_label(citation))}</li>"
                 )
             body = (
-                '<div class="appendix"><h2>参考来源</h2><ul>'
+                '<div class="appendix"><h2>References</h2><ul>'
                 + "".join(items)
                 + "</ul></div>"
             )
-            files.append(("OEBPS/appendix.xhtml", _page("参考来源", body)))
+            files.append(("OEBPS/appendix.xhtml", _page("References", body)))
             manifest.append(
                 '<item id="appendix" href="appendix.xhtml" '
                 'media-type="application/xhtml+xml" />'
             )
             spine.append('<itemref idref="appendix" />')
-            nav_items.append(("appendix.xhtml", "参考来源"))
+            nav_items.append(("appendix.xhtml", "References"))
 
     files.append(
         ("OEBPS/style.css", build_style(theme, bool(font_path)).encode("utf-8"))
@@ -174,7 +174,7 @@ def render(
 
 
 def _page(title: str, body: str) -> bytes:
-    text = _XHTML_HEAD.format(title=escape(title or "未命名")) + body + "</body></html>"
+    text = _XHTML_HEAD.format(title=escape(title or "Untitled")) + body + "</body></html>"
     return text.encode("utf-8")
 
 
@@ -184,7 +184,7 @@ def _nav(title: str, items: list[tuple[str, str]]) -> bytes:
     )
     body = (
         _XHTML_HEAD.format(title=escape(title))
-        + '<nav epub:type="toc" id="toc"><h1>目录</h1><ol>'
+        + '<nav epub:type="toc" id="toc"><h1>Contents</h1><ol>'
         + entries
         + "</ol></nav></body></html>"
     )

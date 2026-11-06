@@ -37,7 +37,7 @@ class PostgresDatabase(Database):
 
     def _open(self) -> psycopg.Connection[Any]:
         if not self.dsn:
-            raise RuntimeError("未配置 COURSE_STUDIO_DATABASE_DSN")
+            raise RuntimeError("COURSE_STUDIO_DATABASE_DSN is not configured")
         return psycopg.connect(
             self.dsn,
             autocommit=True,
@@ -49,7 +49,7 @@ class PostgresDatabase(Database):
     @contextmanager
     def _connection(self) -> Iterator[psycopg.Connection[Any]]:
         if self._closed:
-            raise RuntimeError("数据库连接池已关闭")
+            raise RuntimeError("database connection pool is closed")
         self._semaphore.acquire()
         connection: Optional[psycopg.Connection[Any]] = None
         broken = False

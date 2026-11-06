@@ -1,7 +1,8 @@
-"""文档解析抽象端口（DocumentParser）。
+"""Document parsing abstract port (DocumentParser).
 
-把上传的原始字节流解析为纯文本，供分块与索引使用。M0 内置实现支持
-pdf / docx / md / txt，后续可加 OCR、表格、网页等解析器，只增 adapter 不改业务。
+Parses uploaded raw byte streams into plain text for chunking and indexing. The M0
+built-in implementation supports pdf / docx / md / txt; OCR, table, web-page and
+other parsers can be added later by adding adapters only, without changing business code.
 """
 
 from __future__ import annotations
@@ -20,16 +21,16 @@ class ParsedDocument:
 
 @runtime_checkable
 class DocumentParser(Protocol):
-    """通用文档解析端口。"""
+    """Generic document parsing port."""
 
     def supports(self, filename: str) -> bool:
-        """判断是否支持该文件名（按扩展名）。"""
+        """Return whether the filename is supported (by extension)."""
         ...
 
     def parse(self, data: bytes, filename: str) -> ParsedDocument:
-        """解析原始字节流为纯文本，失败时抛 ``ValueError``。"""
+        """Parse the raw byte stream into plain text; raise ``ValueError`` on failure."""
         ...
 
     def healthcheck(self) -> bool:
-        """探活：解析器依赖是否可用。"""
+        """Health check: whether the parser dependencies are available."""
         ...

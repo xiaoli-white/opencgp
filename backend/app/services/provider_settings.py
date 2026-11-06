@@ -391,25 +391,25 @@ class ProviderSettingsService:
             personal = self._personal(user_id, target)
             if personal is not None:
                 if not personal.enabled:
-                    raise ProviderDisabledError("指定的通道已被禁用")
+                    raise ProviderDisabledError("the specified channel is disabled")
                 next_provider_id = personal.id
                 next_backend = ""
                 next_base_url = ""
             elif self.user_providers.can_use_shared(target, user_id):
                 shared = self.user_providers.get_any(target)
                 if shared is None:
-                    raise ProviderNotFoundError("指定的 provider 不存在")
+                    raise ProviderNotFoundError("the specified provider does not exist")
                 if not shared.enabled:
-                    raise ProviderDisabledError("指定的通道已被禁用")
+                    raise ProviderDisabledError("the specified channel is disabled")
                 next_provider_id = shared.id
                 next_backend = ""
                 next_base_url = ""
             else:
                 provider = self.catalog.get(target)
                 if provider is None:
-                    raise ProviderNotFoundError("指定的 provider 不存在")
+                    raise ProviderNotFoundError("the specified provider does not exist")
                 if not provider.enabled:
-                    raise ProviderDisabledError("指定的 provider 已被禁用")
+                    raise ProviderDisabledError("the specified provider is disabled")
                 next_provider_id = provider.id
                 next_backend = ""
                 next_base_url = ""

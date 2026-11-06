@@ -72,17 +72,17 @@ class AccountAdminService:
         force: bool = False,
     ) -> dict[str, Any]:
         if user_id and user_id == actor_id:
-            raise UserDeleteForbiddenError("不能删除自己的账号")
+            raise UserDeleteForbiddenError("you cannot delete your own account")
         user = self.auth.get_user(user_id)
         if user is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         if float(user.deleted_at or 0) > 0:
-            raise AuthRequiredError("用户已被删除")
+            raise AuthRequiredError("the user has been deleted")
         target = self._resolve_target(user_id, (transfer_to_user_id or "").strip())
         works = self.count_works(user_id)
         if target is None and works > 0:
             raise UserHasWorksError(
-                f"该用户名下仍有 {works} 个作品，请指定 transfer_to_user_id"
+                f"this user still owns {works} works; specify transfer_to_user_id"
             )
         memberships = self.auth.repository.list_memberships(user_id)
         personal_tenants: list[str] = []
@@ -101,7 +101,7 @@ class AccountAdminService:
             if force and not tenant.is_system():
                 forced_tenants.append(tenant.id)
                 continue
-            raise UserDeleteForbiddenError("不能删除租户里最后一个 owner")
+            raise UserDeleteForbiddenError("you cannot delete the last owner of a tenant")
         moved_series = 0
         moved_pieces = 0
         moved_providers = 0
@@ -150,17 +150,17 @@ class AccountAdminService:
     def restore_user(self, user_id: str) -> dict[str, Any]:
         user = self.auth.get_user(user_id)
         if user is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         restored_email = _restored_email(user.email)
         taken = self.auth.repository.get_user_by_email(restored_email)
         if taken is not None and taken.id != user_id:
             restored_email = user.email
-            note = "邮箱已被占用，保留停用时的邮箱后缀"
+            note = "email already taken; keeping the email suffix from when the account was disabled"
         else:
             note = ""
         updated = self.auth.repository.restore_user(user_id, restored_email)
         if updated is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         return {
             "user": updated,
             "email_restored": restored_email == _restored_email(user.email),
@@ -172,10 +172,10 @@ class AccountAdminService:
         if not transfer_to_user_id:
             return None
         if transfer_to_user_id == user_id:
-            raise UserDeleteForbiddenError("不能把作品转移给被删除的用户自身")
+            raise UserDeleteForbiddenError("works cannot be transferred to the deleted user itself")
         target = self.auth.get_user(transfer_to_user_id)
         if target is None or float(target.deleted_at or 0) > 0:
-            raise UserDeleteForbiddenError("目标用户不存在")
+            raise UserDeleteForbiddenError("target user not found")
         return target
 
     def _handover_tenant(self, tenant_id: str, target_user_id: str) -> None:

@@ -37,10 +37,10 @@ from app.services.prompting import (
 from app.services.retrieval_providers import RetrievalContext
 
 NO_EVIDENCE_MESSAGE = (
-    "知识库中未检索到与课程主题相关的证据，严格模式无法生成蓝图；请先上传资料或改用 loose 模式"
+    "No evidence related to the course topic was found in the knowledge base, so strict mode cannot generate a blueprint; upload material first or switch to loose mode"
 )
-PLACEHOLDER_WARNING = "未配置 LLM key，蓝图为占位规划"
-LOOSE_WARNING = "非严格模式：蓝图由大模型基于自身知识规划，未经知识库证据核实"
+PLACEHOLDER_WARNING = "No LLM key configured; the blueprint is a placeholder plan"
+LOOSE_WARNING = "Non-strict mode: the blueprint was planned by an LLM from its own knowledge and has not been verified against knowledge-base evidence"
 REVIEW_APPROVE = "approve"
 REVIEW_REQUEST_REVISION = "request_revision"
 NODE_PLANNED = "planned"
@@ -49,32 +49,32 @@ NODE_APPROVED = "approved"
 UNIT_NEEDS_REVISION = "needs_revision"
 
 _STOPWORDS = {
-    "一个", "我们", "你们", "他们", "这个", "那个", "可以", "需要", "使用", "进行",
-    "以及", "因为", "所以", "但是", "如果", "就是", "不是", "没有", "如何", "什么",
-    "内容", "部分", "以下", "上面", "下面", "时候", "问题", "方式", "情况", "通过",
+    "\u4e00\u4e2a", "\u6211\u4eec", "\u4f60\u4eec", "\u4ed6\u4eec", "\u8fd9\u4e2a", "\u90a3\u4e2a", "\u53ef\u4ee5", "\u9700\u8981", "\u4f7f\u7528", "\u8fdb\u884c",
+    "\u4ee5\u53ca", "\u56e0\u4e3a", "\u6240\u4ee5", "\u4f46\u662f", "\u5982\u679c", "\u5c31\u662f", "\u4e0d\u662f", "\u6ca1\u6709", "\u5982\u4f55", "\u4ec0\u4e48",
+    "\u5185\u5bb9", "\u90e8\u5206", "\u4ee5\u4e0b", "\u4e0a\u9762", "\u4e0b\u9762", "\u65f6\u5019", "\u95ee\u9898", "\u65b9\u5f0f", "\u60c5\u51b5", "\u901a\u8fc7",
 }
 
 _STAGE_TITLE_POOL = (
-    "入门与全景",
-    "核心机制",
-    "实践与进阶",
-    "工程化落地",
-    "进阶专题",
-    "综合实战",
-    "复盘与自测",
-    "前沿拓展",
+    "Getting started and overview",
+    "Core mechanisms",
+    "Practice and advanced topics",
+    "Productionizing",
+    "Advanced topics",
+    "Hands-on project",
+    "Review and self-assessment",
+    "Frontier topics",
 )
 
 _NODE_HINTS = (
-    ("{title}：问题域与价值", "说明「{title}」要解决的问题、适用场景与不适用场景。"),
-    ("核心概念与术语地图", "梳理「{title}」的关键概念及其相互关系。"),
-    ("学习路径与前置条件", "明确学习顺序、所需基础与自检方式。"),
-    ("关键机制拆解", "拆解核心机制的输入、处理过程与输出。"),
-    ("典型工作流", "走通一条从准备到交付的完整工作流。"),
-    ("常见误区与边界", "识别误用场景、失效边界与排查思路。"),
-    ("动手实践：最小可运行样例", "完成一个最小可运行样例并验证结果。"),
-    ("工程化落地与协作", "讨论可维护性、协作方式与质量保障。"),
-    ("进阶延伸与自测", "给出延伸方向与自测清单。"),
+    ("{title}: problem domain and value", "Explain the problem \"{title}\" solves, where it applies, and where it does not."),
+    ("Core concepts and terminology map", "Organize the key concepts of \"{title}\" and how they relate to one another."),
+    ("Learning path and prerequisites", "Clarify the learning order, required foundations, and self-check methods."),
+    ("Key mechanism breakdown", "Break down the inputs, processing, and outputs of the core mechanism."),
+    ("Typical workflow", "Walk through a complete workflow from preparation to delivery."),
+    ("Common pitfalls and boundaries", "Identify misuse scenarios, failure boundaries, and troubleshooting approaches."),
+    ("Hands-on: minimal runnable example", "Build a minimal runnable example and verify the result."),
+    ("Productionizing and collaboration", "Discuss maintainability, collaboration, and quality assurance."),
+    ("Advanced extensions and self-assessment", "Suggest extension directions and a self-assessment checklist."),
 )
 
 
@@ -135,7 +135,7 @@ class BlueprintService:
     ) -> SeriesBlueprint:
         series = self.series_repository.get_series(series_id)
         if series is None:
-            raise BlueprintNotFoundError(f"课程不存在: {series_id}")
+            raise BlueprintNotFoundError(f"course not found: {series_id}")
         resolved_mode = GenerationMode.normalize(mode or self.default_mode)
         resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
         units = self.series_repository.list_units(series_id)
@@ -204,9 +204,9 @@ class BlueprintService:
     def apply(self, series_id: str) -> tuple[SeriesBlueprint, list[Unit]]:
         blueprint = self.repository.get_blueprint(series_id)
         if blueprint is None:
-            raise BlueprintNotFoundError(f"课程蓝图不存在: {series_id}")
+            raise BlueprintNotFoundError(f"course blueprint not found: {series_id}")
         if self.series_repository.get_series(series_id) is None:
-            raise BlueprintNotFoundError(f"课程不存在: {series_id}")
+            raise BlueprintNotFoundError(f"course not found: {series_id}")
 
         created: list[Unit] = []
         existing = self.series_repository.list_units(series_id)
@@ -236,7 +236,7 @@ class BlueprintService:
     ) -> SeriesBlueprint:
         blueprint = self.repository.get_blueprint(series_id)
         if blueprint is None:
-            raise BlueprintNotFoundError(f"课程蓝图不存在: {series_id}")
+            raise BlueprintNotFoundError(f"course blueprint not found: {series_id}")
         blueprint.glossary = [
             term if isinstance(term, GlossaryTerm) else GlossaryTerm(**term)
             for term in terms
@@ -246,7 +246,7 @@ class BlueprintService:
     def sync_statuses(self, series_id: str) -> SeriesBlueprint:
         blueprint = self.repository.get_blueprint(series_id)
         if blueprint is None:
-            raise BlueprintNotFoundError(f"课程蓝图不存在: {series_id}")
+            raise BlueprintNotFoundError(f"course blueprint not found: {series_id}")
         for node in blueprint.outline:
             if not node.unit_id:
                 continue
@@ -274,7 +274,7 @@ class BlueprintService:
             status = UNIT_NEEDS_REVISION
             action_value = REVIEW_REQUEST_REVISION
         else:
-            raise ValueError(f"不支持的审核动作: {action!r}")
+            raise ValueError(f"unsupported review action: {action!r}")
 
         updated = self.series_repository.update_unit(unit_id, status=status)
         assert updated is not None
@@ -377,13 +377,13 @@ class BlueprintService:
         if payload is None:
             retry = (
                 prompt
-                + "\n\n## 重要提醒\n上一次输出不是合法 JSON，无法解析。"
-                "只输出合法 JSON 对象，不要输出代码块围栏或任何解释文字。"
+                + "\n\n## Important reminder\nThe previous output was not valid JSON and could not be parsed. "
+                "Output only a valid JSON object; do not output code-fence blocks or any explanatory text."
             )
             raw = await provider.complete(retry)
             payload = _extract_json(raw)
         if payload is None:
-            raise BlueprintParseError("模型返回的课程蓝图不是合法 JSON，无法解析")
+            raise BlueprintParseError("the course blueprint returned by the model is not valid JSON and cannot be parsed")
         return payload
 
     def _build_prompt(
@@ -409,84 +409,84 @@ class BlueprintService:
             lines.extend([prefix, ""])
         lines.extend(
             [
-                "你是资深课程架构师，负责为一门课程设计可执行的教学蓝图。",
+                "You are a senior course architect responsible for designing an executable teaching blueprint for a course.",
                 "",
-                "## 课程信息",
-                f"- 标题：{series.title}",
-                f"- 副标题：{series.subtitle or '（无）'}",
-                f"- 目标读者：{series.audience or '（未指定）'}",
-                f"- 难度：{series.difficulty}",
-                f"- 语言：{series.language}",
-                f"- 写作单位：{unit}",
-                f"- 额外关注点：{focus.strip() or '（无）'}",
+                "## Course information",
+                f"- Title: {series.title}",
+                f"- Subtitle: {series.subtitle or '(none)'}",
+                f"- Target audience: {series.audience or '(not specified)'}",
+                f"- Difficulty: {series.difficulty}",
+                f"- Language: {series.language}",
+                f"- Writing unit: {unit}",
+                f"- Additional focus: {focus.strip() or '(none)'}",
                 "",
-                "## 生成模式",
+                "## Generation mode",
             ]
         )
         if mode is GenerationMode.strict:
             lines.extend(
                 [
-                    "strict（严格模式）硬约束：",
-                    "1. overview 与每个 outline 节点的 summary 只能依据下方「证据」中的内容撰写。",
-                    "2. 使用证据的段落必须标注来源标记，格式为 [E1]，多条写作 [E1][E2]。",
-                    "3. 证据未覆盖的部分必须显式写明「资料不足：<缺口说明>」，禁止用常识补全。",
+                    "strict (strict mode) hard constraints:",
+                    "1. overview and the summary of every outline node may only be written from the content in the \"Evidence\" section below.",
+                    "2. Paragraphs that use evidence must carry a source marker in the form [E1]; cite multiple items as [E1][E2].",
+                    "3. Parts not covered by the evidence must explicitly state \"Insufficient material: <gap description>\"; never fill gaps with common knowledge.",
                 ]
             )
         else:
             lines.extend(
                 [
-                    "loose（非严格模式）要求：",
-                    "1. 允许基于通用知识与教学经验自由规划，不要求逐条引用证据。",
-                    "2. overview 首行必须写「⚠️ 本蓝图由大模型编写，未经知识库证据核实」。",
-                    "3. 对不确定的时效性内容标注「建议核实」，不要伪装成已核实事实。",
+                    "loose (non-strict mode) requirements:",
+                    "1. You may plan freely from general knowledge and teaching experience; item-by-item citations are not required.",
+                    "2. The first line of overview must read \"⚠️ This blueprint was written by an LLM and has not been verified against knowledge-base evidence\".",
+                    "3. Mark uncertain or time-sensitive content as \"recommend verifying\"; do not present it as verified fact.",
                 ]
             )
-        lines.extend(["", "## 证据"])
+        lines.extend(["", "## Evidence"])
         if evidence:
             for item in evidence:
                 snippet = (item.citation.text or item.citation.snippet).strip()
                 if len(snippet) > self.evidence_char_limit:
                     snippet = snippet[: self.evidence_char_limit] + "…"
                 lines.append(
-                    f"[{item.marker}] 来源：{item.citation.source_name}"
-                    f"｜片段 #{item.citation.chunk_index}"
+                    f"[{item.marker}] Source: {item.citation.source_name}"
+                    f" | chunk #{item.citation.chunk_index}"
                 )
                 lines.append(snippet)
                 lines.append("")
         else:
-            lines.extend(["（本次未检索到知识库证据）", ""])
+            lines.extend(["(No knowledge-base evidence was retrieved this time)", ""])
         lines.extend(
             [
-                "## 输出 JSON 结构",
+                "## Output JSON structure",
                 "{",
-                '  "overview": "课程整体说明",',
+                '  "overview": "Overall course description",',
                 '  "learning_path": [',
-                '    {"id": "stage-1", "title": "阶段名", "goal": "阶段目标",'
+                '    {"id": "stage-1", "title": "Stage name", "goal": "Stage goal",'
                 ' "node_ids": ["node-1"], "estimated_minutes": 60}',
                 "  ],",
                 '  "outline": [',
-                '    {"id": "node-1", "stage_id": "stage-1", "title": "讲次标题",'
-                ' "summary": "讲次说明", "objectives": ["学习目标"],'
-                ' "prerequisites": ["前置知识"], "estimated_minutes": 30}',
+                '    {"id": "node-1", "stage_id": "stage-1", "title": "Chapter title",'
+                ' "summary": "Chapter summary", "objectives": ["Learning objective"],'
+                ' "prerequisites": ["Prerequisite"], "estimated_minutes": 30}',
                 "  ],",
                 '  "glossary": [',
-                '    {"term": "术语", "definition": "定义", "aliases": ["别名"],'
+                '    {"term": "Term", "definition": "Definition", "aliases": ["Alias"],'
                 ' "node_ids": ["node-1"]}',
                 "  ]",
                 "}",
                 "",
-                "## 结构约束",
-                f"1. learning_path 输出 {stages_low}-{stages_high} 个 stage，按学习顺序排列，id 形如 stage-1。",
-                f"2. 每个 stage 下 1-5 个 outline 节点，全课共 {nodes_low}-{nodes_high} 个{unit}，id 形如 node-1。",
-                "3. 每个 outline 节点的 stage_id 必须引用已定义的 stage id。",
-                "4. glossary 输出 6-12 条术语，term 不重复，node_ids 引用 outline 节点 id。",
-                "5. 每个节点的 objectives 输出 2-3 条，prerequisites 可为空数组。",
+                "## Structural constraints",
+                f"1. learning_path must contain {stages_low}-{stages_high} stages in learning order; ids look like stage-1.",
+                f"2. Each stage has 1-5 outline nodes, and the whole course has {nodes_low}-{nodes_high} {unit}s; ids look like node-1.",
+                "3. The stage_id of every outline node must reference a defined stage id.",
+                "4. glossary must contain 6-12 terms with unique term values; node_ids must reference outline node ids.",
+                "5. Each node has 2-3 objectives; prerequisites may be an empty array.",
             ]
         )
         if spec is not None:
             lines.append(
-                f"6. 本课程共 {nodes_low}-{nodes_high} 个{unit}，"
-                f"overview 中需说明整体节奏与{unit}划分依据。"
+                f"6. This course has {nodes_low}-{nodes_high} {unit}s; "
+                f"overview must explain the overall pacing and the rationale for dividing the {unit}s."
             )
         extra = extra_requirement(spec, "outline", values)
         if extra:
@@ -494,8 +494,8 @@ class BlueprintService:
         lines.extend(
             [
                 "",
-                "## 输出",
-                "只输出一个 JSON 对象，不要输出 markdown 代码块围栏，不要输出任何解释文字。",
+                "## Output",
+                "Output only a single JSON object; do not output markdown code fences or any explanatory text.",
             ]
         )
         return "\n".join(lines)
@@ -520,7 +520,7 @@ class BlueprintService:
         stages = _parse_stages(payload.get("learning_path") or payload.get("stages"))
         nodes = _parse_nodes(payload.get("outline") or payload.get("nodes"))
         if not nodes:
-            raise BlueprintParseError("模型返回的课程蓝图缺少 outline 节点，无法使用")
+            raise BlueprintParseError("the course blueprint returned by the model has no outline nodes and cannot be used")
         _assign_stages(stages, nodes)
         terms = _parse_terms(payload.get("glossary"))
         if not terms:
@@ -528,8 +528,8 @@ class BlueprintService:
 
         grounded = mode is GenerationMode.strict and bool(evidence)
         overview = _as_str(payload.get("overview"))
-        if mode is GenerationMode.loose and "未经知识库证据核实" not in overview:
-            overview = f"⚠️ 本蓝图由大模型编写，未经知识库证据核实\n\n{overview}".strip()
+        if mode is GenerationMode.loose and "not verified against knowledge-base evidence" not in overview:
+            overview = f"⚠️ This blueprint was written by an LLM and has not been verified against knowledge-base evidence\n\n{overview}".strip()
 
         return SeriesBlueprint(
             series_id=series.id,
@@ -569,16 +569,16 @@ class BlueprintService:
                 node_id = f"node-{node_index}"
                 node_title = hint_title.format(title=title)
                 if node_title in used_titles:
-                    node_title = f"{stage_title}：{node_title}"
+                    node_title = f"{stage_title}: {node_title}"
                 if node_title in used_titles:
-                    node_title = f"{node_title}（{node_index}）"
+                    node_title = f"{node_title} ({node_index})"
                 used_titles.add(node_title)
                 summary = hint_summary.format(title=title, unit=unit)
                 if evidence:
                     marker = evidence[(node_index - 1) % len(evidence)].marker
-                    summary = f"{summary}（参考证据 [{marker}]）"
+                    summary = f"{summary} (reference evidence [{marker}])"
                 else:
-                    summary = f"{summary}（资料不足：知识库暂无对应证据）"
+                    summary = f"{summary} (insufficient material: no matching evidence in the knowledge base)"
                 stage_node_ids.append(node_id)
                 nodes.append(
                     OutlineNode(
@@ -587,12 +587,12 @@ class BlueprintService:
                         title=node_title,
                         summary=summary,
                         objectives=[
-                            f"能用自己的话解释「{node_title}」",
-                            f"能判断「{title}」中与该主题相关的常见问题",
+                            f"Can explain \"{node_title}\" in one's own words",
+                            f"Can identify common issues related to this topic in \"{title}\"",
                         ],
                         prerequisites=[]
                         if position == 0
-                        else ["上一阶段的核心概念"],
+                        else ["Core concepts from the previous stage"],
                         estimated_minutes=30,
                         status=NODE_PLANNED,
                     )
@@ -601,31 +601,31 @@ class BlueprintService:
                 LearningStage(
                     id=stage_id,
                     title=stage_title,
-                    goal=f"围绕「{title}」完成{stage_title}阶段的学习目标",
+                    goal=f"Achieve the learning objectives of the {stage_title} stage around \"{title}\"",
                     node_ids=stage_node_ids,
                     estimated_minutes=90,
                 )
             )
 
         term_source = (
-            f"占位蓝图基于课程元数据与 {len(evidence)} 条证据规划，"
+            f"Placeholder blueprint planned from course metadata and {len(evidence)} pieces of evidence, "
             if evidence
-            else "占位蓝图仅基于课程元数据规划，"
+            else "Placeholder blueprint planned from course metadata only, "
         )
         overview = (
-            f"⚠️ 本蓝图由大模型编写，未经知识库证据核实\n\n"
+            f"⚠️ This blueprint was written by an LLM and has not been verified against knowledge-base evidence\n\n"
             if mode is GenerationMode.loose
             else ""
         ) + (
-            f"{term_source}覆盖「{title}」从入门到实践的 {len(stages)} 个阶段、"
-            f"{len(nodes)} 个{unit}。目标读者：{series.audience or '未指定'}；难度：{series.difficulty}。"
+            f"{term_source}covering {len(stages)} stages of \"{title}\" from beginner to practical use, "
+            f"with {len(nodes)} {unit}s. Target audience: {series.audience or 'not specified'}; difficulty: {series.difficulty}."
         )
         glossary = self._placeholder_terms(
             series, evidence, [node.id for node in nodes]
         )
         warning = PLACEHOLDER_WARNING
         if mode is GenerationMode.loose:
-            warning = f"{PLACEHOLDER_WARNING}；{LOOSE_WARNING}"
+            warning = f"{PLACEHOLDER_WARNING}; {LOOSE_WARNING}"
         return SeriesBlueprint(
             series_id=series.id,
             overview=overview,
@@ -656,7 +656,7 @@ class BlueprintService:
                 selected.append(term)
                 if len(selected) >= 6:
                     break
-        for fallback in ("核心概念", "工作流程", "常见误区", "实践路径"):
+        for fallback in ("Core concept", "Workflow", "Common pitfalls", "Practical path"):
             if len(selected) >= 6:
                 break
             if fallback not in selected:
@@ -671,9 +671,9 @@ class BlueprintService:
                     if term in (item.citation.text or item.citation.snippet)
                 }
             )
-            definition = f"占位释义：与「{series.title}」相关的关键概念，待补充资料后定稿。"
+            definition = f"Placeholder definition: a key concept related to \"{series.title}\", to be finalized once more material is available."
             if sources:
-                definition = f"{definition}出现于：{'、'.join(sources[:2])}。"
+                definition = f"{definition}Appears in: {', '.join(sources[:2])}."
             terms.append(
                 GlossaryTerm(
                     term=term,
@@ -696,7 +696,7 @@ def _parse_stages(raw: Any) -> list[LearningStage]:
         stages.append(
             LearningStage(
                 id=stage_id,
-                title=_as_str(item.get("title")) or f"阶段 {index}",
+                title=_as_str(item.get("title")) or f"Stage {index}",
                 goal=_as_str(item.get("goal")),
                 node_ids=_as_str_list(item.get("node_ids")),
                 estimated_minutes=_as_int(item.get("estimated_minutes")),
@@ -847,7 +847,7 @@ def _select_terms(counts: Mapping[str, int], limit: int) -> list[str]:
 def _metadata_terms(text: str) -> list[str]:
     terms: list[str] = []
     for segment in re.split(r"[，,、。;；/\|·\s]+", text or ""):
-        cleaned = segment.strip().lstrip("与和及或的")
+        cleaned = segment.strip().lstrip("\u4e0e\u548c\u53ca\u6216\u7684")
         if 2 <= len(cleaned) <= 10:
             terms.append(cleaned)
     for word in re.findall(r"[A-Za-z][A-Za-z0-9_.\-]{2,}", text or ""):

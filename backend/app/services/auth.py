@@ -56,14 +56,14 @@ TOKEN_TTL_SECONDS = 7 * 24 * 3600
 EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 
 BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...], str]] = {
-    "owner": ("所有者", ALL_ACTIONS, SCOPE_ALL),
+    "owner": ("Owner", ALL_ACTIONS, SCOPE_ALL),
     "admin": (
-        "管理员",
+        "Admin",
         ("read", "write", "review", "manage_members", "manage_quota"),
         SCOPE_ALL,
     ),
-    "editor": ("编辑", ("read", "write", "review"), SCOPE_ALL),
-    "viewer": ("访客", ("read",), SCOPE_ALL),
+    "editor": ("Editor", ("read", "write", "review"), SCOPE_ALL),
+    "viewer": ("Viewer", ("read",), SCOPE_ALL),
 }
 ACTION_SETS: dict[str, set[str]] = {
     key: set(value[1]) for key, value in BUILTIN_ROLES.items()
@@ -202,7 +202,7 @@ class AuthService:
         repository.ensure_schema()
         if repository.get_tenant(DEFAULT_TENANT_ID) is None:
             system = repository.create_tenant(
-                "默认空间", "default", "free", tenant_id=DEFAULT_TENANT_ID
+                "Default space", "default", "free", tenant_id=DEFAULT_TENANT_ID
             )
             repository.update_tenant(system.id, kind=TENANT_KIND_SYSTEM)
         else:
@@ -213,7 +213,7 @@ class AuthService:
             repository.create_user(
                 DEFAULT_USER_EMAIL,
                 hash_password(secrets.token_hex(16)),
-                "本地用户",
+                "Local user",
                 user_id=DEFAULT_USER_ID,
             )
         if repository.get_membership(DEFAULT_TENANT_ID, DEFAULT_USER_ID) is None:
@@ -273,7 +273,7 @@ class AuthService:
         user = self.repository.get_user(DEFAULT_USER_ID)
         tenant = self.repository.get_tenant(DEFAULT_TENANT_ID)
         if user is None or tenant is None:
-            raise AuthRequiredError("本地身份初始化失败")
+            raise AuthRequiredError("local identity initialization failed")
         return self.context_for(user, tenant, "owner")
 
     def register(
@@ -282,11 +282,11 @@ class AuthService:
         self.ensure_default()
         address = (email or "").strip().lower()
         if not EMAIL_PATTERN.match(address):
-            raise ValueError("邮箱格式不正确")
+            raise ValueError("invalid email format")
         if len(password or "") < 8:
-            raise ValueError("密码至少 8 位")
+            raise ValueError("password must be at least 8 characters")
         if self.repository.get_user_by_email(address) is not None:
-            raise EmailAlreadyRegisteredError("该邮箱已注册")
+            raise EmailAlreadyRegisteredError("this email is already registered")
         bootstrap = self.is_bootstrap_registration()
         auto_active = (
             bootstrap or self.mode != "required" or not self.require_approval
@@ -297,7 +297,7 @@ class AuthService:
         )
         label = (display_name or address.split("@")[0]).strip() or address
         tenant = self.repository.create_tenant(
-            f"{label} 的空间",
+            f"{label}'s space",
             self._unique_slug(label),
             kind=TENANT_KIND_PERSONAL,
             owner_user_id=user.id,
@@ -327,10 +327,10 @@ class AuthService:
         if user is None and hasattr(self.repository, "get_user_by_email_any"):
             user = self.repository.get_user_by_email_any(address)
         if user is None:
-            raise InvalidCredentialsError("邮箱或密码不正确")
+            raise InvalidCredentialsError("incorrect email or password")
         stored = self.repository.get_password_hash(user.id)
         if not verify_password(password, stored):
-            raise InvalidCredentialsError("邮箱或密码不正确")
+            raise InvalidCredentialsError("incorrect email or password")
         self.assert_active(user)
         self.repository.touch_login(user.id)
         refreshed = self.repository.get_user(user.id) or user
@@ -338,36 +338,36 @@ class AuthService:
 
     def assert_active(self, user: User) -> None:
         if user.status == USER_STATUS_PENDING:
-            raise AccountNotActiveError("账号待管理员审核")
+            raise AccountNotActiveError("account is pending admin approval")
         if user.status == USER_STATUS_REJECTED:
-            raise AccountNotActiveError("账号审核未通过")
+            raise AccountNotActiveError("account approval was rejected")
         if user.status == USER_STATUS_DISABLED or float(user.deleted_at or 0) > 0:
-            raise AccountNotActiveError("账号已停用")
+            raise AccountNotActiveError("account is disabled")
 
     def resolve(self, token: str, tenant_id: str | None = None) -> AuthContext:
         self.ensure_default()
         user_id = parse_token(token or "", self.secret)
         if not user_id:
-            raise AuthRequiredError("访问令牌无效或已过期")
+            raise AuthRequiredError("access token is invalid or expired")
         user = self.repository.get_user(user_id)
         if user is None:
-            raise AuthRequiredError("访问令牌对应的用户不存在")
+            raise AuthRequiredError("the user for this access token does not exist")
         self.assert_active(user)
         memberships = self.repository.list_memberships(user.id)
         if not memberships:
-            raise MembershipNotFoundError("当前用户不属于任何租户")
+            raise MembershipNotFoundError("the current user does not belong to any tenant")
         target = (tenant_id or "").strip()
         if target:
             membership = next(
                 (item for item in memberships if item.tenant_id == target), None
             )
             if membership is None:
-                raise MembershipNotFoundError("当前用户不属于该租户")
+                raise MembershipNotFoundError("the current user does not belong to this tenant")
         else:
             membership = memberships[0]
         tenant = self.repository.get_tenant(membership.tenant_id)
         if tenant is None:
-            raise TenantNotFoundError("租户不存在")
+            raise TenantNotFoundError("tenant not found")
         return self.context_for(user, tenant, membership.role)
 
     def update_profile(
@@ -378,41 +378,41 @@ class AuthService:
     ) -> User:
         user = self.repository.get_user(user_id)
         if user is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         next_email = None
         if email is not None:
             address = email.strip().lower()
             if not EMAIL_PATTERN.match(address):
-                raise ValueError("邮箱格式不正确")
+                raise ValueError("invalid email format")
             if address != user.email:
                 if self.repository.get_user_by_email(address) is not None:
-                    raise EmailAlreadyRegisteredError("该邮箱已被占用")
+                    raise EmailAlreadyRegisteredError("this email is already taken")
             next_email = address
         next_name = None
         if display_name is not None:
             label = display_name.strip()
             if not label:
-                raise ValueError("昵称不能为空")
+                raise ValueError("display name must not be empty")
             next_name = label
         updated = self.repository.update_user(
             user_id, display_name=next_name, email=next_email
         )
         if updated is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         return updated
 
     def change_password(self, user_id: str, current_password: str, new_password: str) -> None:
         stored = self.repository.get_password_hash(user_id)
         if not verify_password(current_password or "", stored):
-            raise InvalidCredentialsError("当前密码不正确")
+            raise InvalidCredentialsError("current password is incorrect")
         if len(new_password or "") < 8:
-            raise ValueError("新密码至少 8 位")
+            raise ValueError("new password must be at least 8 characters")
         self.repository.update_password_hash(user_id, hash_password(new_password))
 
     def set_avatar_key(self, user_id: str, key: str) -> User:
         updated = self.repository.update_user(user_id, avatar_key=key)
         if updated is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         return updated
 
     def get_user(self, user_id: str) -> User | None:
@@ -447,26 +447,26 @@ class AuthService:
         self.ensure_default()
         current = self.repository.get_user(user_id)
         if current is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         next_email = None
         if email is not None:
             address = email.strip().lower()
             if not EMAIL_PATTERN.match(address):
-                raise ValueError("邮箱格式不正确")
+                raise ValueError("invalid email format")
             if address != current.email and self.repository.get_user_by_email(address):
-                raise EmailAlreadyRegisteredError("该邮箱已被占用")
+                raise EmailAlreadyRegisteredError("this email is already taken")
             next_email = address
         next_status = None
         if status is not None:
             wanted = (status or "").strip().lower()
             if wanted not in USER_STATUSES:
-                raise ValueError(f"未知状态: {wanted}")
+                raise ValueError(f"unknown status: {wanted}")
             next_status = wanted
         next_name = None
         if display_name is not None:
             label = display_name.strip()
             if not label:
-                raise ValueError("昵称不能为空")
+                raise ValueError("display name must not be empty")
             next_name = label
         updated = self.repository.update_user(
             user_id,
@@ -475,7 +475,7 @@ class AuthService:
             status=next_status,
         )
         if updated is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         if role is not None and role.strip():
             key = self._validate_role_key(DEFAULT_TENANT_ID, role.strip())
             existing = self.repository.get_membership(DEFAULT_TENANT_ID, user_id)
@@ -488,19 +488,19 @@ class AuthService:
     def set_password(self, user_id: str, new_password: str) -> None:
         self.ensure_default()
         if self.repository.get_user(user_id) is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         if len(new_password or "") < 8:
-            raise ValueError("新密码至少 8 位")
+            raise ValueError("new password must be at least 8 characters")
         self.repository.update_password_hash(user_id, hash_password(new_password))
 
     def approve_user(self, user_id: str) -> User:
         self.ensure_default()
         user = self.repository.get_user(user_id)
         if user is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         updated = self.repository.update_user(user_id, status=USER_STATUS_ACTIVE)
         if updated is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         self.ensure_system_membership(user_id)
         return updated
 
@@ -508,10 +508,10 @@ class AuthService:
         self.ensure_default()
         user = self.repository.get_user(user_id)
         if user is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         updated = self.repository.update_user(user_id, status=USER_STATUS_REJECTED)
         if updated is None:
-            raise AuthRequiredError("用户不存在")
+            raise AuthRequiredError("user not found")
         return updated
 
     def role_in_system(self, user_id: str) -> str:
@@ -524,10 +524,10 @@ class AuthService:
                 ctx = self.local_context()
             return ctx
         if ctx is None:
-            raise AuthRequiredError("需要登录")
+            raise AuthRequiredError("login required")
         if not self.can(ctx, action):
             label = ctx.role_name or ctx.role_key or ctx.role
-            raise PermissionDeniedError(f"角色 {label} 无权执行 {action}")
+            raise PermissionDeniedError(f"role {label} is not allowed to perform {action}")
         return ctx
 
     def can(self, ctx: AuthContext | None, action: str) -> bool:
@@ -608,7 +608,7 @@ class AuthService:
             if not target or target in seen:
                 continue
             if self.repository.get_membership(tenant_id, target) is None:
-                raise MembershipNotFoundError(f"成员不存在: {target}")
+                raise MembershipNotFoundError(f"member not found: {target}")
             seen.add(target)
             cleaned.append((target, "write" if level == "write" else "read"))
         return self.repository.replace_piece_grants(
@@ -617,7 +617,7 @@ class AuthService:
 
     def list_roles(self, tenant_id: str) -> list[dict[str, Any]]:
         if self.repository.get_tenant(tenant_id) is None:
-            raise TenantNotFoundError("租户不存在")
+            raise TenantNotFoundError("tenant not found")
         roles = self.ensure_tenant_roles(tenant_id)
         payload: list[dict[str, Any]] = []
         for role in roles:
@@ -641,12 +641,12 @@ class AuthService:
     ) -> Role:
         label = (name or "").strip()
         if not label:
-            raise ValueError("角色名称不能为空")
+            raise ValueError("role name must not be empty")
         if self.repository.get_tenant(tenant_id) is None:
-            raise TenantNotFoundError("租户不存在")
+            raise TenantNotFoundError("tenant not found")
         pending = normalize_actions(actions)
         if not pending:
-            raise ValueError("角色至少需要一个权限点")
+            raise ValueError("a role needs at least one permission")
         self.ensure_tenant_roles(tenant_id)
         key = self._unique_role_key(tenant_id, label)
         return self.repository.create_role(
@@ -663,14 +663,14 @@ class AuthService:
     ) -> Role:
         role = self.repository.get_role_by_id(role_id)
         if role is None or role.tenant_id != tenant_id:
-            raise RoleNotFoundError("角色不存在")
+            raise RoleNotFoundError("role not found")
         if role.builtin and actions is not None:
-            raise BuiltinRoleError("内置角色的权限点不可修改")
+            raise BuiltinRoleError("permissions of built-in roles cannot be modified")
         next_actions = None if actions is None else normalize_actions(actions)
         if next_actions is not None and not next_actions:
-            raise ValueError("角色至少需要一个权限点")
+            raise ValueError("a role needs at least one permission")
         if name is not None and not (name or "").strip():
-            raise ValueError("角色名称不能为空")
+            raise ValueError("role name must not be empty")
         updated = self.repository.update_role(
             role_id,
             name=(name.strip() if name is not None else None),
@@ -678,17 +678,17 @@ class AuthService:
             scope=(normalize_scope(scope) if scope is not None else None),
         )
         if updated is None:
-            raise RoleNotFoundError("角色不存在")
+            raise RoleNotFoundError("role not found")
         return updated
 
     def delete_role(self, tenant_id: str, role_id: str) -> bool:
         role = self.repository.get_role_by_id(role_id)
         if role is None or role.tenant_id != tenant_id:
-            raise RoleNotFoundError("角色不存在")
+            raise RoleNotFoundError("role not found")
         if role.builtin:
-            raise BuiltinRoleError("内置角色不可删除")
+            raise BuiltinRoleError("built-in roles cannot be deleted")
         if self.repository.count_role_members(tenant_id, role.key) > 0:
-            raise RoleInUseError("仍有成员使用该角色，无法删除")
+            raise RoleInUseError("members still use this role, so it cannot be deleted")
         return self.repository.delete_role(role_id)
 
     def list_grants(self, tenant_id: str, series_id: str) -> list[SeriesGrant]:
@@ -705,7 +705,7 @@ class AuthService:
             if not target or target in seen:
                 continue
             if self.repository.get_membership(tenant_id, target) is None:
-                raise MembershipNotFoundError(f"成员不存在: {target}")
+                raise MembershipNotFoundError(f"member not found: {target}")
             seen.add(target)
             cleaned.append((target, "write" if level == "write" else "read"))
         return self.repository.replace_grants(tenant_id, series_id, cleaned)
@@ -772,10 +772,10 @@ class AuthService:
         self.ensure_default()
         label = (name or "").strip()
         if not label:
-            raise ValueError("空间名称不能为空")
+            raise ValueError("space name must not be empty")
         wanted = (kind or TENANT_KIND_PERSONAL).strip().lower()
         if wanted not in CREATABLE_TENANT_KINDS:
-            raise TenantKindError("只能创建 personal 或 team 类型的空间")
+            raise TenantKindError("only personal or team spaces can be created")
         tenant = self.repository.create_tenant(
             label,
             self._unique_slug(label),
@@ -790,32 +790,32 @@ class AuthService:
         self.ensure_default()
         label = (name or "").strip()
         if not label:
-            raise ValueError("空间名称不能为空")
+            raise ValueError("space name must not be empty")
         current = self.repository.get_tenant(tenant_id)
         if current is None:
-            raise TenantNotFoundError("租户不存在")
+            raise TenantNotFoundError("tenant not found")
         updated = self.repository.update_tenant(tenant_id, name=label)
         if updated is None:
-            raise TenantNotFoundError("租户不存在")
+            raise TenantNotFoundError("tenant not found")
         return updated
 
     def delete_tenant(self, tenant_id: str) -> bool:
         self.ensure_default()
         tenant = self.repository.get_tenant(tenant_id)
         if tenant is None:
-            raise TenantNotFoundError("租户不存在")
+            raise TenantNotFoundError("tenant not found")
         if tenant.kind == TENANT_KIND_SYSTEM or tenant.id == DEFAULT_TENANT_ID:
-            raise TenantSystemError("系统空间不可删除")
+            raise TenantSystemError("the system space cannot be deleted")
         return self.repository.delete_tenant(tenant_id)
 
     def context_for_tenant(self, user: User, tenant_id: str) -> AuthContext:
         self.ensure_default()
         membership = self.repository.get_membership(tenant_id, user.id)
         if membership is None:
-            raise MembershipNotFoundError("当前用户不属于该租户")
+            raise MembershipNotFoundError("the current user does not belong to this tenant")
         tenant = self.repository.get_tenant(tenant_id)
         if tenant is None:
-            raise TenantNotFoundError("租户不存在")
+            raise TenantNotFoundError("tenant not found")
         return self.context_for(user, tenant, membership.role)
 
     def transfer_tenant(
@@ -824,19 +824,19 @@ class AuthService:
         self.ensure_default()
         tenant = self.repository.get_tenant(tenant_id)
         if tenant is None:
-            raise TenantNotFoundError("租户不存在")
+            raise TenantNotFoundError("tenant not found")
         if tenant.is_system() or tenant.id == DEFAULT_TENANT_ID:
-            raise TenantSystemError("系统空间不可转移所有权")
+            raise TenantSystemError("ownership of the system space cannot be transferred")
         actor = self.repository.get_membership(tenant_id, actor_user_id)
         if actor is None:
-            raise MembershipNotFoundError("当前用户不属于该租户")
+            raise MembershipNotFoundError("the current user does not belong to this tenant")
         if normalize_role(actor.role, "viewer") != "owner":
-            raise PermissionDeniedError("只有空间所有者可以转移所有权")
+            raise PermissionDeniedError("only the space owner can transfer ownership")
         target = self.repository.get_membership(tenant_id, target_user_id)
         if target is None:
-            raise ValueError("目标用户不是本空间成员")
+            raise ValueError("the target user is not a member of this space")
         if target_user_id == actor_user_id:
-            raise ValueError("目标用户已是空间所有者")
+            raise ValueError("the target user is already the space owner")
         self.repository.update_membership_role(tenant_id, actor_user_id, "admin")
         self.repository.update_membership_role(tenant_id, target_user_id, "owner")
         updated = self.repository.update_tenant(
@@ -848,22 +848,22 @@ class AuthService:
         self.ensure_default()
         membership = self.repository.get_membership(tenant_id, user.id)
         if membership is None:
-            raise MembershipNotFoundError("当前用户不属于该租户")
+            raise MembershipNotFoundError("the current user does not belong to this tenant")
         return normalize_role(membership.role, "viewer")
 
     def list_members(self, tenant_id: str) -> list[Membership]:
         self.ensure_default()
         if self.repository.get_tenant(tenant_id) is None:
-            raise TenantNotFoundError("租户不存在")
+            raise TenantNotFoundError("tenant not found")
         return self.repository.list_members(tenant_id)
 
     def add_member(self, tenant_id: str, email: str, role: str) -> Membership:
         self.ensure_default()
         if self.repository.get_tenant(tenant_id) is None:
-            raise TenantNotFoundError("租户不存在")
+            raise TenantNotFoundError("tenant not found")
         address = (email or "").strip().lower()
         if not EMAIL_PATTERN.match(address):
-            raise ValueError("邮箱格式不正确")
+            raise ValueError("invalid email format")
         wanted = self._validate_role_key(tenant_id, role)
         user = self.repository.get_user_by_email(address)
         if user is None:
@@ -872,7 +872,7 @@ class AuthService:
         if existing is not None:
             updated = self.repository.update_membership_role(tenant_id, user.id, wanted)
             if updated is None:
-                raise MembershipNotFoundError("成员不存在")
+                raise MembershipNotFoundError("member not found")
             return updated
         return self.repository.add_membership(tenant_id, user.id, wanted)
 
@@ -881,37 +881,37 @@ class AuthService:
         wanted = self._validate_role_key(tenant_id, role)
         membership = self.repository.get_membership(tenant_id, user_id)
         if membership is None:
-            raise MembershipNotFoundError("成员不存在")
+            raise MembershipNotFoundError("member not found")
         if (
             normalize_role(membership.role, "viewer") == "owner"
             and wanted != "owner"
             and self.repository.count_owners(tenant_id) <= 1
         ):
-            raise PermissionDeniedError("不能降级租户最后一个 owner")
+            raise PermissionDeniedError("cannot demote the last owner of a tenant")
         updated = self.repository.update_membership_role(tenant_id, user_id, wanted)
         if updated is None:
-            raise MembershipNotFoundError("成员不存在")
+            raise MembershipNotFoundError("member not found")
         return updated
 
     def remove_member(self, tenant_id: str, user_id: str) -> bool:
         self.ensure_default()
         membership = self.repository.get_membership(tenant_id, user_id)
         if membership is None:
-            raise MembershipNotFoundError("成员不存在")
+            raise MembershipNotFoundError("member not found")
         if (
             normalize_role(membership.role, "viewer") == "owner"
             and self.repository.count_owners(tenant_id) <= 1
         ):
-            raise PermissionDeniedError("不能移除租户最后一个 owner")
+            raise PermissionDeniedError("cannot remove the last owner of a tenant")
         return self.repository.remove_membership(tenant_id, user_id)
 
     def _validate_role_key(self, tenant_id: str, role: str) -> str:
         key = normalize_role(role, "")
         if not key:
-            raise ValueError("角色取值不能为空")
+            raise ValueError("role value must not be empty")
         self.ensure_tenant_roles(tenant_id)
         if self.repository.get_role(tenant_id, key) is None:
-            raise ValueError(f"角色不存在: {key}")
+            raise ValueError(f"role not found: {key}")
         return key
 
     def _unique_role_key(self, tenant_id: str, name: str) -> str:

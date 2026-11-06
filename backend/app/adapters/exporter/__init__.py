@@ -1,4 +1,4 @@
-"""导出引擎适配器实现。"""
+"""Export engine adapter implementations."""
 
 from app.adapters.exporter.builtin import BuiltinExporter
 

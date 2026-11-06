@@ -283,16 +283,16 @@ class RetrievalProviderService:
     ) -> RetrievalProvider:
         record = self.repository.get_provider(tenant_id, user_id, provider_id)
         if record is None:
-            raise ValueError("provider 不存在")
+            raise ValueError("provider not found")
         if kind and record.kind != kind:
-            raise ValueError("provider 类型不匹配")
+            raise ValueError("provider kind mismatch")
         return record
 
     def _normalize_backend(self, kind: str, backend: str) -> str:
         value = (backend or "").strip().lower()
         allowed = EMBEDDING_BACKENDS if kind == PROVIDER_KIND_EMBEDDING else RERANK_BACKENDS
         if value not in allowed:
-            raise ValueError(f"不支持的 backend: {value or 'empty'}")
+            raise ValueError(f"unsupported backend: {value or 'empty'}")
         return value
 
     def _scope_fields(
@@ -300,7 +300,7 @@ class RetrievalProviderService:
     ) -> tuple[str | None, str]:
         value = (scope or PROVIDER_SCOPE_USER).strip().lower()
         if value not in PROVIDER_SCOPES:
-            raise ValueError("scope 仅支持 user / tenant / global")
+            raise ValueError("scope supports only user / tenant / global")
         if value == PROVIDER_SCOPE_GLOBAL:
             return None, ""
         if value == PROVIDER_SCOPE_TENANT:
@@ -327,14 +327,14 @@ class RetrievalProviderService:
         self.repository.ensure_schema()
         resolved_kind = (kind or "").strip().lower()
         if resolved_kind not in PROVIDER_KINDS:
-            raise ValueError("kind 仅支持 embedding / rerank")
+            raise ValueError("kind supports only embedding / rerank")
         label = (name or "").strip()
         if not label:
-            raise ValueError("name 不能为空")
+            raise ValueError("name must not be empty")
         resolved_backend = self._normalize_backend(resolved_kind, backend)
         resolved_scope = (scope or PROVIDER_SCOPE_USER).strip().lower()
         if resolved_scope in (PROVIDER_SCOPE_TENANT, PROVIDER_SCOPE_GLOBAL) and not can_manage_server:
-            raise PermissionError("scope 需要 manage_server")
+            raise PermissionError("this scope requires manage_server")
         row_tenant, row_user = self._scope_fields(resolved_scope, tenant_id, user_id)
         resolved_model = (model or "").strip()
         resolved_dim = int(dim or 0)
@@ -343,16 +343,16 @@ class RetrievalProviderService:
         if resolved_kind == PROVIDER_KIND_EMBEDDING:
             if resolved_backend in ("openai", "openai_compat"):
                 if not resolved_url:
-                    raise ValueError("openai 兼容 embedding 需要 base_url")
+                    raise ValueError("OpenAI-compatible embedding requires base_url")
                 if not resolved_model:
-                    raise ValueError("embedding 需要 model")
+                    raise ValueError("embedding requires model")
                 if resolved_dim <= 0:
                     final_meta["needs_probe"] = True
                     final_meta["dim_source"] = "unknown"
             else:
                 resolved_model = resolved_model or "hash"
                 if resolved_dim <= 0:
-                    raise ValueError("embedding 需要 dim")
+                    raise ValueError("embedding requires dim")
                 final_meta["dim_source"] = "configured"
         else:
             if not resolved_model:
@@ -362,7 +362,7 @@ class RetrievalProviderService:
                 preset = RERANK_PRESETS.get(resolved_backend) or {}
                 resolved_url = str(preset.get("base_url") or "")
             if resolved_backend not in ("llm",) and not resolved_url:
-                raise ValueError("rerank 需要 base_url")
+                raise ValueError("rerank requires base_url")
         now = int(time.time())
         record = RetrievalProvider(
             id=f"rp_{uuid.uuid4().hex[:16]}",
@@ -399,17 +399,17 @@ class RetrievalProviderService:
         record = self.get_visible(tenant_id, user_id, provider_id)
         scope = record.scope()
         if scope in (PROVIDER_SCOPE_TENANT, PROVIDER_SCOPE_GLOBAL) and not can_manage_server:
-            raise PermissionError("scope 需要 manage_server")
+            raise PermissionError("this scope requires manage_server")
         if "kind" in changes and changes.get("kind") is not None:
             if str(changes.get("kind")).strip().lower() != record.kind:
-                raise ValueError("供应商类型（embedding / rerank）创建后不可修改")
+                raise ValueError("the provider kind (embedding / rerank) cannot be changed after creation")
         if "backend" in changes and changes.get("backend") is not None:
             if str(changes.get("backend")).strip().lower() != record.backend:
-                raise ValueError("后端类型创建后不可修改")
+                raise ValueError("the backend type cannot be changed after creation")
         if "name" in changes and changes.get("name") is not None:
             label = str(changes.get("name") or "").strip()
             if not label:
-                raise ValueError("name 不能为空")
+                raise ValueError("name must not be empty")
             record.name = label
         if "base_url" in changes and changes.get("base_url") is not None:
             record.base_url = str(changes.get("base_url") or "").strip()
@@ -429,7 +429,7 @@ class RetrievalProviderService:
             record.meta = dict(meta) if isinstance(meta, dict) else {}
         if record.kind == PROVIDER_KIND_EMBEDDING and record.dim <= 0:
             if record.backend not in ("openai", "openai_compat"):
-                raise ValueError("embedding 需要 dim")
+                raise ValueError("embedding requires dim")
             meta = record.meta if isinstance(record.meta, dict) else {}
             if meta.get("dim_source") != "unknown" or not meta.get("needs_probe"):
                 meta = dict(meta)
@@ -459,7 +459,7 @@ class RetrievalProviderService:
             record.scope() in (PROVIDER_SCOPE_TENANT, PROVIDER_SCOPE_GLOBAL)
             and not can_manage_server
         ):
-            raise PermissionError("scope 需要 manage_server")
+            raise PermissionError("this scope requires manage_server")
         return self.repository.delete_provider(tenant_id, user_id, provider_id)
 
     def _setting_provider(
@@ -484,9 +484,9 @@ class RetrievalProviderService:
                 return None, SOURCE_ENV, ""
             record = self.repository.get_provider(tenant_id, user_id, explicit_provider_id)
             if record is None:
-                raise ValueError("provider 不存在")
+                raise ValueError("provider not found")
             if not record.enabled or record.kind != kind:
-                raise ValueError("provider 不可用")
+                raise ValueError("provider is unavailable")
             return record, _source_of(record), ""
         user_setting = self.repository.get_setting(
             tenant_id, user_id, SETTING_SCOPE_USER
@@ -559,7 +559,7 @@ class RetrievalProviderService:
                 model=record.model or "hash",
             )
         else:
-            raise ValueError(f"不支持的 embedding backend: {backend}")
+            raise ValueError(f"unsupported embedding backend: {backend}")
         setattr(adapter, "provider_id", record.id)
         return adapter
 
@@ -927,9 +927,9 @@ class RetrievalProviderService:
     ) -> dict[str, Any]:
         resolved_scope = (scope or SETTING_SCOPE_USER).strip().lower()
         if resolved_scope not in SETTING_SCOPES:
-            raise ValueError("scope 仅支持 user / tenant")
+            raise ValueError("scope supports only user / tenant")
         if resolved_scope == SETTING_SCOPE_TENANT and not can_manage_server:
-            raise PermissionError("scope=tenant 需要 manage_server")
+            raise PermissionError("scope=tenant requires manage_server")
         row_user = user_id if resolved_scope == SETTING_SCOPE_USER else ""
         current = self.repository.get_setting(tenant_id, row_user, resolved_scope)
         setting = current or RetrievalSetting(
@@ -942,7 +942,7 @@ class RetrievalProviderService:
             if value:
                 record = self.repository.get_provider(tenant_id, user_id, str(value))
                 if record is None or record.kind != PROVIDER_KIND_EMBEDDING:
-                    raise ValueError("embedding provider 不存在")
+                    raise ValueError("embedding provider not found")
                 setting.embedding_provider_id = record.id
             else:
                 setting.embedding_provider_id = None
@@ -951,7 +951,7 @@ class RetrievalProviderService:
             if value:
                 record = self.repository.get_provider(tenant_id, user_id, str(value))
                 if record is None or record.kind != PROVIDER_KIND_RERANK:
-                    raise ValueError("rerank provider 不存在")
+                    raise ValueError("rerank provider not found")
                 setting.rerank_provider_id = record.id
             else:
                 setting.rerank_provider_id = None
@@ -1003,7 +1003,7 @@ class RetrievalProviderService:
                     return {
                         "ok": False,
                         "latency_ms": latency_ms,
-                        "error": "空向量",
+                        "error": "empty vector",
                     }
                 dim = len(vectors[0])
                 score = cosine(vectors[0], vectors[0])
@@ -1045,7 +1045,7 @@ class RetrievalProviderService:
                 return {
                     "ok": False,
                     "latency_ms": latency_ms,
-                    "error": f"rerank 返回条数异常: {len(scores)}",
+                    "error": f"rerank returned an unexpected number of scores: {len(scores)}",
                 }
             return {
                 "ok": True,
@@ -1068,9 +1068,9 @@ class RetrievalProviderService:
     ) -> dict[str, Any]:
         resolved_scope = (scope or SETTING_SCOPE_USER).strip().lower()
         if resolved_scope not in SETTING_SCOPES:
-            raise ValueError("scope 仅支持 user / tenant")
+            raise ValueError("scope supports only user / tenant")
         if resolved_scope == SETTING_SCOPE_TENANT and not can_manage_server:
-            raise PermissionError("scope=tenant 需要 manage_server")
+            raise PermissionError("scope=tenant requires manage_server")
         row_user = user_id if resolved_scope == SETTING_SCOPE_USER else ""
         self.repository.delete_setting(tenant_id, row_user, resolved_scope)
         return self.effective_settings(tenant_id, user_id)

@@ -31,10 +31,10 @@ const NEEDED: Record<RoleAction, number> = {
 };
 
 export const ROLE_LABEL: Record<Role, string> = {
-  owner: "所有者",
-  admin: "管理员",
-  editor: "编辑",
-  viewer: "只读",
+  owner: "Owner",
+  admin: "Admin",
+  editor: "Editor",
+  viewer: "Viewer",
 };
 
 export function isRole(value: unknown): value is Role {

@@ -1,13 +1,14 @@
-"""数据库抽象端口（Database）。
+"""Database abstract port (Database).
 
-定义持久化层的统一接口。业务代码只依赖本协议、不依赖具体驱动，
-从而可在 SQLite（M0 内置默认）与 PostgreSQL/pgvector（生产）之间无缝切换，
-无需改动任何业务代码。
+Defines the unified interface of the persistence layer. Business code depends only
+on this protocol, not on a specific driver, so the backend can switch seamlessly
+between SQLite (built-in default for M0) and PostgreSQL/pgvector (production)
+without changing any business code.
 
-约定：
-- 查询结果以 ``dict`` 表示一行（列名 → 值）。
-- 连接为惰性：首次使用前调用 ``connect()``，用毕调用 ``close()``；
-  实现必须保证 ``connect`` / ``close`` 幂等。
+Conventions:
+- A query result represents one row as a ``dict`` (column name -> value).
+- Connections are lazy: call ``connect()`` before first use and ``close()`` after;
+  implementations must keep ``connect`` / ``close`` idempotent.
 """
 
 from __future__ import annotations
@@ -17,32 +18,32 @@ from typing import Any, Mapping, Optional, Protocol, Sequence, runtime_checkable
 
 @runtime_checkable
 class Database(Protocol):
-    """通用关系数据库端口。"""
+    """Generic relational database port."""
 
     def connect(self) -> None:
-        """建立连接（幂等）。"""
+        """Open a connection (idempotent)."""
         ...
 
     def close(self) -> None:
-        """关闭连接并释放资源（幂等）。"""
+        """Close the connection and release resources (idempotent)."""
         ...
 
     def execute(self, sql: str, params: Sequence[Any] = ()) -> None:
-        """执行写语句（INSERT/UPDATE/DELETE/DDL）并提交事务。"""
+        """Execute a write statement (INSERT/UPDATE/DELETE/DDL) and commit the transaction."""
         ...
 
     def fetchone(
         self, sql: str, params: Sequence[Any] = ()
     ) -> Optional[Mapping[str, Any]]:
-        """查询单行，无结果返回 ``None``。"""
+        """Fetch a single row; return ``None`` when there is no result."""
         ...
 
     def fetchall(
         self, sql: str, params: Sequence[Any] = ()
     ) -> list[Mapping[str, Any]]:
-        """查询多行，返回行列表。"""
+        """Fetch multiple rows and return a list of rows."""
         ...
 
     def healthcheck(self) -> bool:
-        """探活：能否成功执行一次最小查询。"""
+        """Health check: whether a minimal query executes successfully."""
         ...

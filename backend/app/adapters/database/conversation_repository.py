@@ -1,13 +1,15 @@
-"""对话线仓库的数据库实现（基于 Database 端口）。
+"""Database implementation of the conversation-thread repository (based on the Database port).
 
-只依赖 :class:`app.ports.database.Database`，SQLite（M0 默认）与 PostgreSQL
-（生产）共用同一份实现，切换只改配置。
+Depends only on :class:`app.ports.database.Database`, so SQLite (M0 default) and
+PostgreSQL (production) share the same implementation; switching only changes config.
 
-存储约定：
-- ``threads.unit_id`` 上建部分唯一索引，保证一讲只有一条讲级线程（幂等建线）。
-- 消息只追加；``created_at`` 由 ``_next_timestamp`` 保证同线程内严格递增，
-  避免同一秒内的 user/assistant 消息排序抖动。
-- ``citations_json`` 以 JSON 文本落库，换库无需 JSONB 迁移。
+Storage conventions:
+- A partial unique index on ``threads.unit_id`` guarantees one chapter-level thread
+  per chapter (idempotent thread creation).
+- Messages are append-only; ``_next_timestamp`` keeps ``created_at`` strictly
+  increasing within a thread, so user/assistant messages from the same second do
+  not jitter in ordering.
+- ``citations_json`` is stored as JSON text, so switching databases needs no JSONB migration.
 """
 
 from __future__ import annotations

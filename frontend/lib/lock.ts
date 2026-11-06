@@ -64,8 +64,13 @@ export function lockHolderOf(error: unknown): {
   const lock = raw && typeof raw === "object" ? raw : null;
   const name =
     (lock?.user_name ?? "").trim() ||
-    error.message.replace(/^该讲正被\s*/, "").replace(/\s*编辑.*$/, "").trim() ||
-    "其他成员";
+    // The backend conflict message embeds the holder name; the Chinese wording is
+    // kept as escapes so this file stays ASCII-only. English wording is matched too.
+    error.message
+      .replace(/^(?:\u8be5\u8bb2\u6b63\u88ab|this unit is (?:currently )?being edited by)\s*/i, "")
+      .replace(/\s*(?:\u7f16\u8f91.*|editing.*)$/i, "")
+      .trim() ||
+    "another member";
   return { name, lock };
 }
 
@@ -153,7 +158,7 @@ export function createUnitLockController(options: {
       }
       onState({ status: "idle" });
       const message =
-        error instanceof Error ? error.message : "编辑锁获取失败";
+        error instanceof Error ? error.message : "Failed to acquire the edit lock";
       onError?.(message);
     }
   };

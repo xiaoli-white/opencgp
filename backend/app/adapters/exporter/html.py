@@ -124,13 +124,13 @@ def build_body(document: ExportDocument, include_citations: bool = True) -> str:
     blocks: list[str] = []
     cover_meta = []
     if document.author:
-        cover_meta.append(f"作者：{document.author}")
+        cover_meta.append(f"Author: {document.author}")
     if document.created_at:
         cover_meta.append(
-            "创建：" + time.strftime("%Y-%m-%d", time.localtime(document.created_at))
+            "Created: " + time.strftime("%Y-%m-%d", time.localtime(document.created_at))
         )
     if document.chapters:
-        cover_meta.append(f"章节数：{len(document.chapters)}")
+        cover_meta.append(f"Chapters: {len(document.chapters)}")
     cover = [f"<h1>{_esc(document.title)}</h1>"]
     if document.subtitle:
         cover.append(f'<p class="subtitle">{_esc(document.subtitle)}</p>')
@@ -146,10 +146,10 @@ def build_body(document: ExportDocument, include_citations: bool = True) -> str:
         )
 
     if document.chapters:
-        toc = ["<nav class=\"toc\"><h2>目录</h2><ol>"]
+        toc = ["<nav class=\"toc\"><h2>Contents</h2><ol>"]
         for index, chapter in enumerate(document.chapters, start=1):
             toc.append(
-                f'<li><a href="#ch-{index}">{_esc(chapter.title or f"第 {index} 章")}</a></li>'
+                f'<li><a href="#ch-{index}">{_esc(chapter.title or f"Chapter {index}")}</a></li>'
             )
         toc.append("</ol></nav>")
         blocks.append("".join(toc))
@@ -173,7 +173,7 @@ def build_body(document: ExportDocument, include_citations: bool = True) -> str:
                     f"<li><strong>[{marker}]</strong> {_esc(citation_label(citation))}</li>"
                 )
             blocks.append(
-                '<section class="appendix"><h2>参考来源</h2><ul>'
+                '<section class="appendix"><h2>References</h2><ul>'
                 + "".join(items)
                 + "</ul></section>"
             )

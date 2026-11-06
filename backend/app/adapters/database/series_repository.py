@@ -1,10 +1,11 @@
-"""课程文档仓库的数据库实现（基于 Database 端口）。
+"""Database implementation of the course document repository (based on the Database port).
 
-只依赖 :class:`app.ports.database.Database`，因此 SQLite（M0 默认）与
-PostgreSQL（生产）共用同一份实现，切换只改配置。
+Depends only on :class:`app.ports.database.Database`, so SQLite (M0 default) and
+PostgreSQL (production) share the same implementation; switching only changes config.
 
-存储约定：结构化字段以 JSON 文本落库（``learning_objectives`` /
-``prerequisites`` / ``citations_json``），换库时无需 JSONB 迁移。
+Storage conventions: structured fields are stored as JSON text
+(``learning_objectives`` / ``prerequisites`` / ``citations_json``), so switching
+databases needs no JSONB migration.
 """
 
 from __future__ import annotations

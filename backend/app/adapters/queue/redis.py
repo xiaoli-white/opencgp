@@ -93,17 +93,17 @@ class RedisJobQueue:
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                print(f"[queue] redis worker {index} 取任务失败: {exc!r}")
+                print(f"[queue] redis worker {index} failed to take a job: {exc!r}")
                 await asyncio.sleep(1)
                 continue
             claim_key = CLAIM_PREFIX + job_id
             try:
                 claimed = self.client().set(claim_key, str(time.time()), nx=True, ex=86400)
             except Exception as exc:
-                print(f"[queue] redis claim 失败 {job_id}: {exc!r}")
+                print(f"[queue] redis claim failed {job_id}: {exc!r}")
                 continue
             if not claimed:
-                print(f"[queue] 任务 {job_id} 已被其它实例领取，跳过")
+                print(f"[queue] job {job_id} was already claimed by another instance; skipping")
                 continue
             self._running += 1
             failed = False
@@ -115,7 +115,7 @@ class RedisJobQueue:
                 break
             except Exception as exc:
                 failed = True
-                print(f"[queue] redis worker {index} 任务 {job_id} 异常: {exc!r}")
+                print(f"[queue] redis worker {index} job {job_id} raised: {exc!r}")
             finally:
                 self._running = max(0, self._running - 1)
             try:
@@ -124,7 +124,7 @@ class RedisJobQueue:
                 else:
                     self._clear_claim(job_id)
             except Exception as exc:
-                print(f"[queue] 任务 {job_id} 收尾失败: {exc!r}")
+                print(f"[queue] failed to finalize job {job_id}: {exc!r}")
                 self._clear_claim(job_id)
 
     def _clear_claim(self, job_id: str) -> None:
@@ -133,7 +133,7 @@ class RedisJobQueue:
             client.delete(CLAIM_PREFIX + job_id)
             client.delete(ATTEMPT_PREFIX + job_id)
         except Exception as exc:
-            print(f"[queue] 清理任务 {job_id} 状态键失败: {exc!r}")
+            print(f"[queue] failed to clean up the status key for job {job_id}: {exc!r}")
 
     def _schedule_retry(self, job_id: str) -> None:
         client = self.client()
@@ -141,7 +141,7 @@ class RedisJobQueue:
         client.delete(CLAIM_PREFIX + job_id)
         if attempts >= self.max_attempts:
             client.delete(ATTEMPT_PREFIX + job_id)
-            print(f"[queue] 任务 {job_id} 已达最大尝试次数 {self.max_attempts}，置为终态失败")
+            print(f"[queue] job {job_id} reached the maximum of {self.max_attempts} attempts; marking as permanently failed")
             return
         delay = min(BACKOFF_BASE ** attempts, MAX_BACKOFF)
         client.zadd(self.delayed_key, {job_id: time.time() + delay})
@@ -149,8 +149,8 @@ class RedisJobQueue:
             try:
                 self._repository.update_status(job_id, QUEUED_STATUS, None, "")
             except Exception as exc:
-                print(f"[queue] 任务 {job_id} 重试前重置状态失败: {exc!r}")
-        print(f"[queue] 任务 {job_id} 第 {attempts} 次失败，{delay}s 后重试")
+                print(f"[queue] failed to reset the status of job {job_id} before retrying: {exc!r}")
+        print(f"[queue] job {job_id} failed on attempt {attempts}; retrying in {delay}s")
 
     def _promote_delayed(self) -> None:
         client = self.client()
@@ -158,7 +158,7 @@ class RedisJobQueue:
         for job_id in due or []:
             if client.zrem(self.delayed_key, job_id):
                 client.lpush(self.queue_key, job_id)
-                print(f"[queue] 延迟任务 {job_id} 到期，重新入队")
+                print(f"[queue] delayed job {job_id} is due; re-enqueued")
 
     def _sweep_stale(self) -> None:
         if self._repository is None:
@@ -177,7 +177,7 @@ class RedisJobQueue:
                 claimed_at = 0.0
             if claimed_at < LEGACY_CLAIM_FLOOR:
                 client.delete(name)
-                print(f"[queue] 清理任务 {job_id} 的历史 claim 键")
+                print(f"[queue] cleaning up the historical claim key for job {job_id}")
                 continue
             if now - claimed_at < self.stale_seconds:
                 continue
@@ -193,7 +193,7 @@ class RedisJobQueue:
             if status in (QUEUED_STATUS, RUNNING_STATUS):
                 client.delete(ATTEMPT_PREFIX + job_id)
                 client.lpush(self.queue_key, job_id)
-                print(f"[queue] 任务 {job_id} 疑似中断（{status}），重新入队")
+                print(f"[queue] job {job_id} looks interrupted ({status}); re-enqueued")
 
     async def aclose(self) -> None:
         self._closed = True
@@ -259,7 +259,7 @@ class RedisJobEventBus:
             body = json.dumps(payload, ensure_ascii=False)
             self.client().publish(self.channel(job_id), body)
         except Exception as exc:
-            print(f"[jobs] 事件发布失败 {job_id}: {exc!r}")
+            print(f"[jobs] failed to publish the event for {job_id}: {exc!r}")
 
     async def subscribe(self, job_id: str) -> AsyncIterator[dict[str, Any]]:
         loop = asyncio.get_event_loop()

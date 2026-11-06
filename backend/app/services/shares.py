@@ -39,7 +39,7 @@ class ShareService:
         expires_in_days: int = 7,
     ) -> dict[str, Any]:
         if resource_type not in RESOURCE_TYPES:
-            raise ValueError(f"不支持的分享类型: {resource_type}")
+            raise ValueError(f"unsupported share type: {resource_type}")
         token = secrets.token_urlsafe(24)
         days = int(expires_in_days or 0)
         link = self.repository.create(
@@ -65,18 +65,18 @@ class ShareService:
 
     def revoke(self, tenant_id: str, link_id: str) -> bool:
         if not self.repository.revoke(link_id, tenant_id):
-            raise ShareNotFoundError(f"分享链接不存在: {link_id}")
+            raise ShareNotFoundError(f"share link not found: {link_id}")
         return True
 
     def resolve_public(self, token: str, client_ip: str = "") -> dict[str, Any]:
         self._guard_rate(client_ip, token)
         link = self.repository.get_by_token(token)
         if link is None:
-            raise ShareNotFoundError("分享链接不存在")
+            raise ShareNotFoundError("share link not found")
         if link.revoked:
-            raise ShareRevokedError("分享链接已撤销")
+            raise ShareRevokedError("the share link has been revoked")
         if link.expires_at and link.expires_at < time.time():
-            raise ShareExpiredError("分享链接已过期")
+            raise ShareExpiredError("the share link has expired")
         payload = self._content(link)
         self.repository.count_views(token)
         payload["expires_at"] = link.expires_at
@@ -92,7 +92,7 @@ class ShareService:
         count += 1
         self._hits[key] = (window, count)
         if count > RATE_LIMIT_PER_MINUTE:
-            raise ShareRateLimitedError("访问过于频繁，请稍后再试")
+            raise ShareRateLimitedError("too many requests; please try again later")
         if len(self._hits) > 5000:
             self._hits = {key: (window, count)}
 
@@ -104,7 +104,7 @@ class ShareService:
     def _series_content(self, link: ShareLink) -> dict[str, Any]:
         series = self.series_repository.get_series(link.resource_id, link.tenant_id)
         if series is None:
-            raise ShareNotFoundError("分享的内容不存在")
+            raise ShareNotFoundError("the shared content does not exist")
         units = self.series_repository.list_units(series.id)
         chapters = [
             {"title": unit.title, "content": unit.content}
@@ -124,7 +124,7 @@ class ShareService:
     def _piece_content(self, link: ShareLink) -> dict[str, Any]:
         piece = self.piece_repository.get(link.resource_id)
         if piece is None or (piece.tenant_id and piece.tenant_id != link.tenant_id):
-            raise ShareNotFoundError("分享的内容不存在")
+            raise ShareNotFoundError("the shared content does not exist")
         chapters = [
             {"title": section.title, "content": section.content}
             for section in piece.outline

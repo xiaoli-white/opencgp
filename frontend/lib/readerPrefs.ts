@@ -73,7 +73,7 @@ export function applyReaderTheme(theme: ReaderTheme): void {
 }
 
 export const THEME_LABEL: Record<ReaderTheme, string> = {
-  system: "跟随系统",
-  light: "浅色",
-  dark: "深色",
+  system: "System",
+  light: "Light",
+  dark: "Dark",
 };

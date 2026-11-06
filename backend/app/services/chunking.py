@@ -52,7 +52,7 @@ def chunk_spans(
     text: str, max_chars: int = 800, overlap: int = 120
 ) -> list[Span]:
     if max_chars <= 0:
-        raise ValueError("max_chars 必须为正整数")
+        raise ValueError("max_chars must be a positive integer")
     overlap = max(0, min(overlap, max_chars // 2))
     paragraphs = paragraph_spans(text)
     if not paragraphs:

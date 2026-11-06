@@ -1,15 +1,19 @@
-"""课程文档持久化端口（SeriesRepository）。
+"""Course document persistence port (SeriesRepository).
 
-定义课程 / 讲 / 讲版本的仓库接口。业务代码（service、API）只依赖本协议，
-具体的 SQL 方言与驱动由 adapter 实现，容器按配置装配。
+Repository interface for courses / chapters / chapter versions. Business code
+(services, API) depends only on this protocol; the concrete SQL dialect and
+driver are implemented by the adapter and assembled by the container from config.
 
-约定：
-- 版本号从 1 开始单调递增，同一 ``unit_id`` 内唯一。
-- 每次内容变更（生成、回滚）都必须新增一条 ``UnitVersion``，不覆盖历史。
-- 回滚不删除历史，而是以目标版本内容追加一个新版本（类 git revert）。
-- 每个版本记录生成模式 ``mode``（``strict`` 严格引用 / ``loose`` 大模型自由写作 /
-  空串表示人工草稿），``units.last_mode`` 跟随最近一次生成模式。
-- 找不到实体时返回 ``None``，由上层决定错误语义。
+Conventions:
+- Version numbers start at 1 and increase monotonically, unique within one ``unit_id``.
+- Every content change (generation, rollback) must append a new ``UnitVersion``;
+  history is never overwritten.
+- Rollback does not delete history; it appends a new version with the target
+  version's content (similar to git revert).
+- Each version records the generation mode ``mode`` (``strict`` for strictly cited
+  content / ``loose`` for free-form LLM writing / empty string for a manual draft);
+  ``units.last_mode`` follows the most recent generation mode.
+- Return ``None`` when an entity is not found; the caller decides the error semantics.
 """
 
 from __future__ import annotations

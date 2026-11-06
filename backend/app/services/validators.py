@@ -26,10 +26,10 @@ CJK_RUN = re.compile(r"[\u4e00-\u9fa5]{2,4}")
 BOOK_TITLE = re.compile(r"《([^》]{1,24})》")
 SENTENCE_SPLIT = re.compile(r"[。！？；\n]")
 CONTINUITY_STOPWORDS = {
-    "一个", "我们", "你们", "他们", "自己", "这个", "那个", "什么", "因为", "所以",
-    "但是", "而且", "如果", "就是", "不是", "没有", "可以", "需要", "已经", "还是",
-    "知道", "觉得", "时候", "现在", "然后", "于是", "这样", "那样", "一样", "起来",
-    "出来", "下来", "过去", "回来", "东西", "事情", "地方", "问题", "样子", "心里",
+    "\u4e00\u4e2a", "\u6211\u4eec", "\u4f60\u4eec", "\u4ed6\u4eec", "\u81ea\u5df1", "\u8fd9\u4e2a", "\u90a3\u4e2a", "\u4ec0\u4e48", "\u56e0\u4e3a", "\u6240\u4ee5",
+    "\u4f46\u662f", "\u800c\u4e14", "\u5982\u679c", "\u5c31\u662f", "\u4e0d\u662f", "\u6ca1\u6709", "\u53ef\u4ee5", "\u9700\u8981", "\u5df2\u7ecf", "\u8fd8\u662f",
+    "\u77e5\u9053", "\u89c9\u5f97", "\u65f6\u5019", "\u73b0\u5728", "\u7136\u540e", "\u4e8e\u662f", "\u8fd9\u6837", "\u90a3\u6837", "\u4e00\u6837", "\u8d77\u6765",
+    "\u51fa\u6765", "\u4e0b\u6765", "\u8fc7\u53bb", "\u56de\u6765", "\u4e1c\u897f", "\u4e8b\u60c5", "\u5730\u65b9", "\u95ee\u9898", "\u6837\u5b50", "\u5fc3\u91cc",
 }
 
 
@@ -93,8 +93,8 @@ class CitationValidator:
                 ValidationIssue(
                     level=level,
                     message=(
-                        f"带证据标记的段落占比 {ratio:.0%}"
-                        f"（{cited}/{len(considered)}），低于建议阈值 {CITATION_WARN_RATIO:.0%}"
+                        f"Share of paragraphs with evidence markers: {ratio:.0%} "
+                        f"({cited}/{len(considered)}), below the recommended threshold of {CITATION_WARN_RATIO:.0%}"
                     ),
                     where="content",
                 )
@@ -121,8 +121,8 @@ class LengthValidator:
                 ValidationIssue(
                     level=LEVEL_WARNING,
                     message=(
-                        f"正文长度 {actual} 字，超出配置区间 {low}-{high} 字"
-                        f"（配置目标 {words} 字）"
+                        f"Body length is {actual} characters, outside the configured range of {low}-{high} characters "
+                        f"(configured target: {words} characters)"
                     ),
                     where="content",
                 )
@@ -151,7 +151,7 @@ class StructureValidator:
             issues.append(
                 ValidationIssue(
                     level=LEVEL_WARNING,
-                    message=f"二级标题数量 {count} 个，低于配置下限 {low} 个",
+                    message=f"Level-2 heading count is {count}, below the configured minimum of {low}",
                     where="content",
                 )
             )
@@ -203,7 +203,7 @@ class ContinuityValidator:
                 issues.append(
                     ValidationIssue(
                         level=LEVEL_WARNING,
-                        message="出现设定集中未登记的专名：" + "、".join(unknown[:6]),
+                        message="Proper names appear that are not registered in the setting book: " + ", ".join(unknown[:6]),
                         where="content",
                     )
                 )
@@ -220,7 +220,7 @@ class ContinuityValidator:
                 issues.append(
                     ValidationIssue(
                         level=LEVEL_WARNING,
-                        message="专名称谓疑似不一致：" + "、".join(conflicts[:6]),
+                        message="Inconsistent proper-name variants detected: " + ", ".join(conflicts[:6]),
                         where="content",
                     )
                 )
@@ -270,7 +270,7 @@ class ValidatorRunner:
                         issues=[
                             ValidationIssue(
                                 level=LEVEL_WARNING,
-                                message=f"未知校验器 {key}，已忽略",
+                                message=f"unknown validator {key}; ignored",
                                 where="validation.validators",
                             )
                         ],
@@ -288,7 +288,7 @@ class ValidatorRunner:
                         issues=[
                             ValidationIssue(
                                 level=LEVEL_ERROR,
-                                message=f"校验器执行失败：{str(exc)[:160]}",
+                                message=f"validator execution failed: {str(exc)[:160]}",
                                 where="validation",
                             )
                         ],

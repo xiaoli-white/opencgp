@@ -1,11 +1,13 @@
-"""SQLite 数据库实现（builtin，M0 默认）。
+"""SQLite database implementation (builtin, M0 default).
 
-实现 :class:`app.ports.database.Database` 端口，基于标准库 ``sqlite3``。
-生产环境可将配置 ``COURSE_STUDIO_DATABASE_BACKEND`` 切为 ``postgres``
-（配合 psycopg2/asyncpg 实现同一端口），业务代码零改动。
+Implements the :class:`app.ports.database.Database` port on top of the standard
+library ``sqlite3``. In production, set ``COURSE_STUDIO_DATABASE_BACKEND`` to
+``postgres`` (backed by psycopg2/asyncpg implementing the same port) with zero
+changes to business code.
 
-连接允许跨线程复用（``check_same_thread=False``）并用可重入锁串行化访问：
-同步端点跑在线程池、异步端点跑在事件循环线程，二者会共用同一实例。
+Connections may be reused across threads (``check_same_thread=False``) and access
+is serialized with a reentrant lock: synchronous endpoints run in the thread pool
+while asynchronous endpoints run on the event-loop thread, and both share the same instance.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from app.ports.database import Database
 
 
 class SQLiteDatabase(Database):
-    """基于 SQLite 文件的数据库实现。"""
+    """Database implementation backed by a SQLite file."""
 
     def __init__(self, path: str = "data/opencgp.db") -> None:
         self.path = Path(path)

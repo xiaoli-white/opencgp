@@ -1,1 +1,1 @@
-"""服务层：跨端口的业务编排（文档摄入、分块、检索、引用）。"""
+"""Service layer: business orchestration across ports (document ingestion, chunking, retrieval, citations)."""

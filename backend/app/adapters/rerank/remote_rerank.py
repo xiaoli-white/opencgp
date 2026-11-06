@@ -138,9 +138,9 @@ class RemoteRerank:
                     return _parse_response(data, len(documents), self.format)
             except (asyncio.TimeoutError, httpx.TransportError) as exc:
                 retryable = True
-                print(f"[rerank] {self.format} 请求失败（第 {attempt + 1} 次）: {exc!r}")
+                print(f"[rerank] {self.format} request failed (attempt {attempt + 1}): {exc!r}")
             except Exception as exc:
-                print(f"[rerank] {self.format} 响应解析失败: {exc!r}")
+                print(f"[rerank] failed to parse the {self.format} response: {exc!r}")
                 return None
             if not retryable or attempt >= attempts - 1:
                 return None

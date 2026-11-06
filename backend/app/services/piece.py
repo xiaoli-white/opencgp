@@ -33,19 +33,19 @@ from app.services.prompting import extra_requirement, prompt_values, unit_name
 from app.services.retrieval_providers import RetrievalContext
 
 DEFAULT_SECTIONS = (
-    ("introduction", "引子", "用一段场景或问题引出主题，说明读者为什么要读下去。"),
-    ("background", "背景", "交代主题的来龙去脉、现有做法与主要争议。"),
-    ("core-1", "核心展开（一）", "展开第一个关键论点，给出机制、步骤或判断标准。"),
-    ("core-2", "核心展开（二）", "展开第二个关键论点，补充案例与反例。"),
-    ("conclusion", "结论", "收敛全文，给出可执行的结论与下一步建议。"),
+    ("introduction", "Introduction", "Open with a scenario or question that introduces the topic and explains why the reader should keep reading."),
+    ("background", "Background", "Explain where the topic came from, current practice, and the main debates."),
+    ("core-1", "Core discussion (one)", "Develop the first key argument, giving the mechanism, steps, or criteria."),
+    ("core-2", "Core discussion (two)", "Develop the second key argument, adding cases and counterexamples."),
+    ("conclusion", "Conclusion", "Bring the piece together with actionable conclusions and next steps."),
 )
 
 NO_EVIDENCE_NOTICE = (
-    "资料不足：知识库中未检索到与本节相关的证据，暂不展开正文。"
-    "如需模型自由写作，请改用 loose 模式。"
+    "Insufficient material: no evidence related to this section was found in the knowledge base, so the body will not be developed yet. "
+    "If you want the model to write freely, switch to loose mode."
 )
 SECTION_CHAR_LIMIT = MAX_SECTION_WORDS * 3
-_CN_DIGITS = ("一", "二", "三", "四", "五", "六", "七", "八", "九", "十")
+_CN_DIGITS = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
 
 
 def _cn_number(value: int) -> str:
@@ -88,7 +88,7 @@ class PieceService:
     ) -> Piece:
         resolved_title = (title or "").strip()
         if not resolved_title:
-            raise ValueError("标题不能为空")
+            raise ValueError("title must not be empty")
         resolved_profile = profile or PieceProfile()
         resolved_words = max(200, min(int(target_words or 3000), 50000))
         provider = llm or self.llm
@@ -193,7 +193,7 @@ class PieceService:
         piece = self._require(piece_id)
         resolved_title = (title or "").strip()
         if not resolved_title:
-            raise ValueError("章节标题不能为空")
+            raise ValueError("section title must not be empty")
         sections = list(piece.outline)
         section = OutlineSection(
             id=self._new_section_id(sections),
@@ -250,7 +250,7 @@ class PieceService:
     def delete_section(self, piece_id: str, section_id: str) -> Piece:
         piece = self._require(piece_id)
         if len(piece.outline) <= 1:
-            raise ValueError("至少保留一个章节")
+            raise ValueError("keep at least one section")
         sections = [item for item in piece.outline if item.id != section_id]
         if len(sections) == len(piece.outline):
             raise PieceSectionNotFoundError(section_id)
@@ -442,7 +442,7 @@ class PieceService:
         provider = llm or self.llm
         body = piece.content.strip()
         if not body:
-            raise ValueError("正文为空，请先生成或填写正文后再重写")
+            raise ValueError("the body is empty; generate or fill in the body before rewriting")
         if getattr(provider, "is_placeholder", False):
             text = self._rewrite_placeholder(piece, instruction)
         else:
@@ -469,7 +469,7 @@ class PieceService:
         piece = self._require(piece_id)
         target = self.repository.get_version(piece_id, int(version))
         if target is None:
-            raise PieceNotFoundError(f"版本不存在: {version}")
+            raise PieceNotFoundError(f"version not found: {version}")
         applied = self.repository.append_version(
             piece_id,
             content=target.content,
@@ -526,7 +526,7 @@ class PieceService:
         bounds = list(spec.structure.sections_per_unit or [2, 5])
         low = max(1, min(int(bounds[0]), 20))
         high = max(low, min(int(bounds[1]) if len(bounds) > 1 else low, 20))
-        unit = unit_name(spec, "节")
+        unit = unit_name(spec, "Section")
         per = max(200, min(int(spec.unit.default_words or 1200), MAX_SECTION_WORDS))
         try:
             desired = int(round(max(1, target_words) / float(per)))
@@ -536,17 +536,17 @@ class PieceService:
         sections: list[OutlineSection] = []
         for index in range(count):
             if count == 1:
-                title = "正文"
-                summary = f"围绕主题直接展开本{unit}内容。"
+                title = "Body"
+                summary = f"Develop this {unit} directly around the topic."
             elif index == 0:
-                title = "引子"
-                summary = "用一段场景或问题引出主题，说明读者为什么要读下去。"
+                title = "Introduction"
+                summary = "Open with a scenario or question that introduces the topic and explains why the reader should keep reading."
             elif index == count - 1:
-                title = "结论"
-                summary = "收敛全文，给出可执行的结论与下一步建议。"
+                title = "Conclusion"
+                summary = "Bring the piece together with actionable conclusions and next steps."
             else:
-                title = f"核心展开（{_cn_number(index)}）"
-                summary = "展开一个关键论点，给出机制、步骤或判断标准。"
+                title = f"Core discussion ({_cn_number(index)})"
+                summary = "Develop one key argument, giving the mechanism, steps, or criteria."
             sections.append(
                 OutlineSection(
                     id=f"section-{index + 1}",
@@ -564,24 +564,24 @@ class PieceService:
         target_words: int,
         spec: ProfileSpec | None = None,
     ) -> str:
-        unit = unit_name(spec, profile.unit_name or "节")
+        unit = unit_name(spec, profile.unit_name or "Section")
         lines = [
-            "你是长文写作规划员，需要为一篇单页长篇生成章节大纲。",
-            f"- 标题：{title}",
-            f"- 体裁：{profile.genre}；语气：{profile.tone or '中性'}；读者：{profile.audience or '通用'}；人称：{profile.pov or '第三人称'}",
-            f"- 目标总字数：{target_words}",
+            "You are a long-form writing planner and need to produce a section outline for a single-page long-form piece.",
+            f"- Title: {title}",
+            f"- Genre: {profile.genre}; tone: {profile.tone or 'neutral'}; reader: {profile.audience or 'general'}; person: {profile.pov or 'third person'}",
+            f"- Target total word count: {target_words}",
         ]
         if spec is not None:
             bounds = list(spec.structure.sections_per_unit or [2, 6])
             lines.append(
-                f"- 章节数量：{bounds[0]}-{bounds[-1]} 个{unit}；每个{unit}约 "
-                f"{spec.unit.default_words} 字"
+                f"- Number of sections: {bounds[0]}-{bounds[-1]} {unit}s; each {unit} is about "
+                f"{spec.unit.default_words} words"
             )
         lines.extend(
             [
-                f"要求：4-7 个{unit}，首尾必须包含引子与结论。",
-                "只输出 JSON 数组，不要 Markdown 代码块与解释，元素结构：",
-                '{"id":"section-1","title":"章节标题","summary":"本章要点","target_words":600}',
+                f"Requirements: 4-7 {unit}s; the first and last must be an introduction and a conclusion.",
+                "Output only a JSON array, without Markdown code blocks or explanations; element structure:",
+                '{"id":"section-1","title":"Section title","summary":"Key points of this section","target_words":600}',
             ]
         )
         extra = extra_requirement(
@@ -672,7 +672,7 @@ class PieceService:
         lines = [
             f"## {section.title}",
             "",
-            section.summary or f"本节围绕「{piece.title}」展开。",
+            section.summary or f"This section develops \"{piece.title}\".",
             "",
         ]
         if evidence:
@@ -680,7 +680,7 @@ class PieceService:
                 snippet = (item.citation.snippet or item.citation.text or "").strip()
                 lines.append(f"- {snippet} [{item.marker}]")
         else:
-            lines.append("- 本段为占比位正文，待接入真实模型后由证据展开。")
+            lines.append("- This paragraph is placeholder body text; once a real model is wired in, it will be developed from the evidence.")
         return "\n".join(lines)
 
     def _strict_prompt(
@@ -690,26 +690,26 @@ class PieceService:
         evidence: Sequence[Evidence],
     ) -> str:
         lines = [
-            "你是严谨的长文作者，正在撰写一篇单页长篇中的某一节。",
-            f"- 长篇标题：{piece.title}",
-            f"- 本节标题：{section.title}",
-            f"- 本节要点：{section.summary}",
-            f"- 读者：{piece.profile.audience or '通用'}；语气：{piece.profile.tone or '中性'}",
-            f"- 字数上限：{min(MAX_SECTION_WORDS, section.target_words or MAX_SECTION_WORDS)} 字",
+            "You are a rigorous long-form writer working on one section of a single-page long-form piece.",
+            f"- Piece title: {piece.title}",
+            f"- Section title: {section.title}",
+            f"- Section key points: {section.summary}",
+            f"- Reader: {piece.profile.audience or 'general'}; tone: {piece.profile.tone or 'neutral'}",
+            f"- Word limit: {min(MAX_SECTION_WORDS, section.target_words or MAX_SECTION_WORDS)} words",
             "",
-            "硬约束：",
-            "1. 只能使用下面证据中明确陈述的内容，不得引入证据之外的事实与数据。",
-            "2. 每个自然段至少标注一个来源标记，格式 [E1]。",
-            "3. 证据不足时写明「资料不足：<缺口说明>」，不要编造。",
+            "Hard constraints:",
+            "1. Only use content explicitly stated in the evidence below; do not introduce facts or data beyond the evidence.",
+            "2. Every paragraph must carry at least one source marker in the form [E1].",
+            "3. When the evidence is insufficient, write \"Insufficient material: <gap description>\"; do not fabricate.",
             "",
-            "证据：",
+            "Evidence:",
         ]
         for item in evidence:
             snippet = (item.citation.snippet or item.citation.text or "")[
                 : self.evidence_char_limit
             ]
-            lines.append(f"[{item.marker}] {item.citation.source_name}：{snippet}")
-        lines.append("只输出本节正文 Markdown，不要输出解释。")
+            lines.append(f"[{item.marker}] {item.citation.source_name}: {snippet}")
+        lines.append("Output only this section's body Markdown; do not output explanations.")
         return "\n".join(lines)
 
     def _loose_prompt(
@@ -719,32 +719,32 @@ class PieceService:
         evidence: Sequence[Evidence],
     ) -> str:
         lines = [
-            "你是经验丰富的长文作者，正在撰写一篇单页长篇中的某一节。",
-            "本节使用自由写作模式：可基于自身知识展开，证据仅供参考，不强制逐段引用。",
-            f"- 长篇标题：{piece.title}",
-            f"- 本节标题：{section.title}",
-            f"- 本节要点：{section.summary}",
-            f"- 体裁：{piece.profile.genre}；读者：{piece.profile.audience or '通用'}；语气：{piece.profile.tone or '中性'}",
-            f"- 字数上限：{min(MAX_SECTION_WORDS, section.target_words or MAX_SECTION_WORDS)} 字",
+            "You are an experienced long-form writer working on one section of a single-page long-form piece.",
+            "This section uses free-writing mode: you may develop it from your own knowledge; evidence is for reference only and per-paragraph citations are not required.",
+            f"- Piece title: {piece.title}",
+            f"- Section title: {section.title}",
+            f"- Section key points: {section.summary}",
+            f"- Genre: {piece.profile.genre}; reader: {piece.profile.audience or 'general'}; tone: {piece.profile.tone or 'neutral'}",
+            f"- Word limit: {min(MAX_SECTION_WORDS, section.target_words or MAX_SECTION_WORDS)} words",
         ]
         if evidence:
             lines.append("")
-            lines.append("参考证据：")
+            lines.append("Reference evidence:")
             for item in evidence:
                 snippet = (item.citation.snippet or item.citation.text or "")[
                     : self.evidence_char_limit
                 ]
-                lines.append(f"[{item.marker}] {item.citation.source_name}：{snippet}")
-        lines.append("只输出本节正文 Markdown，不要输出解释。")
+                lines.append(f"[{item.marker}] {item.citation.source_name}: {snippet}")
+        lines.append("Output only this section's body Markdown; do not output explanations.")
         return "\n".join(lines)
 
     def _rewrite_prompt(
         self, piece: Piece, instruction: str, spec: ProfileSpec | None = None
     ) -> str:
         lines = [
-            "你是资深编辑，请按要求重写下面这篇单页长篇，保留原有事实与结构，输出完整正文。",
-            f"- 标题：{piece.title}",
-            f"- 改写要求：{instruction}",
+            "You are a senior editor. Rewrite the single-page long-form piece below as instructed, preserving the existing facts and structure, and output the complete body.",
+            f"- Title: {piece.title}",
+            f"- Rewrite requirements: {instruction}",
         ]
         extra = extra_requirement(
             spec,
@@ -760,14 +760,14 @@ class PieceService:
         )
         if extra:
             lines.extend(["", extra])
-        lines.extend(["", "原文：", piece.content.strip()])
+        lines.extend(["", "Original text:", piece.content.strip()])
         return "\n".join(lines)
 
     @staticmethod
     def _rewrite_placeholder(piece: Piece, instruction: str) -> str:
         return "\n".join(
             [
-                f"> 占位重写（{instruction}）：未配置 LLM key，以下为原文摘要",
+                f"> Placeholder rewrite ({instruction}): no LLM key configured; below is a summary of the original text",
                 "",
                 piece.content.strip()[:SECTION_CHAR_LIMIT],
             ]

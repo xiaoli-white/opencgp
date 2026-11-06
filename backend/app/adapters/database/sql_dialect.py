@@ -125,8 +125,8 @@ def translate(
             primary_key = [str(col) for col in pk_lookup(table)]
         if not primary_key:
             raise DialectTranslationError(
-                "无法翻译 INSERT OR REPLACE（表 "
-                f"{table} 未找到主键）: {sql.strip()[:400]}"
+                "Cannot translate INSERT OR REPLACE (no primary key found for table "
+                f"{table}): {sql.strip()[:400]}"
             )
         updates = [
             f"{column} = excluded.{column}"

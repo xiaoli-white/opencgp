@@ -10,9 +10,9 @@ from app.ports.llm import LLMProvider
 
 
 _SYSTEM = (
-    "你是一个检索结果重排器。根据用户问题，为每条候选文档的相关性打分。"
-    "分数范围 0 到 10，可保留一位小数，越相关分越高。"
-    '只输出严格 JSON，格式为 {"scores":[{"i":1,"s":8.5}]}，不要输出解释或代码块。'
+    "You are a retrieval-result reranker. Given the user's question, score the relevance of each candidate document. "
+    "Scores range from 0 to 10, may keep one decimal place, and higher means more relevant. "
+    'Output only strict JSON in the form {"scores":[{"i":1,"s":8.5}]}; do not output explanations or code blocks.'
 )
 
 _PAIR_A = re.compile(r'"i"\s*:\s*(\d+)\s*,\s*"s"\s*:\s*(-?\d+(?:\.\d+)?)')
@@ -53,9 +53,9 @@ class LLMReranker:
             body = text.strip().replace("\n", " ")[: self.max_doc_chars]
             lines.append(f"[{position}] {body}")
         prompt = (
-            f"{_SYSTEM}\n\n问题：{query}\n\n候选文档：\n"
+            f"{_SYSTEM}\n\nQuestion: {query}\n\nCandidate documents:\n"
             + "\n".join(lines)
-            + f'\n\n请只输出 {{"scores":[{{"i":1,"s":0.0}}]}} 形式的 JSON，覆盖 1 到 {len(items)}。'
+            + f'\n\nOutput only JSON of the form {{"scores":[{{"i":1,"s":0.0}}]}}, covering 1 through {len(items)}.'
         )
         max_tokens = 12 * len(items) + 64
         try:
@@ -64,7 +64,7 @@ class LLMReranker:
                 timeout=self.timeout,
             )
         except Exception as exc:
-            print(f"[rerank] llm 打分失败，跳过重排: {exc!r}")
+            print(f"[rerank] llm scoring failed, skipping rerank: {exc!r}")
             return None
         return _parse_scores(raw, len(items))
 

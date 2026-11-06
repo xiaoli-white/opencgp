@@ -73,7 +73,7 @@ class MetricsRegistry:
             }
             execs = dict(self._exec)
         lines: list[str] = []
-        lines.append("# HELP opencgp_http_requests_total 按方法与路由统计的请求数")
+        lines.append("# HELP opencgp_http_requests_total Number of requests by method and route")
         lines.append("# TYPE opencgp_http_requests_total counter")
         for (method, route, status), total in sorted(requests.items()):
             lines.append(
@@ -81,7 +81,7 @@ class MetricsRegistry:
                 + _labels(method=method, route=route, status=status)
                 + f" {total}"
             )
-        lines.append("# HELP opencgp_http_request_duration_seconds 请求耗时直方图")
+        lines.append("# HELP opencgp_http_request_duration_seconds Request duration histogram")
         lines.append("# TYPE opencgp_http_request_duration_seconds histogram")
         for route, entry in sorted(durations.items()):
             cumulative = 0
@@ -107,7 +107,7 @@ class MetricsRegistry:
                 + _labels(route=route)
                 + f" {entry['count']}"
             )
-        lines.append("# HELP opencgp_jobs_total 按类型与状态统计的任务数")
+        lines.append("# HELP opencgp_jobs_total Number of jobs by kind and status")
         lines.append("# TYPE opencgp_jobs_total gauge")
         for item in snapshot.get("jobs_total") or []:
             lines.append(
@@ -115,13 +115,13 @@ class MetricsRegistry:
                 + _labels(kind=item.get("kind", ""), status=item.get("status", ""))
                 + f" {int(item.get('count') or 0)}"
             )
-        lines.append("# HELP opencgp_jobs_active 排队与运行中的任务数")
+        lines.append("# HELP opencgp_jobs_active Number of queued and running jobs")
         lines.append("# TYPE opencgp_jobs_active gauge")
         lines.append(f"opencgp_jobs_active {int(snapshot.get('jobs_active') or 0)}")
-        lines.append("# HELP opencgp_queue_backlog 队列积压长度")
+        lines.append("# HELP opencgp_queue_backlog Queue backlog length")
         lines.append("# TYPE opencgp_queue_backlog gauge")
         lines.append(f"opencgp_queue_backlog {int(snapshot.get('queue_backlog') or 0)}")
-        lines.append("# HELP opencgp_adapter_up adapter 探活结果")
+        lines.append("# HELP opencgp_adapter_up Adapter health check result")
         lines.append("# TYPE opencgp_adapter_up gauge")
         for item in snapshot.get("adapter_up") or []:
             lines.append(
@@ -129,7 +129,7 @@ class MetricsRegistry:
                 + _labels(name=item.get("name", ""))
                 + f" {1 if item.get('up') else 0}"
             )
-        lines.append("# HELP opencgp_quota_usage 当前租户本月用量")
+        lines.append("# HELP opencgp_quota_usage Current tenant usage for this month")
         lines.append("# TYPE opencgp_quota_usage gauge")
         for item in snapshot.get("quota_usage") or []:
             lines.append(
@@ -137,7 +137,7 @@ class MetricsRegistry:
                 + _labels(kind=item.get("kind", ""))
                 + f" {int(item.get('value') or 0)}"
             )
-        lines.append("# HELP opencgp_exec_runs_total 代码执行次数")
+        lines.append("# HELP opencgp_exec_runs_total Number of code executions")
         lines.append("# TYPE opencgp_exec_runs_total counter")
         for (backend, result), total in sorted(execs.items()):
             lines.append(
@@ -146,7 +146,7 @@ class MetricsRegistry:
                 + f" {total}"
             )
         info = snapshot.get("info") or {}
-        lines.append("# HELP opencgp_info 应用信息")
+        lines.append("# HELP opencgp_info Application information")
         lines.append("# TYPE opencgp_info gauge")
         lines.append(
             "opencgp_info"

@@ -9,7 +9,7 @@ from typing import Sequence
 from app.models.citation import Citation
 from app.models.export import ExportChapter
 
-CJK_SAMPLE = "向量检索课程内容学习目标参考来源章节"
+CJK_SAMPLE = "\u5411\u91cf\u68c0\u7d22\u8bfe\u7a0b\u5185\u5bb9\u5b66\u4e60\u76ee\u6807\u53c2\u8003\u6765\u6e90\u7ae0\u8282"
 MIN_CJK_FONT_BYTES = 1_000_000
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 ASSET_ROOT = Path(__file__).resolve().parents[5]
@@ -144,8 +144,8 @@ def marker_map(citations: Sequence[Citation]) -> dict[tuple[str, str], str]:
 
 
 def citation_label(citation: Citation) -> str:
-    name = citation.source_name or citation.source_id or "未知来源"
-    return f"{name} · 片段#{citation.chunk_index + 1}"
+    name = citation.source_name or citation.source_id or "Unknown source"
+    return f"{name} · chunk #{citation.chunk_index + 1}"
 
 
 def format_appendix(citations: Sequence[Citation]) -> list[str]:

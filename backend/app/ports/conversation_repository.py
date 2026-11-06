@@ -1,13 +1,16 @@
-"""对话线持久化端口（ConversationRepository）。
+"""Conversation-thread persistence port (ConversationRepository).
 
-课程 / 讲级对话线（thread）与消息（message）的仓库接口。业务代码只依赖本协议，
-SQL 方言与驱动由 adapter 实现。
+Repository interface for course / chapter-level conversation threads and messages.
+Business code depends only on this protocol; the SQL dialect and driver are
+implemented by the adapter.
 
-约定：
-- 一讲对应一条讲级线程：``get_or_create_unit_thread`` 幂等，重复调用返回同一条。
-- 消息只追加不修改，保证对话线可回放、可审计。
-- 消息按 ``created_at`` 升序返回，同一线程内时间戳单调递增。
-- 找不到实体时返回 ``None``，由上层决定错误语义。
+Conventions:
+- One chapter maps to one chapter-level thread: ``get_or_create_unit_thread`` is
+  idempotent and repeated calls return the same thread.
+- Messages are append-only, so threads stay replayable and auditable.
+- Messages are returned in ascending ``created_at`` order; timestamps increase
+  monotonically within a thread.
+- Return ``None`` when an entity is not found; the caller decides the error semantics.
 """
 
 from __future__ import annotations

@@ -17,9 +17,9 @@ from app.ports.piece_repository import PieceRepository
 from app.services.errors import ExportSourceNotFoundError
 
 DIFFICULTY_LABELS: dict[str, str] = {
-    "beginner": "入门",
-    "intermediate": "进阶",
-    "advanced": "高级",
+    "beginner": "Beginner",
+    "intermediate": "Intermediate",
+    "advanced": "Advanced",
 }
 DEFAULT_AUTHOR = "OpenCGP"
 
@@ -46,7 +46,7 @@ class ExportService:
             return self._build_series(source_id, tenant_id, include_citations)
         if source_type == SOURCE_PIECE:
             return self._build_piece(source_id, tenant_id, include_citations)
-        raise ExportSourceNotFoundError(f"不支持的导出来源类型: {source_type}")
+        raise ExportSourceNotFoundError(f"unsupported export source type: {source_type}")
 
     def _build_series(
         self,
@@ -56,7 +56,7 @@ class ExportService:
     ) -> ExportDocument:
         series = self.series_repository.get_series(series_id, tenant_id)
         if series is None:
-            raise ExportSourceNotFoundError(f"课程不存在: {series_id}")
+            raise ExportSourceNotFoundError(f"course not found: {series_id}")
         units = [
             item
             for item in self.series_repository.list_units(series_id)
@@ -105,7 +105,7 @@ class ExportService:
     ) -> ExportDocument:
         piece = self.piece_repository.get(piece_id, tenant_id)
         if piece is None:
-            raise ExportSourceNotFoundError(f"长篇不存在: {piece_id}")
+            raise ExportSourceNotFoundError(f"long-form piece not found: {piece_id}")
         chapters: list[ExportChapter] = []
         for section in piece.outline:
             body = (section.content or "").strip()
@@ -155,17 +155,17 @@ class ExportService:
     @staticmethod
     def _series_front_matter(series: Series, units: Sequence[Unit]) -> str:
         rows = [
-            f"- 标题：{series.title}",
-            f"- 副标题：{series.subtitle or '（未填写）'}",
-            f"- 受众：{series.audience or '（未填写）'}",
-            f"- 难度：{DIFFICULTY_LABELS.get(series.difficulty, series.difficulty)}",
-            f"- 语言：{series.language}",
-            f"- 正文讲数：{len(units)}",
-            f"- 更新日期：{_date_of(series.updated_at)}",
+            f"- Title: {series.title}",
+            f"- Subtitle: {series.subtitle or '(not provided)'}",
+            f"- Audience: {series.audience or '(not provided)'}",
+            f"- Difficulty: {DIFFICULTY_LABELS.get(series.difficulty, series.difficulty)}",
+            f"- Language: {series.language}",
+            f"- Body chapters: {len(units)}",
+            f"- Updated: {_date_of(series.updated_at)}",
         ]
         if units:
             rows.append("")
-            rows.append("讲次目录：")
+            rows.append("Chapter list:")
             for index, unit in enumerate(units, start=1):
                 rows.append(f"{index}. {unit.title}")
         return "\n".join(rows)
@@ -173,17 +173,17 @@ class ExportService:
     @staticmethod
     def _piece_front_matter(piece: Piece) -> str:
         rows = [
-            f"- 体裁：{piece.profile.genre}",
-            f"- 语气：{piece.profile.tone or '（未填写）'}",
-            f"- 受众：{piece.profile.audience or '（未填写）'}",
-            f"- 目标字数：{piece.target_words}",
-            f"- 实际字数：{len((piece.content or '').strip())}",
-            f"- 章节数：{len(piece.outline)}",
-            f"- 更新日期：{_date_of(piece.updated_at)}",
+            f"- Genre: {piece.profile.genre}",
+            f"- Tone: {piece.profile.tone or '(not provided)'}",
+            f"- Audience: {piece.profile.audience or '(not provided)'}",
+            f"- Target word count: {piece.target_words}",
+            f"- Actual word count: {len((piece.content or '').strip())}",
+            f"- Sections: {len(piece.outline)}",
+            f"- Updated: {_date_of(piece.updated_at)}",
         ]
         if piece.outline:
             rows.append("")
-            rows.append("章节目录：")
+            rows.append("Section list:")
             for index, section in enumerate(piece.outline, start=1):
                 rows.append(f"{index}. {section.title}")
         return "\n".join(rows)
@@ -203,5 +203,5 @@ class ExportService:
 
 def _date_of(timestamp: float) -> str:
     if not timestamp:
-        return "未知"
+        return "Unknown"
     return time.strftime("%Y-%m-%d", time.localtime(timestamp))

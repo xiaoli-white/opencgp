@@ -2,7 +2,7 @@
   "name": "opencgp-frontend",
   "version": "0.1.0",
   "private": true,
-  "description": "OpenCGP · 前端（Vite + React Router）",
+  "description": "OpenCGP · frontend (Vite + React Router)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

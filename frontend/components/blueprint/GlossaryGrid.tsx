@@ -88,7 +88,7 @@ export default function GlossaryGrid({
       <div className="space-y-2.5">
         {drafts.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-slate-300/70 px-4 py-6 text-center text-[11.5px] text-slate-500 dark:border-white/15 dark:text-slate-400">
-            术语表为空，点下方「新增术语」补一条。
+            The glossary is empty. Use “Add term” below to create one.
           </p>
         ) : null}
         {drafts.map((draft, index) => (
@@ -103,7 +103,7 @@ export default function GlossaryGrid({
                   onChange={(event) =>
                     patchDraft(index, { term: event.target.value })
                   }
-                  placeholder="术语，如：HNSW"
+                  placeholder="Term, e.g. HNSW"
                   className="input text-[13px]"
                 />
                 <textarea
@@ -111,7 +111,7 @@ export default function GlossaryGrid({
                   onChange={(event) =>
                     patchDraft(index, { definition: event.target.value })
                   }
-                  placeholder="一句话定义"
+                  placeholder="One-line definition"
                   rows={2}
                   className="input resize-none text-[12.5px] leading-relaxed"
                 />
@@ -120,7 +120,7 @@ export default function GlossaryGrid({
                   onChange={(event) =>
                     patchDraft(index, { aliases: event.target.value })
                   }
-                  placeholder="别名，用顿号或逗号分隔"
+                  placeholder="Aliases, separated by commas"
                   className="input text-[12px]"
                 />
               </div>
@@ -130,7 +130,7 @@ export default function GlossaryGrid({
                   setDrafts((prev) => prev.filter((_, pos) => pos !== index))
                 }
                 className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-500"
-                aria-label="删除术语"
+                aria-label="Delete term"
               >
                 <Trash2 size={13} />
               </button>
@@ -150,12 +150,12 @@ export default function GlossaryGrid({
             className="btn btn-ghost"
           >
             <Plus size={13} />
-            新增术语
+            Add term
           </button>
           <div className="flex items-center gap-1.5">
             <button type="button" onClick={onCancel} className="btn-quiet">
               <X size={12} />
-              取消
+              Cancel
             </button>
             <button
               type="button"
@@ -168,7 +168,7 @@ export default function GlossaryGrid({
               ) : (
                 <Check size={13} />
               )}
-              保存术语表
+              Save glossary
             </button>
           </div>
         </div>
@@ -186,7 +186,7 @@ export default function GlossaryGrid({
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索术语、定义或别名"
+          placeholder="Search terms, definitions, or aliases"
           className="input pl-8 text-[12.5px]"
         />
       </div>
@@ -199,8 +199,8 @@ export default function GlossaryGrid({
           />
           <p className="mt-2 text-[11.5px] text-slate-500 dark:text-slate-400">
             {glossary.length === 0
-              ? "还没有术语，生成蓝图或手动补充。"
-              : "没有匹配的术语。"}
+              ? "No terms yet. Generate a blueprint or add terms manually."
+              : "No matching terms."}
           </p>
         </div>
       ) : (
@@ -235,7 +235,7 @@ export default function GlossaryGrid({
               ) : null}
               {term.node_ids.length > 0 ? (
                 <p className="mt-2 text-[10px] text-slate-400 dark:text-slate-500">
-                  关联 {term.node_ids.length} 个节点
+                  Linked to {term.node_ids.length} nodes
                 </p>
               ) : null}
             </motion.div>

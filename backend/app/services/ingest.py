@@ -50,18 +50,18 @@ class IngestService:
         embedding_provider_id: str = "",
     ) -> IngestResult:
         if not data:
-            raise ValueError("上传文件为空")
+            raise ValueError("the uploaded file is empty")
         limit = self.max_file_mb * 1024 * 1024
         if len(data) > limit:
-            raise ValueError(f"文件超过 {self.max_file_mb}MB 上限")
+            raise ValueError(f"the file exceeds the {self.max_file_mb}MB limit")
         if not self.parser.supports(filename):
-            raise ValueError(f"不支持的文档类型: {Path(filename).suffix or filename!r}")
+            raise ValueError(f"unsupported document type: {Path(filename).suffix or filename!r}")
         try:
             parsed = self.parser.parse(data, filename)
         except ValueError:
             raise
         except Exception as exc:
-            raise ValueError(f"文件解析失败: {exc}") from exc
+            raise ValueError(f"failed to parse the file: {exc}") from exc
         digest = hashlib.sha256(data).hexdigest()
         merged_meta = {"filename": filename, "sha256": digest, **parsed.meta, **(meta or {})}
         resolved_id = source_id or _source_id(digest)
@@ -90,11 +90,11 @@ class IngestService:
     ) -> IngestResult:
         normalized = normalize_text(text)
         if not normalized:
-            raise ValueError("文档解析后无有效文本")
+            raise ValueError("the document produced no usable text after parsing")
         resolved_id = source_id or _source_id(hashlib.sha256(normalized.encode()).hexdigest())
         chunks = self._build_chunks(normalized, resolved_id, source_name, meta or {})
         if not chunks:
-            raise ValueError("文档分块结果为空")
+            raise ValueError("document chunking produced no chunks")
         await self.vectorstore.add_chunks(resolved_id, chunks, tenant_id=tenant_id)
         await self._embed_chunks(
             resolved_id,
@@ -132,11 +132,11 @@ class IngestService:
         try:
             vectors = await active.embed([chunk.text for chunk in chunks])
         except Exception as exc:
-            print(f"[ingest] 向量化失败，跳过 embedding: {exc!r}")
+            print(f"[ingest] embedding failed; skipping embedding: {exc!r}")
             return
         if len(vectors) != len(chunks):
             print(
-                f"[ingest] 向量数量不匹配，跳过 embedding: {len(vectors)} != {len(chunks)}"
+                f"[ingest] vector count mismatch; skipping embedding: {len(vectors)} != {len(chunks)}"
             )
             return
         active_provider = provider_id or str(
@@ -157,7 +157,7 @@ class IngestService:
         try:
             await self.vectorstore.upsert_embeddings(rows)
         except Exception as exc:
-            print(f"[ingest] embedding 写入失败，已跳过: {exc!r}")
+            print(f"[ingest] writing embeddings failed; skipped: {exc!r}")
 
     def _store_raw(
         self, data: bytes, filename: str, source_id: str, tenant_id: str
@@ -171,7 +171,7 @@ class IngestService:
             self.storage.put(key, data, content_type="application/octet-stream")
         except Exception as exc:
             self.last_object_error = repr(exc)
-            print(f"[ingest] 原始文件写入对象存储失败: {exc!r}")
+            print(f"[ingest] failed to write the original file to object storage: {exc!r}")
             return ""
         self.last_object_key = key
         return key

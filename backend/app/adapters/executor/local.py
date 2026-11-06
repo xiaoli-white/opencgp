@@ -46,14 +46,14 @@ class LocalExecutor:
         if language == "node":
             binary = shutil.which("node")
             if not binary:
-                raise ExecLanguageError("本机未安装 node 运行时")
+                raise ExecLanguageError("the node runtime is not installed on this host")
             return [binary, "-"]
         if language == "bash":
             binary = shutil.which("bash")
             if not binary:
-                raise ExecLanguageError("本机未安装 bash 运行时")
+                raise ExecLanguageError("the bash runtime is not installed on this host")
             return [binary, "-s"]
-        raise ExecLanguageError(f"不支持的代码语言: {language!r}")
+        raise ExecLanguageError(f"unsupported code language: {language!r}")
 
     def images_for(self, language: str) -> list[str]:
         return ["system-runtime"]
@@ -66,7 +66,7 @@ class LocalExecutor:
     ) -> ExecResult:
         resolved = (language or "").strip().lower()
         if resolved not in LANGUAGES:
-            raise ExecLanguageError(f"不支持的代码语言: {language!r}")
+            raise ExecLanguageError(f"unsupported code language: {language!r}")
         command = self._command(resolved)
         limit = int(timeout or self.default_timeout)
         workdir = tempfile.mkdtemp(prefix="opencgp-exec-")
@@ -105,14 +105,14 @@ class LocalExecutor:
         except Exception as exc:  # noqa: BLE001
             shutil.rmtree(workdir, ignore_errors=True)
             self.last_error = str(exc)
-            raise ExecUnavailableError(f"代码执行失败: {exc}") from exc
+            raise ExecUnavailableError(f"code execution failed: {exc}") from exc
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
         duration_ms = int((time.monotonic() - started) * 1000)
         stdout, out_truncated = _decode(out or b"", self.max_bytes)
         stderr, err_truncated = _decode(err or b"", self.max_bytes)
         if timed_out:
-            stderr = (stderr + f"\n执行超时（{limit}s），已终止进程").strip()
+            stderr = (stderr + f"\nTimed out after {limit}s; the process was terminated").strip()
         return ExecResult(
             language=resolved,
             backend=self.name,

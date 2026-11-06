@@ -54,7 +54,7 @@ class BuiltinExporter(Exporter):
         renderer = _RENDERERS.get(key)
         if renderer is None:
             raise ExportFormatError(
-                f"不支持的导出格式: {fmt}（支持 {', '.join(EXPORT_FORMATS)}）"
+                f"unsupported export format: {fmt} (supported: {', '.join(EXPORT_FORMATS)})"
             )
         return renderer(
             document,

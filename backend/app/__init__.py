@@ -1,12 +1,11 @@
-"""OpenCGP · 后端应用包。
+"""OpenCGP · backend application package.
 
-遵循 Ports & Adapters 架构：
+Follows the Ports & Adapters architecture:
 
-- ``ports/``      定义抽象接口（Python Protocol），业务代码只依赖接口。
-- ``adapters/``   提供具体实现（builtin 默认单机实现 + external 生产实现）。
-- ``container.py`` 极简依赖注入装配，按配置选择 adapter。
+- ``ports/``      abstract interfaces (Python Protocol); business code depends on them only.
+- ``adapters/``   concrete implementations (builtin single-node defaults plus external ones).
+- ``container.py`` minimal dependency injection that picks adapters from the settings.
 
-约定：所有基础设施与业务能力皆可插拔，切换 adapter 只改配置、不改业务代码。
+Rule: every infrastructure and capability stays pluggable; switching an adapter is a
+configuration change, never a change to business code.
 """
-
-__version__ = "0.1.0"

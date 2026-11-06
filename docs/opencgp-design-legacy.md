@@ -1,355 +1,358 @@
-# OpenCGP · 早期系统设计方案（归档）
+# OpenCGP · Early System Design (Archived)
 
-> 版本：v1.0
-> 日期：2026-11-02
-> 状态：需求已确认，待细化实现（下一步：M0 最小实现方案）
-
----
-
-## 0. 文档说明
-
-本文档记录「AI 系列工作室」项目的完整系统设计，是后续开发、模块拆分、数据库建模、部署规划的唯一事实来源（Single Source of Truth）。所有已确认的决策见「第 9 章 决策记录」。
+> Version: v1.0
+> Date: 2026-11-02
+> Status: Requirements confirmed, implementation details pending (next step: M0 minimal implementation plan)
 
 ---
 
-## 1. 项目概述
+## 0. About this document
 
-### 1.1 定位
+This document records the complete system design of the "AI Series Studio" project and is the single source of truth for development, module breakdown, database modeling, and deployment planning. All confirmed decisions are listed in Chapter 9, Decision Log.
 
-> 一句话：**一个以对话为中心、以系列为活文档的独立 Web 工作台——AI 当作者兼助教，人在关键处拍板，产出成体系的图文知识系列。**
+---
 
-三个根本气质：
+## 1. Project overview
 
-| 维度 | 传统生成器（如 vibe-blog） | 本项目 |
+### 1.1 Positioning
+
+> In one sentence: **an independent web workbench that is conversation-centric and treats the series as a living document — the AI acts as author and teaching assistant, the human makes the calls at key moments, and the output is a coherent illustrated knowledge series.**
+
+Three defining traits:
+
+| Dimension | Conventional generator (e.g. vibe-blog) | This project |
 |---|---|---|
-| 工作方式 | 一次性流水线 | **持续对话 + 可反复修改的活文档** |
-| 人的角色 | 只点"确认" | **AI 会主动提问，人随时追问/叫停/改** |
-| 产出 | 一篇文章 | **一门有骨架、有脉络、可生长的系列** |
+| Way of working | One-shot pipeline | **Continuous conversation + a living document that can be revised repeatedly** |
+| Role of the human | Just clicks "confirm" | **The AI asks questions proactively; the human can follow up, pause, or amend at any time** |
+| Output | One article | **A series with structure, narrative flow, and room to grow** |
 
-### 1.2 与 vibe-blog 的本质区别（差异化）
+### 1.2 How it fundamentally differs from vibe-blog
 
-本项目**不是 vibe-blog 的复刻**。最硬的差异化证据是它独有的能力：
+This project **is not a clone of vibe-blog**. The clearest evidence of differentiation is its unique capabilities:
 
-1. **追问与修改（Ask & Amend）**：生成后可对任意讲/段/图/代码持续追问、局部修改、沉淀，可 diff 可回滚——vibe-blog 完全没有。
-2. **会提问的作者**：AI 在关键分叉点主动停下来问用户，而非一路闷头生成。
-3. **活文档而非任务产物**：系列、术语表、学习路径、对话线都是一等公民、可显式编辑，而非流水线中间态。
+1. **Ask & Amend**: after generation you can keep asking about any unit/passage/figure/code block, patch it locally, and fold the result back in — with diff and rollback. vibe-blog has none of this.
+2. **An author that asks questions**: the AI stops at key forks and asks the user instead of generating blindly from start to finish.
+3. **A living document rather than a task artifact**: series, glossary, learning path, and conversation threads are first-class objects that can be edited explicitly, not intermediate states of a pipeline.
 
-### 1.3 核心价值主张
+### 1.3 Core value proposition
 
-- 让"成体系的知识系列"从"需要专业作者 + 数月"变成"一段对话 + 持续打磨"。
-- 用户既是系列的使用者，也是系列的共同创作者与审核者。
+- Turn "a coherent knowledge series" from "requires a professional author + months" into "a conversation + continuous refinement".
+- The user is both a consumer of the series and a co-creator and reviewer of it.
 
 ---
 
-## 2. 产品形态
+## 2. Product shape
 
-### 2.1 双模式：SaaS 工作室 / 自用私有化
+### 2.1 Two modes: SaaS studio / self-hosted private instance
 
-| 模式 | 说明 | 部署形态 |
+| Mode | Description | Deployment shape |
 |---|---|---|
-| SaaS 工作室 | 多租户平台，每个组织 = 一个工作室 | 单套分布式集群，多租户隔离 |
-| 自用 / 私有化 | 单租户、单机甚至本地 | Docker Compose 一键起 |
+| SaaS studio | Multi-tenant platform, each organization = one studio | One distributed cluster with tenant isolation |
+| Self-use / private | Single tenant, single machine or even local | One-command Docker Compose |
 
-同一套代码，靠配置切换（多租户 vs 单租户模式）。自托管必须足够轻，不能为了分布式把单机部署搞复杂。
+One codebase, switched by configuration (multi-tenant vs single-tenant mode). Self-hosting must stay lightweight; distributed deployment must not make the single-machine setup complicated.
 
-### 2.2 适用领域：任意知识领域
+### 2.2 Applicable domain: any knowledge domain
 
-**不限于技术**。术语表、学习路径、章节单元等概念全部领域无关；"代码实跑校验"降级为**可选领域插件**（技术课开，人文/科普课关）。数据模型与 agent 流程不假设"一定有代码"。
+**Not limited to technology.** Concepts such as glossary, learning path, and chapter units are all domain-agnostic; "execute the code for real" is downgraded to an **optional domain plugin** (enabled for technical courses, disabled for humanities/popular-science courses). Neither the data model nor the agent flow assumes "there is always code".
 
 ---
 
-## 3. 核心能力
+## 3. Core capabilities
 
-### 3.1 成体系生成
+### 3.1 Coherent generation
 
-输入一个主题 → 产出结构完整、由浅入深、图文并茂的系列。生成时 AI 在关键分叉点主动提问：
+Take a topic as input → produce a well-structured series that progresses from easy to advanced with text and figures. During generation the AI asks questions at key forks:
 
-- "更想要偏理论还是偏实战？"
-- "大纲拆成 12 讲，『缓存』这章用 Redis 还是通用抽象讲？"
-- "代码示例默认 Python，要换 TypeScript 吗？"
+- "Do you want this more theoretical or more hands-on?"
+- "The outline splits into 12 units — should the 'caching' chapter use Redis or a generic abstraction?"
+- "Code samples default to Python; do you want TypeScript instead?"
 
-生成节奏为 **human-in-the-loop**：每讲人工审核通过后才进下一讲。
+The generation cadence is **human-in-the-loop**: each unit must pass human review before the next one starts.
 
-### 3.2 追问与修改（Ask & Amend）
+### 3.2 Ask & Amend
 
-每门课、每讲都是可持续对话的实体。生成后不是"重跑"，而是：
+Every course and every unit is an entity that can sustain a conversation. After generation you do not "re-run"; instead you:
 
-- **追问（Ask）**："为什么先讲 A 再讲 B？""这个概念和我项目里的 X 有什么关系？"
-- **局部修改（Amend）**："第 3 讲代码从 Python 改 Go""这张图拆成两张""补一个真实案例""这段太啰嗦，精简"
-- **沉淀（Drill-down）**："把你刚才的解释补进第 3 讲延伸阅读"
+- **Ask**: "Why cover A before B?", "How does this concept relate to X in my project?"
+- **Amend locally**: "Change the unit 3 code from Python to Go", "Split this diagram into two", "Add a real-world case", "This passage is too wordy, tighten it"
+- **Drill down**: "Fold the explanation you just gave into unit 3's further reading"
 
-每次修改可 diff、可回滚（文档历史），类 git。
+Every change is diffable and reversible (document history), git-style.
 
-### 3.3 知识源与检索（RAG）
+### 3.3 Knowledge sources and retrieval (RAG)
 
-三类知识源统一进检索：
+Three kinds of knowledge sources feed one retrieval pipeline:
 
 ```
-KnowledgeSource（知识源）
- ├─ 上传知识库：PDF / Markdown / docx / 网页 / 代码仓库…
- ├─ 联网搜索：多搜索源聚合（可插拔）
- └─ 平台内已有系列 / 术语表（跨系列复用）
+KnowledgeSource
+ ├─ Uploaded knowledge base: PDF / Markdown / docx / web pages / code repos…
+ ├─ Web search: aggregation of multiple search providers (pluggable)
+ └─ Existing series / glossaries in the platform (reusable across series)
         ↓
-解析 → 分块 → 索引（向量 + 关键词混合）→ 检索 → 重排 → 引用溯源
+parse → chunk → index (hybrid vector + keyword) → retrieve → rerank → cite and trace
 ```
 
-- 知识库上传后：解析（文档/表格/图片 OCR）→ 分块 → 向量化入库，成为系列私有知识底座。
-- 联网搜索按需触发，结果同样走引用溯源，不"裸给 LLM 搜索结果"。
+- After a knowledge base is uploaded: parse (documents/tables/image OCR) → chunk → embed and store, forming the series' private knowledge foundation.
+- Web search is triggered on demand and its results also go through citation tracing; search results are never handed to the LLM raw.
 
-### 3.4 幻觉抑制（硬需求，四条机制）
+### 3.4 Hallucination control (hard requirement, four mechanisms)
 
-| 机制 | 做法 |
+| Mechanism | Approach |
 |---|---|
-| 强制引用（grounded citation） | 写作 agent 只能基于检索到的证据写，每段带 citation 指向来源。**无据不写** |
-| 事实核查（FactChecker） | 对每个关键论断二次检索验证，标注「已核实 / 存疑 / 无依据」 |
-| 不确定性标注 | 存疑内容显式标注，或触发"AI 主动询问用户" |
-| 检索质量兜底 | 混合检索 + 重排 + 去重，降低"检索不到就编"的概率 |
+| Grounded citation | The writing agent may only write from retrieved evidence, and every paragraph carries a citation pointing at its source. **No evidence, no writing** |
+| Fact checking (FactChecker) | Every key claim is re-retrieved and verified, and labelled "verified / doubtful / unsupported" |
+| Uncertainty labelling | Doubtful content is explicitly labelled, or triggers "the AI asks the user" |
+| Retrieval quality guardrails | Hybrid retrieval + rerank + dedup to reduce the chance of "fabricate when retrieval fails" |
 
-**源优先级**：用户上传知识库 > 权威来源 > 一般搜索，检索时加权。
+**Source priority**: user-uploaded knowledge base > authoritative sources > general search, weighted at retrieval time.
 
-### 3.5 容错 / 并行 / 全流程可控
+### 3.5 Fault tolerance / parallelism / end-to-end control
 
-- **容错**：每步重试 + 指数退避 + 超时；任务粒度到"讲"（单讲失败不影响整门课）；降级链（provider 失败切备用、检索失败降级为纯生成但标注"未基于检索"）；断点续跑。
-- **并行化**：多讲并行（受学习路径依赖约束）；检索/生成流水线重叠；多 provider 并发；通过任务队列天然支持，限并发控成本。
-- **全流程可控**：人工审查门（Gate：大纲确认 → 每讲审核 → 发布前审查，每个 gate 可配"必须人工/可自动"）；全链路可观测（每个 agent 输入/输出/证据/耗时/token 可查）；可干预（暂停、注入修改、单步重跑）；可回滚（版本历史 + 审查记录）。
-
----
-
-## 4. 多租户与权限
-
-```
-Organization（工作室/租户）
- ├─ Membership（成员关系）── 角色：Owner / Admin / Editor / Reviewer / Viewer
- ├─ Series（系列，归属某组织）
- │    └─ 系列级协作者（可在组织角色上再细化到单门课）
- └─ 组织级资源：Glossary、模型/API key 配置、配额
-```
-
-- **数据隔离**：所有表带 `org_id`，中间件强制注入，杜绝跨租户泄漏。
-- **LLM Key 托管**：平台统一托管（用户看不到），按组织配额计费；自用场景支持 BYOK。
-- **个人自用** = 单成员 Organization，界面自动隐藏团队/成员入口。
+- **Fault tolerance**: retries with exponential backoff and timeouts at every step; task granularity down to a single unit (one failed unit does not break the whole course); degradation chains (switch to a backup provider on failure, degrade to pure generation when retrieval fails but label it "not grounded in retrieval"); resume from checkpoints.
+- **Parallelism**: multiple units in parallel (constrained by learning-path dependencies); overlapping retrieval/generation pipelines; concurrent multi-provider calls; naturally supported by the task queue, with concurrency limits to control cost.
+- **End-to-end control**: human review gates (Gate: outline confirmation → per-unit review → pre-publish review, each gate configurable as "human required / may be automatic"); full observability (inputs/outputs/evidence/latency/tokens of every agent are queryable); intervention (pause, inject edits, re-run a single step); rollback (version history + review records).
 
 ---
 
-## 5. 数据模型（多租户版）
+## 4. Multi-tenancy and permissions
 
 ```
-organizations          org 元信息 + 配额 + 模型配置
-memberships            org↔user 角色关系
-users / invites        用户、邀请
-series                title, 语言策略, 状态, org_id
-chapters               章
-units                content(多语言JSONB), 学习目标, 前置依赖, 版本号
-unit_versions        文档历史（类 git，可回滚）
-glossary               术语表（中英对照，org/系列级）
-learning_path          概念节点 + 依赖边
-assets                 图/代码/封面（对象存储元数据）
-threads / messages     追问/修改对话线（系列级 + 讲级）
-tasks / runs           生成/导出任务（Worker 消费）
-usage_records          token 计量（配额/计费）
+Organization (studio/tenant)
+ ├─ Membership ── roles: Owner / Admin / Editor / Reviewer / Viewer
+ ├─ Series (owned by an organization)
+ │    └─ series-level collaborators (can narrow an organization role down to a single course)
+ └─ organization-level resources: Glossary, model/API key configuration, quota
+```
 
-knowledge_sources      上传知识库 / 搜索源 / 引用已有系列
-documents / chunks     解析后的文档与分块（含向量）
-citations              段落 → 证据来源 的引用关系
-fact_checks            事实核查记录（已核实/存疑/无依据）
-gates                  人工审查门（状态：待审/通过/驳回）
+- **Data isolation**: every table carries `org_id`; middleware injects it mandatorily, preventing cross-tenant leaks.
+- **LLM key custody**: the platform manages keys centrally (users never see them) and bills against the organization quota; self-hosted scenarios support BYOK.
+- **Personal self-use** = a single-member Organization, and the UI automatically hides team/member entry points.
+
+---
+
+## 5. Data model (multi-tenant edition)
+
+```
+organizations          org metadata + quota + model configuration
+memberships            org↔user role relationships
+users / invites        users, invitations
+series                title, language policy, status, org_id
+chapters               chapters
+units                content (multilingual JSONB), learning objectives, prerequisites, version number
+unit_versions        document history (git-like, rollback-able)
+glossary               glossary (Chinese/English pairs, org/series level)
+learning_path          concept nodes + dependency edges
+assets                 images/code/cover (object storage metadata)
+threads / messages     ask/amend conversation threads (series level + unit level)
+tasks / runs           generation/export tasks (consumed by workers)
+usage_records          token metering (quota/billing)
+
+knowledge_sources      uploaded knowledge base / search sources / references to existing series
+documents / chunks     parsed documents and chunks (including vectors)
+citations              paragraph → evidence source citation relationships
+fact_checks            fact-check records (verified/doubtful/unsupported)
+gates                  human review gates (status: pending/approved/rejected)
 ```
 
 ---
 
-## 6. 系统架构
+## 6. System architecture
 
-### 6.1 架构总览
+### 6.1 Architecture overview
 
 ```
-             Browser
-                │
-        ┌───────▼────────┐
-        │  Next.js 前端    │  大纲树编辑 · 阅读器 · 对话面板 · 审查门 · 知识库管理
-        └───────┬────────┘
-        ┌───────▼─────────────────────────────┐
-        │  FastAPI API（无状态，多副本）          │
-        └───┬─────────────────────────────────┘
-            │  Ports & Adapters（依赖注入，全可插拔）
+                Browser
+                       │
+        ┌──────────────▼─────┐
+        │  Next.js frontend  │  outline tree editing · reader · chat panel · review gates · knowledge base management
+        └──────────────┬─────┘
+        ┌──────────────▼───────────────────────────────┐
+        │  FastAPI API (stateless, multiple replicas)  │
+        └──────────────┬───────────────────────────────┘
+            │  Ports & Adapters (dependency injection, fully pluggable)
    ┌────────┼──────────────┬───────────────────┐
-   │ DB(PG/pgvector)  对象存储(rustfs/OSS/S3)  缓存/消息(Redis/Kafka)
+   │ DB (PG/pgvector)  object storage (rustfs/OSS/S3)  cache/messaging (Redis/Kafka)
    └────────┼──────────────┴───────────────────┘
-            │
-   ┌────────▼──────────────────────────────────────────┐
-   │  知识源层：上传知识库解析 · 联网搜索 · RAG检索 · 引用溯源   │
-   └────────┬──────────────────────────────────────────┘
-            │
-   ┌────────▼──────────────────────────────────────────┐
-   │  编排层：Agent 循环（容错/并行/Gate人工审查/可观测）     │
-   │  写作 → 代码(可选) → 绘图 → 事实核查 → 一致性检查       │
-   └────────┬──────────────────────────────────────────┘
-            │
-   ┌────────▼───────────────┐
-   │  Worker 池 / Executor  │
-   └────────────────────────┘
+                       │
+   ┌───────────────────▼───────────────────────────────┐
+   │  Knowledge source layer: knowledge base parsing,  │
+   │  web search, RAG retrieval, citation tracing      │
+   └───────────────────┬───────────────────────────────┘
+                       │
+   ┌───────────────────▼─────────────────────────────────┐
+   │  Orchestration layer: agent loop (fault tolerance,  │
+   │  parallelism, human gates, observability)           │
+   │  writing → code (optional) → illustration →         │
+   │  fact check → consistency check                     │
+   └───────────────────┬─────────────────────────────────┘
+                       │
+   ┌───────────────────▼──────┐
+   │  Worker pool / Executor  │
+   └──────────────────────────┘
 ```
 
-### 6.2 可插拔设计（Ports & Adapters）
+### 6.2 Pluggable design (Ports & Adapters)
 
-**第一架构原则：一切基础设施与业务能力皆可插拔。**
+**First architectural principle: every piece of infrastructure and every business capability is pluggable.**
 
-每个模块定义接口（Port），具体实现是 Adapter，通过依赖注入 + 配置开关选择。同一套代码跑在单机与 K8s 两种形态：
+Each module defines an interface (Port) and ships concrete implementations as Adapters, selected through dependency injection plus configuration switches. The same codebase runs both on a single machine and on K8s:
 
 ```
-单机自用：Docker Compose 内置全部依赖（开箱即用）
-   ↓ 同一份代码，只改配置
-K8s 生产：把每一类依赖切到外部托管服务（RDS / OSS / 云 Redis / Kafka…）
+Single-machine self-host: Docker Compose bundles every dependency (works out of the box)
+   ↓ same code, configuration only
+K8s production: switch every dependency category to a managed external service (RDS / OSS / cloud Redis / Kafka…)
 ```
 
-实现机制：
-1. 抽象接口：Python `Protocol`/ABC 定义每个端口。
-2. Adapter 实现：`builtin_*`（单机）+ `external_*`（生产）成对出现。
-3. 依赖注入：业务代码只依赖接口，不 import 具体实现。
-4. 健康检查 + 探针：每个 adapter 启动时连接探活，fail-fast 并给出明确报错。
-5. 配置驱动：单文件声明每模块用哪个 adapter 及参数，K8s 下映射为 ConfigMap/Secret。
+Implementation mechanics:
+1. Abstract interfaces: Python `Protocol`/ABC defines every port.
+2. Adapter implementations: `builtin_*` (single machine) paired with `external_*` (production).
+3. Dependency injection: business code depends only on interfaces and never imports concrete implementations.
+4. Health checks + probes: every adapter checks connectivity at startup, failing fast with a clear error.
+5. Configuration-driven: a single file declares which adapter and parameters each module uses; under K8s this maps to ConfigMap/Secret.
 
-### 6.3 基础设施可插拔矩阵
+### 6.3 Infrastructure pluggability matrix
 
-| 模块 | 内置实现（单机默认） | 外部实现（K8s 生产） | 切换方式 |
+| Module | Built-in implementation (single-machine default) | External implementation (K8s production) | How to switch |
 |---|---|---|---|
-| 数据库 | 内置 PostgreSQL 容器 | 云 RDS / 自建 PG | 配置 DSN |
-| 对象存储 | **rustfs** | OSS / S3 / Azure / GCS | 配置 endpoint + 凭证 |
-| 向量检索 | pgvector（跟主库走） | Qdrant / Milvus / Weaviate | 配置后端类型 |
-| 缓存 | 内置 Redis | 云 Redis | 配置地址 |
-| 消息/流式 | Redis Streams | Kafka（更大规模） | 配置 broker 类型 |
-| 任务队列 | Celery + 内置 Redis | Celery + 云 Redis / 其他 broker | 配置 broker URL |
-| LLM | OpenAI 兼容 adapter | 任意供应商（DeepSeek/豆包/通义/Claude/本地 vLLM） | 配置 provider |
-| Embedding | 内置默认模型 | OpenAI / 通义 / 本地 bge | 配置 provider |
-| 绘图 | 文生图 API / 搜图 | 多供应商切换 | 配置 provider |
-| 沙箱执行 | 本地 Docker 容器 | K8s Job/Pod，或独立 Executor 集群 | 配置 executor 后端 |
-| 导出引擎 | 内置（pandoc/weasyprint） | 可替换专用渲染服务 | 配置 exporter |
-| 认证 | JWT + 邮箱 | OAuth / OIDC / SAML / SSO | 配置 auth provider |
-| 观测 | 本地日志 + Prometheus | OTel Collector / Langfuse | 配置 tracing 后端 |
+| Database | Bundled PostgreSQL container | Cloud RDS / self-managed PG | Configure DSN |
+| Object storage | **rustfs** | OSS / S3 / Azure / GCS | Configure endpoint + credentials |
+| Vector search | pgvector (lives with the primary DB) | Qdrant / Milvus / Weaviate | Configure backend type |
+| Cache | Bundled Redis | Cloud Redis | Configure address |
+| Messaging/streaming | Redis Streams | Kafka (larger scale) | Configure broker type |
+| Task queue | Celery + bundled Redis | Celery + cloud Redis / other brokers | Configure broker URL |
+| LLM | OpenAI-compatible adapter | Any provider (DeepSeek/Doubao/Qwen/Claude/local vLLM) | Configure provider |
+| Embedding | Bundled default model | OpenAI / Qwen / local bge | Configure provider |
+| Illustration | Text-to-image API / image search | Switch between multiple providers | Configure provider |
+| Sandbox execution | Local Docker containers | K8s Job/Pod, or a dedicated Executor cluster | Configure executor backend |
+| Export engine | Built-in (pandoc/weasyprint) | Replaceable dedicated rendering service | Configure exporter |
+| Auth | JWT + email | OAuth / OIDC / SAML / SSO | Configure auth provider |
+| Observability | Local logs + Prometheus | OTel Collector / Langfuse | Configure tracing backend |
 
-**业务能力同样插件化**（registry 注册机制）：
-- 导出格式：`Exporter` 接口 → PDF/EPUB/HTML/MD，新增格式 = 新增插件。
-- 审核/校验器：`Reviewer` 接口 → 深度检查、事实核查、代码校验（L1 静态/L2 沙箱）均可增删。
-- 内容语言策略：`Localizer` 接口 → 单语原生 / 主写+翻译 / 中英对照，可新增。
-- 图类型：`AssetProducer` 接口 → Mermaid / 文生图 / 搜图，各自独立扩展。
-
----
-
-## 7. 关键技术点
-
-### 7.1 分布式下的流式输出（SSE）
-
-Worker 边生成边把事件发到 Redis Pub/Sub / Streams（频道 `org:{id}:series:{id}:events`），所有 API 副本订阅同一频道，收到后转发给本地连接的浏览器。→ API 无状态、可扩容，流式体验不受副本数影响。
-
-### 7.2 代码"尽量实跑"的安全落法
-
-任意代码执行是生产最危险一环，分级：
-- **L1 静态审查（默认）**：AST 解析 + 语法/依赖检查，快且零风险。
-- **L2 沙箱实跑**：独立 Executor 跑在强隔离容器（K8s Pod + seccomp/AppArmor，禁外网、限 CPU/内存、超时）；更高要求可用 microVM（Firecracker/gVisor）。
-- 结果回填到该讲"代码已验证"标记。
-
-### 7.3 多作者协同（务实取舍）
-
-**不搞 Google Docs 式实时光标协同（CRDT）**。方案：
-- 系列内软锁 + presence：显示"谁正在编辑哪一讲"。
-- 写入走乐观锁（版本号），冲突时提示 diff 合并。
-- 每次生成/修改落 UnitVersion（文档历史），可 diff、可回滚。
-
-理由：协同是"AI 作者 + 多人审核/追问/修改"，冲突频率远低于纯文本文档。
-
-### 7.4 中英双语
-
-- 界面 i18n 标准国际化。
-- 内容语言策略（系列级可配）三种模式：单语原生 / 主写+翻译 / 中英对照。
-- 每讲 content 按 `{zh, en, bilingual}` 结构存储，导出时按策略取对应版本。
-
-### 7.5 幻觉抑制细节
-
-见 3.4。核心：强制引用 + 事实核查 + 不确定性标注 + 检索质量兜底，源优先级加权。
-
-### 7.6 容错与并行
-
-见 3.5。核心：讲级任务粒度 + 重试/降级/断点 + 依赖约束下的并行 + Gate 人工审查 + 全链路可观测。
+**Business capabilities are pluginized the same way** (registry mechanism):
+- Export formats: `Exporter` interface → PDF/EPUB/HTML/MD; a new format is a new plugin.
+- Reviewers/validators: `Reviewer` interface → deep review, fact checking, code validation (L1 static/L2 sandbox) can all be added or removed.
+- Content language policies: `Localizer` interface → native monolingual / primary + translation / Chinese-English side by side, extensible.
+- Figure types: `AssetProducer` interface → Mermaid / text-to-image / image search, each extended independently.
 
 ---
 
-## 8. 技术栈清单
+## 7. Key technical points
 
-| 层 | 选型 |
+### 7.1 Streaming output under distribution (SSE)
+
+While generating, workers publish events to Redis Pub/Sub / Streams (channel `org:{id}:series:{id}:events`); all API replicas subscribe to the same channel and forward events to the browsers connected to them. → The API stays stateless and can scale out, and the streaming experience does not depend on the number of replicas.
+
+### 7.2 A safe way to "run code for real" as much as possible
+
+Arbitrary code execution is the riskiest part of production, so it is tiered:
+- **L1 static review (default)**: AST parsing + syntax/dependency checks; fast and risk-free.
+- **L2 sandboxed execution**: a dedicated Executor running in a strongly isolated container (K8s Pod + seccomp/AppArmor, no external network, CPU/memory limits, timeouts); microVMs (Firecracker/gVisor) can be used for higher requirements.
+- Results are written back to that unit's "code verified" flag.
+
+### 7.3 Multi-author collaboration (pragmatic trade-offs)
+
+**No Google-Docs-style real-time cursor collaboration (CRDT)**. Instead:
+- Soft locks + presence within a series: show "who is editing which unit".
+- Writes use optimistic locking (version number); on conflict, offer a diff to merge.
+- Every generation/amendment creates a UnitVersion (document history) that can be diffed and rolled back.
+
+Rationale: collaboration here is "AI author + several people reviewing/asking/amending", so conflicts are far rarer than in plain text documents.
+
+### 7.4 Chinese-English bilingual
+
+- UI i18n follows standard internationalization.
+- Content language policy (configurable per series) has three modes: native monolingual / primary + translation / Chinese-English side by side.
+- Each unit's content is stored as `{zh, en, bilingual}`, and exports pick the matching version according to the policy.
+
+### 7.5 Hallucination control details
+
+See 3.4. Core ideas: mandatory citations + fact checking + uncertainty labelling + retrieval quality guardrails, with source priority weighting.
+
+### 7.6 Fault tolerance and parallelism
+
+See 3.5. Core ideas: unit-level task granularity + retry/degradation/checkpoints + parallelism under dependency constraints + human review gates + full-chain observability.
+
+---
+
+## 8. Technology stack
+
+| Layer | Choice |
 |---|---|
-| 前端 | Next.js (React/TS) + Tailwind + TipTap 编辑器 |
-| API | FastAPI（无状态，多副本） |
-| 任务队列 | Celery + Redis |
-| 实时 | Redis Pub/Sub + SSE |
-| 主库 | PostgreSQL + pgvector（向量检索，减组件） |
-| 对象存储 | S3 兼容（**rustfs** 自托管 / OSS / S3） |
-| 沙箱 | 容器 + seccomp/AppArmor，可选 microVM |
-| LLM 抽象 | OpenAI 兼容 adapter，多供应商可混用（文本/视觉/绘图/embedding 分离配置） |
-| 绘图 | 文生图 API + 搜图 + Mermaid 矢量 |
-| 观测 | OpenTelemetry + Prometheus/Grafana + 结构化日志 |
-| 部署 | Docker Compose（自用）+ K8s Helm（生产） |
-| 编排 | 轻量 Agent 循环 + 工具调用（不硬绑 LangGraph） |
+| Frontend | Next.js (React/TS) + Tailwind + TipTap editor |
+| API | FastAPI (stateless, multiple replicas) |
+| Task queue | Celery + Redis |
+| Realtime | Redis Pub/Sub + SSE |
+| Primary DB | PostgreSQL + pgvector (vector search, one less component) |
+| Object storage | S3-compatible (**rustfs** self-hosted / OSS / S3) |
+| Sandbox | Containers + seccomp/AppArmor, microVM optional |
+| LLM abstraction | OpenAI-compatible adapter, multiple providers can be mixed (text/vision/illustration/embedding configured separately) |
+| Illustration | Text-to-image API + image search + Mermaid vectors |
+| Observability | OpenTelemetry + Prometheus/Grafana + structured logs |
+| Deployment | Docker Compose (self-use) + K8s Helm (production) |
+| Orchestration | Lightweight agent loop + tool calling (not hard-wired to LangGraph) |
 
 ---
 
-## 9. 决策记录（已确认）
+## 9. Decision log (confirmed)
 
-| # | 决策点 | 结论 |
+| # | Decision point | Conclusion |
 |---|---|---|
-| 1 | 交付形态 | 独立 Web 应用 |
-| 2 | 与 vibe-blog 关系 | 不复刻，突出对话式/可修改/可追问 |
-| 3 | 内容领域 | 任意知识领域（不只技术） |
-| 4 | 语言 | 中英双语（界面 i18n + 内容三模式可选） |
-| 5 | LLM | 抽象（多供应商，文本/视觉/绘图/embedding 分离） |
-| 6 | 配图 | AI 生成 / 搜图 + Mermaid 矢量 |
-| 7 | 导出 | EPUB / PDF + HTML / Markdown |
-| 8 | 生成节奏 | 每讲人工审核后再继续（human-in-the-loop） |
-| 9 | TTS | 不做 |
-| 10 | 修改/追问 | 支持再次修改 + 询问/追问（Ask & Amend） |
-| 11 | 代码实跑 | 尽量做（L1 静态 + L2 沙箱实跑，可降级） |
-| 12 | 用户规模 | 多用户、生产环境、分布式部署 |
-| 13 | 协同 | 多作者协同（软锁 + 乐观锁 + 版本历史，不用 CRDT） |
-| 14 | 可扩展 | 每模块可插拔（Ports & Adapters），K8s 可接外部 DB/对象存储 |
-| 15 | 内置对象存储 | rustfs（替换 MinIO） |
-| 16 | 知识源 | 上传知识库 + 联网搜索 + 已有系列 |
-| 17 | 幻觉抑制 | 强制引用 + 事实核查 + 不确定性标注 + 检索质量 |
-| 18 | 可靠性 | 容错 + 并行化 + 人工审查 + 全流程可控 |
+| 1 | Delivery shape | Standalone web application |
+| 2 | Relationship to vibe-blog | Not a clone; emphasize conversational/editable/follow-up-able |
+| 3 | Content domain | Any knowledge domain (not only technology) |
+| 4 | Language | Chinese-English bilingual (UI i18n + three optional content modes) |
+| 5 | LLM | Abstracted (multiple providers; text/vision/illustration/embedding separate) |
+| 6 | Figures | AI generation / image search + Mermaid vectors |
+| 7 | Export | EPUB / PDF + HTML / Markdown |
+| 8 | Generation cadence | Continue only after each unit passes human review (human-in-the-loop) |
+| 9 | TTS | Not doing it |
+| 10 | Amend/ask | Support further amendments + asking/following up (Ask & Amend) |
+| 11 | Running code | Do as much as possible (L1 static + L2 sandboxed execution, degradable) |
+| 12 | User scale | Multi-user, production environment, distributed deployment |
+| 13 | Collaboration | Multi-author collaboration (soft locks + optimistic locks + version history, no CRDT) |
+| 14 | Extensibility | Every module pluggable (Ports & Adapters); K8s can attach external DB/object storage |
+| 15 | Built-in object storage | rustfs (replacing MinIO) |
+| 16 | Knowledge sources | Uploaded knowledge base + web search + existing series |
+| 17 | Hallucination control | Mandatory citations + fact checking + uncertainty labelling + retrieval quality |
+| 18 | Reliability | Fault tolerance + parallelism + human review + end-to-end control |
 
 ---
 
-## 10. 已做取舍（可推翻）
+## 10. Trade-offs made (can be revisited)
 
-1. 不用 CRDT，用软锁 + 乐观锁 + 版本历史做协同。
-2. 向量检索用 pgvector，少一个组件、少一份运维。
-3. PDF 中文内嵌字体，避免导出乱码/豆腐块。
-4. 编排用轻量 Agent 循环 + 工具调用，不硬绑 LangGraph。
-5. 分布式基础设施放后期（先用单机验证产品，再拆分布式），避免过早复杂化。
-
----
-
-## 11. 实施路线图
-
-按风险从高到低：
-
-1. **M0**：单租户单机跑通核心闭环——"生成单讲 + 追问 + 修改 + 文档历史"；**并先做 RAG 最小链路**（上传文档 → 检索 → 带引用写作），因幻觉抑制是第一天硬需求。
-2. **M1**：系列蓝图 + 逐讲 human-in-the-loop + 阅读器 + 术语表/学习路径。
-3. **M2**：多租户 + RBAC + 多作者软锁协同 + 配额计量。
-4. **M3**：任务队列化 + 分布式 SSE（Redis）+ 对象存储 → 可分布式部署。
-5. **M4**：AI 生图/搜图 + 导出 EPUB/PDF（含中文字体嵌入）。
-6. **M5**：沙箱实跑（Executor 强隔离）+ 可观测 + K8s Helm。
-
-> 自 M0 起就按 Port/Adapter 写，即使先只有一个内置实现，避免后期返工。
+1. No CRDT; collaboration relies on soft locks + optimistic locks + version history.
+2. Vector search uses pgvector: one less component and one less thing to operate.
+3. PDF embeds Chinese fonts to avoid garbled text or missing glyphs in exports.
+4. Orchestration uses a lightweight agent loop + tool calling, not hard-wired to LangGraph.
+5. Distributed infrastructure comes later (validate the product on a single machine first, then split it out) to avoid premature complexity.
 
 ---
 
-## 12. 下一步
+## 11. Implementation roadmap
 
-待产出的细化交付物（任选）：
-1. M0 最小可行版详细实现步骤（推荐先做）。
-2. 完整目录结构 + 模块拆分。
-3. 核心接口（Port）清单 + 定义。
-4. PostgreSQL 建表 schema。
-5. Docker Compose / K8s 部署清单。
+Ordered from highest to lowest risk:
+
+1. **M0**: get the core loop working on a single tenant/single machine — "generate one unit + ask + amend + document history"; **and build the minimal RAG chain first** (upload document → retrieve → write with citations), because hallucination control is a day-one hard requirement.
+2. **M1**: series blueprint + per-unit human-in-the-loop + reader + glossary/learning path.
+3. **M2**: multi-tenancy + RBAC + multi-author soft-lock collaboration + quota metering.
+4. **M3**: task queueing + distributed SSE (Redis) + object storage → distributed deployment becomes possible.
+5. **M4**: AI-generated/searched images + EPUB/PDF export (including Chinese font embedding).
+6. **M5**: sandboxed execution (strongly isolated Executor) + observability + K8s Helm.
+
+> Write against Port/Adapter from M0 onward, even with only one built-in implementation, to avoid rework later.
 
 ---
 
-*本文件为项目唯一事实来源，后续所有变更请同步更新本文档与决策记录。*
+## 12. Next steps
+
+Detailed deliverables still to be produced (pick any):
+1. Detailed implementation steps for the M0 minimum viable version (recommended first).
+2. Complete directory structure + module breakdown.
+3. Core interface (Port) list + definitions.
+4. PostgreSQL table schema.
+5. Docker Compose / K8s deployment manifests.
+
+---
+
+*This file is the project's single source of truth; all future changes must be reflected here and in the decision log.*

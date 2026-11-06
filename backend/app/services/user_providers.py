@@ -80,7 +80,7 @@ class UserProviderService:
     def require(self, user_id: str, provider_id: str) -> UserProvider:
         provider = self.get(user_id, provider_id)
         if provider is None:
-            raise ProviderNotFoundError("个人通道不存在")
+            raise ProviderNotFoundError("personal channel not found")
         return provider
 
     def default(self, user_id: str) -> UserProvider | None:
@@ -215,7 +215,7 @@ class UserProviderService:
     def _normalize_kind(self, kind: str) -> str:
         value = (kind or "").strip()
         if value not in PROVIDER_KINDS:
-            raise ValueError("kind 仅支持 openai_compat 或 dummy")
+            raise ValueError("kind supports only openai_compat or dummy")
         return value
 
     def _normalize_models(self, models: list[str] | None) -> list[str]:
@@ -240,7 +240,7 @@ class UserProviderService:
         self.repository.ensure_schema()
         label = (name or "").strip()
         if not label:
-            raise ValueError("通道名称不能为空")
+            raise ValueError("channel name must not be empty")
         now = time.time()
         record = UserProvider(
             id=(
@@ -280,7 +280,7 @@ class UserProviderService:
         if current is None:
             shared = self.get_any(provider_id)
             if shared is None or not self.can_manage_shared(provider_id, user_id):
-                raise ProviderNotFoundError("个人通道不存在")
+                raise ProviderNotFoundError("personal channel not found")
             current = shared
         cipher = current.api_key_cipher
         raw_key = (api_key or "").strip()
@@ -311,7 +311,7 @@ class UserProviderService:
     def delete(self, user_id: str, provider_id: str) -> None:
         current = self.require(user_id, provider_id)
         if current.is_default:
-            raise DefaultProviderError("个人默认通道不可删除，请先切换默认通道")
+            raise DefaultProviderError("the personal default channel cannot be deleted; switch the default channel first")
         self.repository.delete_shares(current.id)
         self.repository.delete_provider(user_id, provider_id)
 
@@ -332,10 +332,10 @@ class UserProviderService:
     ) -> LLMProvider:
         resolved = self.resolve_usable(user_id, provider_id)
         if resolved is None:
-            raise ProviderNotFoundError("个人通道不存在")
+            raise ProviderNotFoundError("personal channel not found")
         provider = resolved[0]
         if not provider.enabled:
-            raise ProviderDisabledError("该个人通道已被禁用")
+            raise ProviderDisabledError("this personal channel is disabled")
         if provider.kind == PROVIDER_KIND_DUMMY:
             return self._dummy()
         key = api_key or self.api_key(provider)

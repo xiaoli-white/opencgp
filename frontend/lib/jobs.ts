@@ -196,7 +196,7 @@ export async function streamJob(
     }
   } catch (err) {
     if (handlers.signal?.aborted) throw err instanceof Error ? err : new Error("aborted");
-    handlers.onError?.(err instanceof Error ? err : new Error("进度流中断"));
+    handlers.onError?.(err instanceof Error ? err : new Error("Progress stream interrupted"));
   }
 
   return pollJob(jobId, handlers);
@@ -227,10 +227,10 @@ export async function runJob(
   });
 
   if (finalJob.status === "failed") {
-    throw new Error(finalJob.error || "任务执行失败");
+    throw new Error(finalJob.error || "Job failed");
   }
   if (finalJob.status === "canceled") {
-    throw new Error(finalJob.error || "任务已取消");
+    throw new Error(finalJob.error || "Job was cancelled");
   }
   return finalJob;
 }

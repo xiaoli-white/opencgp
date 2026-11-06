@@ -21,7 +21,7 @@ class CreationProfileService:
     def get(self, profile_id: str, tenant_id: str) -> CreationProfile:
         item = self.repository.get(profile_id, tenant_id)
         if item is None:
-            raise CreationProfileNotFoundError(f"模板不存在: {profile_id}")
+            raise CreationProfileNotFoundError(f"template not found: {profile_id}")
         return item
 
     def create(
@@ -39,13 +39,13 @@ class CreationProfileService:
     ) -> CreationProfile:
         label = (name or "").strip()
         if not label:
-            raise ValueError("模板名称不能为空")
+            raise ValueError("template name must not be empty")
         resolved_genre = (genre or "article").strip().lower()
         if resolved_genre not in GENRES:
-            raise ValueError(f"未知体裁: {resolved_genre}")
+            raise ValueError(f"unknown genre: {resolved_genre}")
         resolved_policy = (citation_policy or "optional").strip().lower()
         if resolved_policy not in CITATION_POLICIES:
-            raise ValueError(f"未知引用策略: {resolved_policy}")
+            raise ValueError(f"unknown citation policy: {resolved_policy}")
         return self.repository.create(
             CreationProfile(
                 id="",
@@ -81,15 +81,15 @@ class CreationProfileService:
         if genre is not None:
             resolved_genre = genre.strip().lower()
             if resolved_genre not in GENRES:
-                raise ValueError(f"未知体裁: {resolved_genre}")
+                raise ValueError(f"unknown genre: {resolved_genre}")
             genre = resolved_genre
         if citation_policy is not None:
             resolved_policy = citation_policy.strip().lower()
             if resolved_policy not in CITATION_POLICIES:
-                raise ValueError(f"未知引用策略: {resolved_policy}")
+                raise ValueError(f"unknown citation policy: {resolved_policy}")
             citation_policy = resolved_policy
         if name is not None and not name.strip():
-            raise ValueError("模板名称不能为空")
+            raise ValueError("template name must not be empty")
         updated = self.repository.update(
             profile_id,
             name=None if name is None else name.strip(),
@@ -102,7 +102,7 @@ class CreationProfileService:
             is_shared=is_shared,
         )
         if updated is None:
-            raise CreationProfileNotFoundError(f"模板不存在: {profile_id}")
+            raise CreationProfileNotFoundError(f"template not found: {profile_id}")
         return updated
 
     def delete(self, profile_id: str, tenant_id: str, user_id: str) -> bool:
@@ -117,4 +117,4 @@ class CreationProfileService:
 
     def _require_owner(self, item: CreationProfile, user_id: str) -> None:
         if item.user_id and item.user_id != user_id:
-            raise PermissionDeniedError("只有模板归属者可以修改")
+            raise PermissionDeniedError("only the template owner can modify it")

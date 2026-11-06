@@ -34,9 +34,18 @@ type Tab = "ask" | "amend";
 
 type ChatMessage = Message & { quoted?: string };
 
-const AMEND_PRESETS = ["精简这段，去掉重复表述", "补一个真实案例", "改成更偏实战的写法", "拆成更清晰的小节"];
+const AMEND_PRESETS = [
+  "Trim this section and remove repetition",
+  "Add a real-world example",
+  "Rewrite it in a more hands-on style",
+  "Split it into clearer subsections",
+];
 
-const ASK_PRESETS = ["这一讲的核心结论是什么？", "为什么先讲这部分？", "和我项目里的场景如何对应？"];
+const ASK_PRESETS = [
+  "What is the key takeaway of this unit?",
+  "Why is this part covered first?",
+  "How does this map to scenarios in my project?",
+];
 
 export default function ChatPanel({
   open,
@@ -89,7 +98,7 @@ export default function ChatPanel({
       .catch((err: unknown) => {
         if (!cancelled) {
           setMessages([]);
-          setError(err instanceof Error ? err.message : "对话线加载失败");
+          setError(err instanceof Error ? err.message : "Failed to load the thread");
         }
       })
       .finally(() => {
@@ -151,10 +160,12 @@ export default function ChatPanel({
           onSelectionConsumed?.();
         }
         if (!result.grounded) {
-          setError("本次回答未命中知识库证据，已按模型自身知识作答，请注意核对。");
+          setError(
+            "This answer found no knowledge-base evidence and was produced from the model's own knowledge. Please verify it.",
+          );
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "追问失败");
+        setError(err instanceof Error ? err.message : "Failed to ask a follow-up");
         setInput(text);
       } finally {
         setBusy(false);
@@ -180,7 +191,7 @@ export default function ChatPanel({
       setAmendInfo(result);
       setInput("");
       onNotice(
-        `已应用修改，生成 v${result.version}（原 v${result.previous_version} · ${modeLabel(result.mode)}模式）`,
+        `Change applied. Generated v${result.version} (from v${result.previous_version} · ${modeLabel(result.mode)} mode)`,
       );
       await onApplied();
     } catch (err) {
@@ -190,11 +201,11 @@ export default function ChatPanel({
         onVersionConflict({
           expectedVersion,
           currentVersion: current,
-          label: "本次修改",
+          label: "This change",
           retry: () => runAmend(text, current),
         });
       } else {
-        setError(err instanceof Error ? err.message : "修改失败");
+        setError(err instanceof Error ? err.message : "Failed to apply the change");
       }
     } finally {
       setBusy(false);
@@ -227,17 +238,17 @@ export default function ChatPanel({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
-                  追问与修改
+                  Ask & Amend
                 </p>
                 <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">
-                  {unitTitle || "选择一讲"} · v{currentVersion}
+                  {unitTitle || "Select a unit"} · v{currentVersion}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={onClose}
                 className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
-                aria-label="关闭对话面板"
+                aria-label="Close the chat panel"
               >
                 <X size={16} />
               </button>
@@ -256,7 +267,7 @@ export default function ChatPanel({
                     <Quote size={13} className="mt-0.5 shrink-0 text-indigo-500 dark:text-indigo-300" />
                     <div className="min-w-0 flex-1">
                       <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-indigo-500 dark:text-indigo-300">
-                        引用选中
+                        Quoted selection
                       </p>
                       <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
                         {selection}
@@ -269,7 +280,7 @@ export default function ChatPanel({
                         onSelectionConsumed?.();
                       }}
                       className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
-                      aria-label="取消引用选中"
+                      aria-label="Clear the quoted selection"
                     >
                       <X size={12} />
                     </button>
@@ -294,7 +305,7 @@ export default function ChatPanel({
                   )}
                 >
                   <MessageSquare size={13} />
-                  Ask 追问
+                  Ask
                 </button>
                 <button
                   type="button"
@@ -310,7 +321,7 @@ export default function ChatPanel({
                   )}
                 >
                   <PenLine size={13} />
-                  Amend 修改
+                  Amend
                 </button>
               </div>
             </div>
@@ -320,11 +331,11 @@ export default function ChatPanel({
                 loadingThread ? (
                   <div className="flex items-center gap-2 text-xs text-slate-400">
                     <Loader2 size={13} className="animate-spin" />
-                    正在载入对话线…
+                    Loading the thread…
                   </div>
                 ) : messages.length === 0 ? (
                   <div className="glass-soft rounded-2xl p-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                    对着这一讲提问，AI 会带着知识库证据回答；回答也可以再沉淀进正文。
+                    Ask about this unit and the AI answers with knowledge-base evidence; answers can also be folded back into the body text.
                   </div>
                 ) : (
                   messages.map((message) => {
@@ -347,7 +358,7 @@ export default function ChatPanel({
                               <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
                               {message.quoted ? (
                                 <p className="rounded-xl border border-white/25 bg-white/15 px-2 py-1 text-[11px] leading-relaxed text-white/85 line-clamp-3">
-                                  引用：{message.quoted}
+                                  Quoted: {message.quoted}
                                 </p>
                               ) : null}
                             </div>
@@ -387,11 +398,11 @@ export default function ChatPanel({
               ) : (
                 <div className="space-y-3">
                   <div className="glass-soft rounded-2xl p-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                    用自然语言描述想怎么改，AI 会重写这一讲并落一个新版本，原版本仍可回滚。
+                    Describe the change in plain language. The AI rewrites this unit as a new version, and the previous version can still be rolled back.
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
-                      写作模式
+                      Writing mode
                     </span>
                     <ModePicker
                       value={amendMode}
@@ -402,7 +413,7 @@ export default function ChatPanel({
                   </div>
                   {amendMode === "loose" ? (
                     <p className="text-[10px] leading-relaxed text-amber-700 dark:text-amber-300">
-                      非严格模式：允许模型基于自身知识改写，正文顶部会保留「由大模型编写」声明。
+                      Loose mode: the model may rewrite from its own knowledge; the body keeps a “Written by AI” notice at the top.
                     </p>
                   ) : null}
                   <div className="flex flex-wrap gap-1.5">
@@ -421,20 +432,20 @@ export default function ChatPanel({
                   {amendInfo && (
                     <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-300">
                       <p className="font-medium">
-                        已生成 v{amendInfo.version}（来自 v{amendInfo.previous_version} ·{" "}
-                        {modeLabel(amendInfo.mode)}模式）
+                        Generated v{amendInfo.version} (from v{amendInfo.previous_version} ·{" "}
+                        {modeLabel(amendInfo.mode)} mode)
                       </p>
                       <p className="mt-1 text-[11px] leading-relaxed opacity-80">
                         {amendInfo.note || amendInfo.instruction} ·{" "}
-                        {contentLength(amendInfo.content)} 字 ·{" "}
-                        {amendInfo.citations.length} 条引用
+                        {contentLength(amendInfo.content)} chars ·{" "}
+                        {amendInfo.citations.length} citations
                       </p>
                     </div>
                   )}
                   {messages.length > 0 && (
                     <div className="space-y-2 border-t border-slate-200/70 pt-3 dark:border-white/10">
                       <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                        本讲对话线
+                        Unit thread
                       </p>
                       {messages.slice(-4).map((message) => (
                         <p
@@ -446,7 +457,7 @@ export default function ChatPanel({
                               : "text-slate-500 dark:text-slate-400",
                           )}
                         >
-                          {message.role === "user" ? "问 · " : "答 · "}
+                          {message.role === "user" ? "Q · " : "A · "}
                           {message.content.slice(0, 80)}
                         </p>
                       ))}
@@ -458,13 +469,13 @@ export default function ChatPanel({
               {busy && tab === "ask" && (
                 <div className="flex items-center gap-2 text-xs text-slate-400">
                   <Loader2 size={13} className="animate-spin" />
-                  正在检索证据并组织回答…
+                  Retrieving evidence and drafting an answer…
                 </div>
               )}
               {busy && tab === "amend" && (
                 <div className="flex items-center gap-2 text-xs text-slate-400">
                   <Loader2 size={13} className="animate-spin" />
-                  正在重写正文并落新版本…
+                  Rewriting the body and creating a new version…
                 </div>
               )}
               {error && (
@@ -503,8 +514,8 @@ export default function ChatPanel({
                   }}
                   placeholder={
                     tab === "ask"
-                      ? "追问这一讲的内容…（Ctrl/⌘ + Enter 发送）"
-                      : "描述想要的修改，例如：把第 2 段改得更实战…（Ctrl/⌘ + Enter）"
+                      ? "Ask about this unit… (Ctrl/⌘ + Enter to send)"
+                      : "Describe the change, e.g. make paragraph 2 more hands-on… (Ctrl/⌘ + Enter)"
                   }
                   className="input max-h-32 min-h-[3.2rem]"
                   rows={2}
@@ -514,7 +525,7 @@ export default function ChatPanel({
                   onClick={send}
                   disabled={busy || !input.trim()}
                   className="btn btn-primary h-[3.2rem] w-12 shrink-0 px-0"
-                  aria-label="发送"
+                  aria-label="Send"
                 >
                   {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                 </button>

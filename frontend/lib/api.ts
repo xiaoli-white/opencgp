@@ -945,12 +945,12 @@ export async function request<T>(
     });
   } catch {
     throw new ApiError(
-      `无法连接后端服务（${API_BASE}）。请确认 FastAPI 已启动，或检查 VITE_API_BASE。`,
+      `Unable to reach the backend service (${API_BASE}). Make sure the FastAPI server is running, or check VITE_API_BASE.`,
       0,
     );
   }
   if (!response.ok) {
-    let message = `请求失败（${response.status}）`;
+    let message = `Request failed (${response.status})`;
     let body: Record<string, unknown> | null = null;
     try {
       const payload = (await response.json()) as Record<string, unknown> | null;
@@ -962,7 +962,7 @@ export async function request<T>(
         message = detail
           .map((item: { msg?: string }) => item?.msg ?? "")
           .filter(Boolean)
-          .join("；");
+          .join("; ");
       }
     } catch {
       message = `${message} ${response.statusText}`.trim();
@@ -1014,10 +1014,10 @@ async function exportProfileFile(profileId: string): Promise<ExportResult> {
       { headers: authHeaders(), cache: "no-store" },
     );
   } catch {
-    throw new ApiError(`无法连接后端服务（${API_BASE}）`, 0);
+    throw new ApiError(`Unable to reach the backend service (${API_BASE})`, 0);
   }
   if (!response.ok) {
-    let message = `导出失败（${response.status}）`;
+    let message = `Export failed (${response.status})`;
     try {
       const body = (await response.json()) as Record<string, unknown> | null;
       const detail = body?.detail;
@@ -1054,10 +1054,10 @@ export async function exportDocument(
       { headers: authHeaders(), cache: "no-store" },
     );
   } catch {
-    throw new ApiError(`无法连接后端服务（${API_BASE}）`, 0);
+    throw new ApiError(`Unable to reach the backend service (${API_BASE})`, 0);
   }
   if (!response.ok) {
-    let message = `导出失败（${response.status}）`;
+    let message = `Export failed (${response.status})`;
     let payload: Record<string, unknown> | null = null;
     try {
       const body = (await response.json()) as Record<string, unknown> | null;
@@ -1086,7 +1086,7 @@ export async function uploadMediaFile(file: File): Promise<MediaAsset> {
     cache: "no-store",
   });
   if (!response.ok) {
-    let message = `上传失败（${response.status}）`;
+    let message = `Upload failed (${response.status})`;
     let payload: Record<string, unknown> | null = null;
     try {
       const body = (await response.json()) as Record<string, unknown> | null;

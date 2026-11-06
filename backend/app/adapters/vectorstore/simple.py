@@ -215,7 +215,7 @@ class SimpleVectorStore(VectorStore):
                     vector = vectors[0] if vectors else None
                 query_vector = list(vector) if vector else None
             except Exception as exc:
-                print(f"[vectorstore] 查询向量化失败，降级为关键词检索: {exc!r}")
+                print(f"[vectorstore] query embedding failed, falling back to keyword search: {exc!r}")
                 warnings.append("embedding_failed")
                 query_vector = None
         else:

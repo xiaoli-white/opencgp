@@ -44,7 +44,7 @@ class LocalJobQueue:
                 self._queue.task_done()
                 break
             except Exception as exc:  # noqa: BLE001
-                print(f"[queue] worker {index} 任务 {job_id} 异常: {exc!r}")
+                print(f"[queue] worker {index} job {job_id} raised: {exc!r}")
             finally:
                 self._running = max(0, self._running - 1)
                 self._queue.task_done()

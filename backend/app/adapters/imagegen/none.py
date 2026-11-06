@@ -11,7 +11,7 @@ class NullImageProvider(ImageProvider):
     async def generate(
         self, prompt: str, size: str = "1024x1024", n: int = 1
     ) -> list[bytes]:
-        raise ImageGenerationUnavailableError("未配置图片生成服务")
+        raise ImageGenerationUnavailableError("image generation service is not configured")
 
     def healthcheck(self) -> bool:
         return False
