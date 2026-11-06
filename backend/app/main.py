@@ -1,8 +1,9 @@
-"""FastAPI 应用入口。
+"""FastAPI application entry point.
 
-提供健康检查端点 ``/health``、LLM 生成端点与 RAG 知识库端点，
-并装配 Port/Adapter 容器。
-启动方式（M0 单机）：:
+Exposes ``/health``, the generation endpoints and the RAG knowledge base,
+and wires the port/adapter container.
+
+Start locally::
 
     cd backend
     uvicorn app.main:app --port 8000
@@ -158,31 +159,31 @@ async def lifespan(app: FastAPI):
     try:
         container.auth_repository().ensure_schema()
     except Exception as exc:  # noqa: BLE001
-        print(f"[auth] 基础表初始化失败: {exc!r}")
+        print(f"[auth] failed to initialise base tables: {exc!r}")
     try:
         container.profiles().ensure_builtin()
     except Exception as exc:  # noqa: BLE001
-        print(f"[profiles] 内置预设播种失败: {exc!r}")
+        print(f"[profiles] failed to seed built-in presets: {exc!r}")
     service = container.job_service()
     try:
         service.recover_stale()
     except Exception as exc:  # noqa: BLE001
-        print(f"[jobs] 恢复残留任务失败: {exc!r}")
+        print(f"[jobs] failed to recover leftover jobs: {exc!r}")
     try:
         service.start()
     except Exception as exc:  # noqa: BLE001
-        print(f"[jobs] 队列启动失败: {exc!r}")
+        print(f"[jobs] failed to start the queue: {exc!r}")
     yield
     try:
         await service.aclose()
     except Exception as exc:  # noqa: BLE001
-        print(f"[jobs] 队列关闭失败: {exc!r}")
+        print(f"[jobs] failed to shut down the queue: {exc!r}")
 
 
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
-    description="OpenCGP · 以对话为中心、以作品为活文档的内容生成平台",
+    description="OpenCGP · conversation-driven content generation where every piece stays a living document",
     lifespan=lifespan,
 )
 
@@ -233,7 +234,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         )
         return JSONResponse(
             status_code=503,
-            content={"detail": "数据库暂不可用，请稍后重试"},
+            content={"detail": "database unavailable, please retry shortly"},
         )
     logger.error(
         "unhandled exception on %s %s",
@@ -241,7 +242,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         request.url.path,
         exc_info=(type(exc), exc, exc.__traceback__),
     )
-    return JSONResponse(status_code=500, content={"detail": "服务器内部错误"})
+    return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
 
 app.add_middleware(
@@ -309,7 +310,7 @@ def get_auth_context(
         scheme, _, value = authorization.partition(" ")
         token = value.strip() if scheme.lower() == "bearer" else authorization.strip()
     if not token:
-        raise HTTPException(status_code=401, detail="缺少访问令牌")
+        raise HTTPException(status_code=401, detail="missing access token")
     try:
         return service.resolve(token, x_tenant_id)
     except AuthRequiredError as exc:
@@ -366,7 +367,7 @@ def _guard_lock(unit_id: str, ctx: AuthContext) -> None:
     except UnitLockedError as exc:
         raise HTTPException(
             status_code=409,
-            detail=f"该讲正被 {exc.name} 编辑，请先协商或接管",
+            detail=f"this unit is being edited by {exc.name}, coordinate or take over first",
         ) from exc
 
 
@@ -374,7 +375,7 @@ def _conflict(exc: VersionConflictError) -> JSONResponse:
     return JSONResponse(
         status_code=409,
         content={
-            "detail": "版本冲突：内容已被他人更新",
+            "detail": "version conflict: the content was updated by someone else",
             "expected_version": exc.expected,
             "current_version": exc.current,
         },
@@ -383,7 +384,7 @@ def _conflict(exc: VersionConflictError) -> JSONResponse:
 
 @app.get("/")
 def root() -> dict:
-    """根路径：返回导航提示。"""
+    """Root path: return a navigation hint."""
     return {
         "app": settings.app_name,
         "version": app.version,
@@ -466,17 +467,17 @@ async def _probe_with_cache(key: str, factory) -> dict[str, Any]:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    """健康检查：报告应用状态与各 adapter 探活结果。
+    """Health check: report the application state and every adapter probe.
 
-    adapter 探活失败不会导致 500，而是以 ``degraded`` 状态如实返回，
-    便于编排系统（如 Docker Compose / K8s）做探针判断。
+    A failing adapter probe never causes a 500; it is reported as ``degraded`` so
+    orchestrators (Docker Compose, Kubernetes) can use it as a probe.
     """
     adapters: dict[str, Any] = {}
     for name in ("database", "storage", "llm", "vectorstore", "exporter", "parser", "notifier"):
         try:
             obj = getattr(container, name)()
             ok = bool(obj.healthcheck())
-        except Exception as exc:  # noqa: BLE001 - 探活需兜住一切异常
+        except Exception as exc:  # noqa: BLE001 - a probe must swallow every exception
             adapters[name] = {"ok": False, "error": str(exc)}
         else:
             adapters[name] = {"ok": ok}
@@ -787,7 +788,7 @@ async def kb_search(
             docs = [citation.text for citation in citations]
             scores = await rerank.adapter.rerank(req.query, docs, int(weights.top_n))
         except Exception as exc:  # noqa: BLE001
-            print(f"[search] rerank 失败，跳过重排: {exc!r}")
+            print(f"[search] rerank failed, skipping reordering: {exc!r}")
             scores = []
             if "rerank_failed" not in warnings:
                 warnings.append("rerank_failed")
@@ -903,7 +904,7 @@ async def retrieval_providers_list(
     _enforce(ctx, "read")
     resolved_kind = (kind or "").strip().lower()
     if resolved_kind and resolved_kind not in ("embedding", "rerank"):
-        raise HTTPException(status_code=400, detail="kind 仅支持 embedding / rerank")
+        raise HTTPException(status_code=400, detail="kind must be embedding or rerank")
     return container.retrieval_providers().list_payload(
         _tenant_of(ctx), ctx.user.id, resolved_kind
     )
@@ -979,7 +980,7 @@ async def retrieval_providers_patch(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         detail = str(exc)
-        status = 404 if "不存在" in detail else 400
+        status = 404 if "not found" in detail else 400
         raise HTTPException(status_code=status, detail=detail) from exc
     return service.payload(record)
 
@@ -1098,7 +1099,7 @@ async def kb_embeddings_backfill(
     )
     if requested_provider and embedding.adapter is None:
         raise HTTPException(
-            status_code=404, detail=embedding.error or "provider 不存在"
+            status_code=404, detail=embedding.error or "provider not found"
         )
     embedder = embedding.adapter
     model = embedding.model
@@ -1131,7 +1132,7 @@ async def kb_embeddings_backfill(
     if len(chunks) > 2000:
         raise HTTPException(
             status_code=429,
-            detail="chunk 数超过 2000，请改用异步回填（去掉 sync=true）",
+            detail="more than 2000 chunks; use the async backfill instead (drop sync=true)",
         )
     if embedder is None:
         return {
@@ -1180,7 +1181,7 @@ async def kb_embeddings_status(
     )
     if provider_id and embedding.adapter is None:
         raise HTTPException(
-            status_code=404, detail=embedding.error or "provider 不存在"
+            status_code=404, detail=embedding.error or "provider not found"
         )
     model = embedding.model
     dim = embedding.dim
@@ -1207,8 +1208,8 @@ async def kb_embeddings_status(
         "models": list(counts.get("models") or []),
         "stale": dict(counts.get("stale") or {"chunks": 0, "bytes": 0}),
         "note": (
-            "stale 统计的是与当前 provider/model/dim 不匹配的向量；"
-            "coverage 只在完全匹配的向量上累计。"
+            "stale counts vectors that do not match the current provider, model and dimension;"
+            "coverage only counts vectors that match exactly."
         ),
     }
 
@@ -1225,7 +1226,7 @@ async def kb_embeddings_purge(
     )
     if provider_id and embedding.adapter is None:
         raise HTTPException(
-            status_code=404, detail=embedding.error or "provider 不存在"
+            status_code=404, detail=embedding.error or "provider not found"
         )
     return await store.purge_stale_embeddings(
         _tenant_of(ctx),
@@ -1257,7 +1258,7 @@ async def kb_rename_source(
         source_id, req.source_name.strip(), _tenant_of(ctx)
     )
     if not renamed:
-        raise HTTPException(status_code=404, detail=f"来源不存在: {source_id}")
+        raise HTTPException(status_code=404, detail=f"source not found: {source_id}")
     return {"source_id": source_id, "source_name": req.source_name.strip()}
 
 
@@ -1331,9 +1332,9 @@ def _require_series(
     tenant_id = _tenant_of(ctx) if ctx is not None else None
     series = container.series_repository().get_series(series_id, tenant_id)
     if series is None:
-        raise HTTPException(status_code=404, detail=f"课程不存在: {series_id}")
+        raise HTTPException(status_code=404, detail=f"series not found: {series_id}")
     if ctx is not None and not container.auth_service().can_access_series(ctx, series_id, level):
-        raise HTTPException(status_code=404, detail=f"课程不存在: {series_id}")
+        raise HTTPException(status_code=404, detail=f"series not found: {series_id}")
     return series
 
 
@@ -1363,7 +1364,7 @@ def _version_diff(
     after = loader(int(to_version))
     for value, label in ((before, from_version), (after, to_version)):
         if value is None:
-            raise HTTPException(status_code=404, detail=f"版本不存在: {label}")
+            raise HTTPException(status_code=404, detail=f"version not found: {label}")
     result = line_diff(before.content, after.content)
     return {
         "owner_id": owner_id,
@@ -1380,7 +1381,7 @@ def _require_unit(
 ) -> Unit:
     unit = container.series_repository().get_unit(unit_id)
     if unit is None:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}")
+        raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}")
     if ctx is not None:
         _require_series(unit.series_id, ctx, level)
     return unit
@@ -1532,7 +1533,7 @@ async def generate_unit(
             retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
         )
     except UnitNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}") from exc
+        raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}") from exc
     except VersionConflictError as exc:
         return _conflict(exc)
     return result.model_dump()
@@ -1559,7 +1560,7 @@ async def validate_unit(
         if resolved is not None:
             spec = resolved
     if spec is None:
-        raise HTTPException(status_code=404, detail="未找到可用的创作配置")
+        raise HTTPException(status_code=404, detail="no usable creation profile found")
     if payload.validators:
         names = [item.strip().lower() for item in payload.validators if item and item.strip()]
         spec = spec.model_copy(
@@ -1636,7 +1637,7 @@ def get_unit_version(
     _require_unit(unit_id, ctx)
     record = container.series_repository().get_version(unit_id, version)
     if record is None:
-        raise HTTPException(status_code=404, detail=f"版本不存在: {version}")
+        raise HTTPException(status_code=404, detail=f"version not found: {version}")
     return {"unit_id": unit_id, "version": record.model_dump()}
 
 
@@ -1683,11 +1684,11 @@ def revert_unit(
     repository = container.series_repository()
     if repository.get_version(unit_id, req.version) is None:
         raise HTTPException(
-            status_code=404, detail=f"版本不存在: {unit_id} v{req.version}"
+            status_code=404, detail=f"version not found: {unit_id} v{req.version}"
         )
     applied = repository.revert_to_version(unit_id, req.version, note=req.note)
     if applied is None:
-        raise HTTPException(status_code=404, detail=f"版本不存在: {unit_id} v{req.version}")
+        raise HTTPException(status_code=404, detail=f"version not found: {unit_id} v{req.version}")
     unit, record = applied
     return {
         "unit": unit.model_dump(),
@@ -1705,7 +1706,7 @@ async def ask_unit(
     _require_unit(unit_id, ctx, "write")
     question = req.question.strip()
     if not question:
-        raise HTTPException(status_code=400, detail="问题不能为空")
+        raise HTTPException(status_code=400, detail="question must not be empty")
     _charge(ctx, "ask", 1, ref_id=unit_id)
     selection = (req.selection or "").strip() or None
     try:
@@ -1716,7 +1717,7 @@ async def ask_unit(
             llm=container.llm_for(ctx.user.id),
         )
     except UnitNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}") from exc
+        raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}") from exc
     except EmptyLLMResponseError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return result.model_dump()
@@ -1732,7 +1733,7 @@ async def amend_unit(
     _require_unit(unit_id, ctx, "write")
     instruction = req.instruction.strip()
     if not instruction:
-        raise HTTPException(status_code=400, detail="修改指令不能为空")
+        raise HTTPException(status_code=400, detail="instruction must not be empty")
     _guard_lock(unit_id, ctx)
     _charge(ctx, "amend", 1, ref_id=unit_id)
     try:
@@ -1747,10 +1748,10 @@ async def amend_unit(
     except VersionConflictError as exc:
         return _conflict(exc)
     except UnitNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}") from exc
+        raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}") from exc
     except UnitContentEmptyError as exc:
         raise HTTPException(
-            status_code=400, detail=f"该讲尚无正文，无法局部修改: {unit_id}"
+            status_code=400, detail=f"this unit has no text yet, cannot patch it: {unit_id}"
         ) from exc
     except EmptyLLMResponseError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -1774,12 +1775,12 @@ async def drilldown_unit(
             llm=container.llm_for(ctx.user.id),
         )
     except UnitNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}") from exc
+        raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}") from exc
     except MessageNotFoundError as exc:
         raise HTTPException(
             status_code=404,
             detail=(
-                "未找到可沉淀的追问回答，请先调用 ask 或指定有效的 message_id: "
+                "no follow-up answer to keep; call ask first or pass a valid message_id: "
                 f"{payload.message_id or payload.question or unit_id}"
             ),
         ) from exc
@@ -1827,7 +1828,7 @@ def get_thread(
     conversations = container.conversation_repository()
     thread = conversations.get_thread(thread_id)
     if thread is None:
-        raise HTTPException(status_code=404, detail=f"对话线不存在: {thread_id}")
+        raise HTTPException(status_code=404, detail=f"conversation not found: {thread_id}")
     _require_series(thread.series_id, ctx)
     messages = conversations.list_messages(thread.id, limit=limit)
     return {
@@ -1867,7 +1868,7 @@ class ThreadRenameRequest(BaseModel):
 def _require_thread(thread_id: str, ctx: AuthContext, level: str = "read"):
     thread = container.conversation_repository().get_thread(thread_id)
     if thread is None:
-        raise HTTPException(status_code=404, detail=f"对话线不存在: {thread_id}")
+        raise HTTPException(status_code=404, detail=f"conversation not found: {thread_id}")
     if thread.series_id:
         _require_series(thread.series_id, ctx, level)
     return thread
@@ -1885,7 +1886,7 @@ def rename_thread(
         thread_id, req.title
     )
     if updated is None:
-        raise HTTPException(status_code=404, detail=f"对话线不存在: {thread_id}")
+        raise HTTPException(status_code=404, detail=f"conversation not found: {thread_id}")
     return {"thread": updated.model_dump()}
 
 
@@ -2057,10 +2058,10 @@ def review_unit(
             unit_id, req.action, note=req.note
         )
     except UnitNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}") from exc
+        raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}") from exc
     except UnitContentEmptyError as exc:
         raise HTTPException(
-            status_code=400, detail=f"该讲尚无正文，无法通过审核: {unit_id}"
+            status_code=400, detail=f"this unit has no text yet, cannot approve it: {unit_id}"
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2122,7 +2123,7 @@ def auth_register(req: RegisterRequest) -> dict[str, Any]:
         container.notifications().registration_received(user)
         return {
             "pending": True,
-            "message": "注册已提交，等待管理员审核",
+            "message": "registration submitted, waiting for admin approval",
             "user": service.user_payload(user, service.role_in_system(user.id)),
         }
     return {
@@ -2205,7 +2206,7 @@ def _avatar_extension(filename: str, content_type: str) -> str:
     mapping = {value: key for key, value in allowed.items()}
     guess = mapping.get((content_type or "").split(";")[0].strip().lower(), "")
     if not guess:
-        raise AvatarInvalidError("头像仅支持 png/jpg/jpeg/webp")
+        raise AvatarInvalidError("avatar must be png, jpg, jpeg or webp")
     return guess
 
 
@@ -2218,9 +2219,9 @@ async def auth_upload_avatar(
 ) -> dict[str, Any]:
     data = await file.read()
     if not data:
-        raise HTTPException(status_code=400, detail="头像文件为空")
+        raise HTTPException(status_code=400, detail="avatar file is empty")
     if len(data) > AVATAR_MAX_BYTES:
-        raise HTTPException(status_code=400, detail="头像不能超过 2MB")
+        raise HTTPException(status_code=400, detail="avatar must not exceed 2MB")
     try:
         ext = _avatar_extension(file.filename or "", file.content_type or "")
     except AvatarInvalidError as exc:
@@ -2229,7 +2230,7 @@ async def auth_upload_avatar(
     try:
         container.storage().put(key, data, content_type=(file.content_type or ""))
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"头像保存失败: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"failed to store the avatar: {exc}") from exc
     service = container.auth_service()
     try:
         service.set_avatar_key(ctx.user.id, key)
@@ -2251,13 +2252,13 @@ def get_user_avatar(user_id: str) -> Any:
     service = container.auth_service()
     user = service.get_user(user_id)
     if user is None or not user.avatar_key:
-        raise HTTPException(status_code=404, detail="头像不存在")
+        raise HTTPException(status_code=404, detail="avatar not found")
     try:
         data = container.storage().get(user.avatar_key)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="头像不存在") from exc
+        raise HTTPException(status_code=404, detail="avatar not found") from exc
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=404, detail=f"头像读取失败: {exc}") from exc
+        raise HTTPException(status_code=404, detail=f"failed to read the avatar: {exc}") from exc
     ext = user.avatar_key.rsplit(".", 1)[-1].lower()
     return StreamingResponse(
         iter([data]),
@@ -2282,7 +2283,7 @@ def admin_list_users(
     _enforce(ctx, "manage_server")
     wanted = (status or "").strip().lower()
     if wanted and wanted not in USER_STATUSES:
-        raise HTTPException(status_code=400, detail=f"未知状态: {wanted}")
+        raise HTTPException(status_code=400, detail=f"unknown status: {wanted}")
     users = container.auth_service().list_users(
         wanted, limit, q, include_deleted=include_deleted
     )
@@ -2459,7 +2460,7 @@ def rename_tenant(
         if service.mode == "required":
             scoped = service.context_for_tenant(ctx.user, tenant_id)
             if "owner" not in (scoped.role_key, scoped.role):
-                raise PermissionDeniedError("只有空间所有者可以修改空间")
+                raise PermissionDeniedError("only the space owner can change this space")
         tenant = service.rename_tenant(tenant_id, req.name)
     except (PermissionDeniedError, MembershipNotFoundError, TenantNotFoundError) as exc:
         raise _auth_error(exc) from exc
@@ -2476,16 +2477,16 @@ def delete_tenant(
     try:
         target = service.get_tenant(tenant_id)
         if target is None:
-            raise TenantNotFoundError("租户不存在")
+            raise TenantNotFoundError("space not found")
         if target.kind == "system" or target.id == DEFAULT_TENANT_ID:
-            raise TenantSystemError("系统空间不可删除")
+            raise TenantSystemError("the system space cannot be deleted")
         if service.mode == "required":
             scoped = service.context_for_tenant(ctx.user, tenant_id)
             if "owner" not in (scoped.role_key, scoped.role):
-                raise PermissionDeniedError("只有空间所有者可以删除空间")
+                raise PermissionDeniedError("only the space owner can delete this space")
         series = container.series_repository().list_series(tenant_id)
         if series:
-            raise TenantInUseError("该空间下仍有课程，无法删除")
+            raise TenantInUseError("this space still holds series and cannot be deleted")
         service.delete_tenant(tenant_id)
     except (
         PermissionDeniedError,
@@ -2729,7 +2730,7 @@ def acquire_unit_lock(
     _require_unit(unit_id, ctx, "write")
     payload = req or UnitLockRequest()
     if payload.force and not _is_privileged(ctx):
-        raise HTTPException(status_code=403, detail="仅管理员或所有者可强制接管编辑锁")
+        raise HTTPException(status_code=403, detail="only an admin or the owner can force-take the edit lock")
     try:
         lock = container.lock_service().acquire(
             unit_id,
@@ -2743,7 +2744,7 @@ def acquire_unit_lock(
         return JSONResponse(
             status_code=409,
             content={
-                "detail": f"该讲正被 {exc.name} 编辑",
+                "detail": f"this unit is being edited by {exc.name}",
                 "lock": current.model_dump() if hasattr(current, "model_dump") else None,
             },
         )
@@ -2993,7 +2994,7 @@ async def test_provider_settings(
         await asyncio.wait_for(provider.complete("ping", max_tokens=8), timeout=15)
     except asyncio.TimeoutError:
         ok = False
-        detail = "请求超时（15s）"
+        detail = "request timed out (15s)"
     except Exception as exc:
         ok = False
         detail = f"{type(exc).__name__}: {exc}"
@@ -3110,7 +3111,7 @@ async def test_user_provider(
         await asyncio.wait_for(provider.complete("ping", max_tokens=8), timeout=15)
     except asyncio.TimeoutError:
         ok = False
-        detail = "请求超时（15s）"
+        detail = "request timed out (15s)"
     except Exception as exc:
         ok = False
         detail = f"{type(exc).__name__}: {exc}"
@@ -3156,7 +3157,7 @@ def list_provider_shares(
     service = container.user_providers()
     own = service.get(ctx.user.id, provider_id)
     if own is None and not service.can_manage_shared(provider_id, ctx.user.id):
-        raise HTTPException(status_code=404, detail="个人通道不存在")
+        raise HTTPException(status_code=404, detail="personal channel not found")
     return _provider_shares_payload(provider_id, service.list_shares(provider_id))
 
 
@@ -3274,7 +3275,7 @@ async def test_server_provider(
     service = container.provider_catalog()
     provider = service.get(provider_id)
     if provider is None:
-        raise HTTPException(status_code=404, detail="provider 不存在")
+        raise HTTPException(status_code=404, detail="provider not found")
     selected = (req.model if req is not None else "").strip()
     model = service.resolve_model(provider, selected)
     llm = service.build_provider(provider, model)
@@ -3285,7 +3286,7 @@ async def test_server_provider(
         await asyncio.wait_for(llm.complete("ping", max_tokens=8), timeout=15)
     except asyncio.TimeoutError:
         ok = False
-        detail = "请求超时（15s）"
+        detail = "request timed out (15s)"
     except Exception as exc:
         ok = False
         detail = f"{type(exc).__name__}: {exc}"
@@ -3384,7 +3385,7 @@ def get_research(run_id: str, ctx: AuthContext = Depends(get_auth_context)) -> d
     _enforce(ctx, "read")
     run = container.research().get(run_id, _tenant_of(ctx))
     if run is None:
-        raise HTTPException(status_code=404, detail=f"研究不存在: {run_id}")
+        raise HTTPException(status_code=404, detail=f"research run not found: {run_id}")
     return _research_payload(run)
 
 
@@ -3415,7 +3416,7 @@ def delete_research(
     _enforce(ctx, "write")
     removed = container.research().delete(run_id, _tenant_of(ctx))
     if not removed:
-        raise HTTPException(status_code=404, detail=f"研究不存在: {run_id}")
+        raise HTTPException(status_code=404, detail=f"research run not found: {run_id}")
     return {"ok": True}
 
 
@@ -3429,7 +3430,7 @@ async def research_to_blueprint(
     payload = req or ResearchBlueprintRequest()
     run = container.research().get(run_id, _tenant_of(ctx))
     if run is None:
-        raise HTTPException(status_code=404, detail=f"研究不存在: {run_id}")
+        raise HTTPException(status_code=404, detail=f"research run not found: {run_id}")
     series_id = (payload.series_id or "").strip()
     if series_id:
         _require_series(series_id, ctx, "write")
@@ -3442,7 +3443,7 @@ async def research_to_blueprint(
         )
         series_id = series.id
     else:
-        raise HTTPException(status_code=400, detail="请提供 series_id 或设置 create_series=true")
+        raise HTTPException(status_code=400, detail="provide series_id or set create_series=true")
     _charge(ctx, "blueprint", 1, ref_id=series_id)
     focus = " ".join(
         [run.topic, run.brief.summary]
@@ -3474,11 +3475,11 @@ def _require_piece(piece_id: str, ctx: AuthContext, level: str = "read"):
     piece = container.piece().get(piece_id, _tenant_of(ctx))
     service = container.auth_service()
     if piece is None or not service.can_access_piece(ctx, piece_id, "read"):
-        raise HTTPException(status_code=404, detail=f"长篇不存在: {piece_id}")
+        raise HTTPException(status_code=404, detail=f"standalone piece not found: {piece_id}")
     if level == "write" and not service.can_access_piece(
         ctx, piece_id, "write"
     ):
-        raise HTTPException(status_code=403, detail="缺少该长篇的编辑授权")
+        raise HTTPException(status_code=403, detail="missing edit permission for this standalone piece")
     return piece
 
 
@@ -3544,7 +3545,7 @@ async def create_piece(
         audience=audience,
         pov=pov,
         citation_policy=citation_policy,
-        unit_name=work_spec.unit.name if work_spec is not None else "节",
+        unit_name=work_spec.unit.name if work_spec is not None else "section",
     )
     piece = await container.piece().create(
         req.title,
@@ -3604,7 +3605,7 @@ async def generate_piece_section(
             retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
         )
     except PieceSectionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
+        raise HTTPException(status_code=404, detail=f"section not found: {exc}") from exc
     except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     report = await _validation_report(
@@ -3707,7 +3708,7 @@ def get_piece_version(
     _require_piece(piece_id, ctx)
     record = container.piece().get_version(piece_id, version)
     if record is None:
-        raise HTTPException(status_code=404, detail=f"版本不存在: {version}")
+        raise HTTPException(status_code=404, detail=f"version not found: {version}")
     return {
         "piece_id": piece_id,
         "version": {
@@ -3823,7 +3824,7 @@ def delete_piece(
     _enforce(ctx, "write")
     _require_piece(piece_id, ctx, "write")
     if not container.piece().delete(piece_id, _tenant_of(ctx)):
-        raise HTTPException(status_code=404, detail=f"长篇不存在: {piece_id}")
+        raise HTTPException(status_code=404, detail=f"standalone piece not found: {piece_id}")
     return {"ok": True}
 
 
@@ -3893,7 +3894,7 @@ def get_job(job_id: str, ctx: AuthContext = Depends(get_auth_context)) -> dict[s
     _enforce(ctx, "read")
     job = container.job_service().get(job_id, _tenant_of(ctx))
     if job is None:
-        raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
+        raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
     return _job_payload(job)
 
 
@@ -3902,7 +3903,7 @@ def cancel_job(job_id: str, ctx: AuthContext = Depends(require_write)) -> dict[s
     try:
         job = container.job_service().cancel(job_id, _tenant_of(ctx))
     except JobNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"任务不存在: {exc}") from exc
+        raise HTTPException(status_code=404, detail=f"job not found: {exc}") from exc
     return _job_payload(job)
 
 
@@ -3911,7 +3912,7 @@ def delete_job(job_id: str, ctx: AuthContext = Depends(require_write)) -> dict[s
     try:
         job = container.job_service().delete(job_id, _tenant_of(ctx))
     except JobNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"任务不存在: {exc}") from exc
+        raise HTTPException(status_code=404, detail=f"job not found: {exc}") from exc
     except JobNotTerminalError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True, "job_id": job.id, "status": job.status}
@@ -3926,7 +3927,7 @@ async def job_events(
     service = container.job_service()
     job = service.get(job_id, tenant_id)
     if job is None:
-        raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
+        raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
     jobs_settings = settings.jobs
     interval = float(jobs_settings.sse_interval or 0.6)
     max_seconds = float(jobs_settings.sse_max_seconds or 600.0)
@@ -3973,7 +3974,7 @@ async def job_events(
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            print(f"[jobs] SSE 订阅失败 {job_id}: {exc!r}")
+            print(f"[jobs] failed to subscribe to {job_id}: {exc!r}")
             snapshot = service.snapshot(job_id)
             if snapshot is not None:
                 yield frame_of(snapshot)
@@ -3991,7 +3992,7 @@ async def job_events(
                 break
             current = service.get(job_id, tenant_id)
             if current is None:
-                payload = {"id": job_id, "status": "failed", "progress": 0, "error": "任务不存在", "result": None}
+                payload = {"id": job_id, "status": "failed", "progress": 0, "error": "job not found", "result": None}
                 yield "event: status\n" + "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
                 break
             frame = {
@@ -4087,7 +4088,7 @@ def update_series(
         profile_id=req.profile_id,
     )
     if series is None:
-        raise HTTPException(status_code=404, detail=f"课程不存在: {series_id}")
+        raise HTTPException(status_code=404, detail=f"series not found: {series_id}")
     return series.model_dump()
 
 
@@ -4099,7 +4100,7 @@ def delete_series(
     _require_series(series_id, ctx, "write")
     deleted = container.series_repository().delete_series(series_id, _tenant_of(ctx))
     if deleted is None:
-        raise HTTPException(status_code=404, detail=f"课程不存在: {series_id}")
+        raise HTTPException(status_code=404, detail=f"series not found: {series_id}")
     return {"series_id": series_id, "deleted": deleted}
 
 
@@ -4130,7 +4131,7 @@ def update_unit(
         content=req.content,
     )
     if unit is None:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}")
+        raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}")
     return unit.model_dump()
 
 
@@ -4142,7 +4143,7 @@ def delete_unit(
     _require_unit(unit_id, ctx, "write")
     deleted = container.series_repository().delete_unit(unit_id)
     if deleted is None:
-        raise HTTPException(status_code=404, detail=f"讲次不存在: {unit_id}")
+        raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}")
     return {
         "unit_id": unit_id,
         "deleted_versions": deleted["deleted_versions"],
@@ -4167,7 +4168,7 @@ def reorder_units(
     unknown = [item for item in req.unit_ids if item not in known]
     if unknown:
         raise HTTPException(
-            status_code=400, detail=f"讲次不属于该课程: {', '.join(unknown[:3])}"
+            status_code=400, detail=f"units do not belong to this series: {', '.join(unknown[:3])}"
         )
     units = repository.reorder_units(series_id, req.unit_ids)
     return {
@@ -4288,7 +4289,7 @@ def add_piece_section(
             after_id=req.after_id,
         )
     except PieceSectionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
+        raise HTTPException(status_code=404, detail=f"section not found: {exc}") from exc
     except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -4315,7 +4316,7 @@ def update_piece_section(
             content=req.content,
         )
     except PieceSectionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
+        raise HTTPException(status_code=404, detail=f"section not found: {exc}") from exc
     except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return updated.model_dump()
@@ -4332,7 +4333,7 @@ def delete_piece_section(
     try:
         updated = container.piece().delete_section(piece_id, section_id)
     except PieceSectionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"章节不存在: {exc}") from exc
+        raise HTTPException(status_code=404, detail=f"section not found: {exc}") from exc
     except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -4652,14 +4653,14 @@ async def sample_work_profile(
             timeout=120,
         )
     except asyncio.TimeoutError as exc:
-        raise HTTPException(status_code=504, detail="试写超时（120s）") from exc
+        raise HTTPException(status_code=504, detail="sample timed out (120s)") from exc
     except Exception as exc:
         raise HTTPException(
-            status_code=502, detail=f"试写生成失败：{type(exc).__name__}: {exc}"
+            status_code=502, detail=f"sample generation failed: {type(exc).__name__}: {exc}"
         ) from exc
     text = container.profiles().finalize_sample(profile, raw, target)
     if not text:
-        raise HTTPException(status_code=502, detail="试写生成失败：模型返回空内容")
+        raise HTTPException(status_code=502, detail="sample generation failed: the model returned nothing")
     sample_spec = profile.spec.model_copy(deep=True)
     skipped: list[str] = []
     remaining = []
@@ -4769,19 +4770,19 @@ def export_document(
     if source_type not in EXPORT_SOURCE_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"不支持的导出来源类型: {source_type}（支持 {', '.join(EXPORT_SOURCE_TYPES)}）",
+            detail=f"unsupported export source: {source_type} (supported: {', '.join(EXPORT_SOURCE_TYPES)})",
         )
     fmt = (fmt or "").strip().lower()
     if fmt not in EXPORT_FORMATS:
         raise HTTPException(
             status_code=400,
-            detail=f"不支持的导出格式: {fmt}（支持 {', '.join(EXPORT_FORMATS)}）",
+            detail=f"unsupported export format: {fmt} (supported: {', '.join(EXPORT_FORMATS)})",
         )
     theme = (theme or THEME_LIGHT).strip().lower()
     if theme not in EXPORT_THEMES:
         raise HTTPException(
             status_code=400,
-            detail=f"不支持的主题: {theme}（支持 {', '.join(EXPORT_THEMES)}）",
+            detail=f"unsupported theme: {theme} (supported: {', '.join(EXPORT_THEMES)})",
         )
     if source_type == SOURCE_SERIES:
         _require_series(source_id, ctx, "write")
@@ -4851,7 +4852,7 @@ def _media_ctx(
     if not raw and token:
         raw = token.strip()
     if not raw:
-        raise HTTPException(status_code=401, detail="缺少访问令牌")
+        raise HTTPException(status_code=401, detail="missing access token")
     try:
         return service.resolve(raw, x_tenant_id)
     except AuthRequiredError as exc:
@@ -4908,7 +4909,7 @@ async def upload_media(
     _enforce(ctx, "write")
     data = await file.read()
     if not data:
-        raise HTTPException(status_code=400, detail="图片文件为空")
+        raise HTTPException(status_code=400, detail="image file is empty")
     try:
         content_type, _ = detect_image_type(file.filename or "", file.content_type or "")
     except MediaInvalidError as exc:
@@ -4917,7 +4918,7 @@ async def upload_media(
     if len(data) > max_bytes:
         raise HTTPException(
             status_code=400,
-            detail=f"图片不能超过 {max_bytes // (1024 * 1024)}MB",
+            detail=f"image must not exceed {max_bytes // (1024 * 1024)}MB",
         )
     _charge(ctx, "upload")
     _charge(ctx, "storage", len(data))
@@ -4939,7 +4940,7 @@ async def generate_media(
     service = container.media_service()
     provider = service.provider()
     if provider is None or getattr(provider, "is_placeholder", False):
-        raise HTTPException(status_code=503, detail="未配置图片生成服务")
+        raise HTTPException(status_code=503, detail="image generation is not configured")
     _charge(ctx, "image")
     try:
         assets = await service.generate(ctx, req.prompt, req.size, req.n)
@@ -5008,17 +5009,17 @@ def exec_code(
     ctx = _enforce(ctx, "write")
     language = (req.language or "").strip().lower()
     if language not in LANGUAGES:
-        raise HTTPException(status_code=400, detail=f"不支持的代码语言: {req.language}")
+        raise HTTPException(status_code=400, detail=f"unsupported language: {req.language}")
     executor = container.executor()
     if not executor.available():
-        raise HTTPException(status_code=503, detail="未配置代码执行后端")
+        raise HTTPException(status_code=503, detail="code execution backend is not configured")
     _charge(ctx, "exec", 1, ref_id=language)
     try:
         result = executor.run(language, req.code, req.stdin, req.timeout)
     except ExecLanguageError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ExecUnavailableError as exc:
-        raise HTTPException(status_code=503, detail="未配置代码执行后端") from exc
+        raise HTTPException(status_code=503, detail="code execution backend is not configured") from exc
     get_metrics().inc_exec(result.backend, _exec_result_label(result))
     return result.model_dump()
 
@@ -5033,7 +5034,7 @@ def unit_code_check(
     unit = _require_unit(unit_id, ctx, "write")
     executor = container.executor()
     if not executor.available():
-        raise HTTPException(status_code=503, detail="未配置代码执行后端")
+        raise HTTPException(status_code=503, detail="code execution backend is not configured")
     service = CodeCheckService(executor)
     payload = service.check(unit.content or "", (req or CodeCheckRequest()).language)
     for block in payload["blocks"]:
@@ -5066,19 +5067,19 @@ def _metrics_snapshot_sync() -> dict[str, Any]:
             for (kind, status), count in sorted(grouped.items())
         ]
     except Exception as exc:  # noqa: BLE001
-        print(f"[metrics] 任务统计失败: {exc!r}")
+        print(f"[metrics] failed to count jobs: {exc!r}")
     try:
         counts = container.job_service().counts()
         snapshot["jobs_active"] = int(counts.get("queued") or 0) + int(
             counts.get("running") or 0
         )
     except Exception as exc:  # noqa: BLE001
-        print(f"[metrics] 活跃任务统计失败: {exc!r}")
+        print(f"[metrics] failed to count active jobs: {exc!r}")
     try:
         stats = container.job_queue().stats()
         snapshot["queue_backlog"] = int(stats.get("pending") or 0)
     except Exception as exc:  # noqa: BLE001
-        print(f"[metrics] 队列统计失败: {exc!r}")
+        print(f"[metrics] failed to read queue stats: {exc!r}")
     try:
         payload = {"adapters": {}}
         for name in (
@@ -5101,7 +5102,7 @@ def _metrics_snapshot_sync() -> dict[str, Any]:
             for name, info in (payload.get("adapters") or {}).items()
         ]
     except Exception as exc:  # noqa: BLE001
-        print(f"[metrics] adapter 探活失败: {exc!r}")
+        print(f"[metrics] adapter probe failed: {exc!r}")
     try:
         usage = container.quota_service().usage_by_kind(DEFAULT_TENANT_ID)
         snapshot["quota_usage"] = [
@@ -5109,7 +5110,7 @@ def _metrics_snapshot_sync() -> dict[str, Any]:
             for kind, value in sorted(usage.items())
         ]
     except Exception as exc:  # noqa: BLE001
-        print(f"[metrics] 配额统计失败: {exc!r}")
+        print(f"[metrics] failed to read quota stats: {exc!r}")
     return snapshot
 
 

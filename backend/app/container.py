@@ -1,9 +1,9 @@
-"""依赖注入容器（极简版）。
+"""Dependency injection container (minimal).
 
-根据 ``Settings`` 选择 adapter 并装配，业务代码只依赖端口、不 import 具体实现。
-后续可替换为更完整的 DI 框架（如 dependency-injector），调用方式不变。
+Adapters are chosen from ``Settings``; business code depends on ports only.
+It can be swapped for a full DI framework later without changing call sites.
 
-用法：:
+Usage::
 
     from app.container import get_container
     db = get_container().database()
@@ -124,7 +124,7 @@ RERANK_PRESETS = {
 
 
 class Container:
-    """按配置装配并缓存各端口实例的单例容器。"""
+    """Wire and cache one singleton per port according to the settings."""
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -148,7 +148,7 @@ class Container:
                 from app.adapters.database.postgres import PostgresDatabase
 
                 return PostgresDatabase(dsn=settings.dsn, pool_size=settings.pool_size)
-            raise ValueError(f"不支持的 database backend: {backend!r}")
+            raise ValueError(f"unsupported database backend: {backend!r}")
 
         return self._get_or_build("database", build)
 
@@ -172,7 +172,7 @@ class Container:
                     prefix=settings.prefix,
                     timeout=settings.timeout,
                 )
-            raise ValueError(f"不支持的 storage backend: {backend!r}")
+            raise ValueError(f"unsupported storage backend: {backend!r}")
 
         return self._get_or_build("storage", build)
 
@@ -195,7 +195,7 @@ class Container:
                     api_key=self.settings.llm.api_key,
                     model=self.settings.llm.model,
                 )
-            raise ValueError(f"不支持的 llm backend: {backend!r}")
+            raise ValueError(f"unsupported llm backend: {backend!r}")
 
         return self._get_or_build("llm", build)
 
@@ -206,7 +206,7 @@ class Container:
                 from app.adapters.parser.builtin import BuiltinDocumentParser
 
                 return BuiltinDocumentParser()
-            raise ValueError(f"不支持的 parser backend: {backend!r}")
+            raise ValueError(f"unsupported parser backend: {backend!r}")
 
         return self._get_or_build("parser", build)
 
@@ -235,7 +235,7 @@ class Container:
                     dim=cfg.dim,
                     query_prefix=cfg.query_prefix,
                 )
-            print(f"[embedding] 不支持的后端，已禁用: {backend!r}")
+            print(f"[embedding] unsupported backend, disabled: {backend!r}")
             return None
 
         return self._get_or_build("embedder", build)
@@ -301,7 +301,7 @@ class Container:
 
                 dsn = settings.dsn or self.settings.database.dsn
                 if not dsn:
-                    raise ValueError("postgres 向量库需要 OPENCGP_VECTORSTORE_DSN")
+                    raise ValueError("the postgres vector store requires OPENCGP_VECTORSTORE_DSN")
                 return PostgresVectorStore(
                     database=PostgresDatabase(dsn=dsn, pool_size=settings.pool_size),
                     embedder=self.embedder(),
@@ -312,7 +312,7 @@ class Container:
                     rrf_k=settings.rrf_k,
                     max_per_source=settings.max_per_source,
                 )
-            raise ValueError(f"不支持的 vectorstore backend: {backend!r}")
+            raise ValueError(f"unsupported vectorstore backend: {backend!r}")
 
         return self._get_or_build("vectorstore", build)
 
@@ -344,7 +344,7 @@ class Container:
                     font_bold=cfg.font_bold,
                     pdf_margin_mm=cfg.pdf_margin_mm,
                 )
-            raise ValueError(f"不支持的 exporter backend: {backend!r}")
+            raise ValueError(f"unsupported exporter backend: {backend!r}")
 
         return self._get_or_build("exporter", build)
 
@@ -696,7 +696,7 @@ class Container:
                         brpop_timeout=settings.brpop_timeout,
                     )
                 except Exception as exc:  # noqa: BLE001
-                    print(f"[queue] redis backend 不可用，回落 local: {exc!r}")
+                    print(f"[queue] redis backend unavailable, falling back to local: {exc!r}")
             from app.adapters.queue.local import LocalJobQueue
 
             return LocalJobQueue(concurrency=settings.concurrency)
@@ -713,7 +713,7 @@ class Container:
 
                     return build_redis_job_event_bus(url=settings.redis_url)
                 except Exception as exc:
-                    print(f"[jobs] redis 事件总线不可用，回落本地: {exc!r}")
+                    print(f"[jobs] redis event bus unavailable, falling back to in-process: {exc!r}")
             from app.adapters.queue.local import NullJobEventBus
 
             return NullJobEventBus()
@@ -844,7 +844,7 @@ class Container:
                 )
                 if docker.available():
                     return docker
-                print(f"[exec] docker 后端不可用，回落 local: {docker.last_error}")
+                print(f"[exec] docker backend unavailable, falling back to local: {docker.last_error}")
             if backend in ("docker", "local"):
                 from app.adapters.executor.local import LocalExecutor
 
@@ -854,7 +854,7 @@ class Container:
                 )
                 if local.available():
                     return local
-                print("[exec] local 后端不可用，回落 none")
+                print("[exec] local backend unavailable, falling back to none")
             from app.adapters.executor.null import NullExecutor
 
             return NullExecutor()
@@ -893,7 +893,7 @@ class Container:
                 "isolated": False,
                 "images": ["system-runtime"],
                 "missing_images": [],
-                "detail": "无网络隔离，仅适用于本地可信环境",
+                "detail": "no network isolation, only safe in a trusted local environment",
             }
         )
         null = NullExecutor()
@@ -904,7 +904,7 @@ class Container:
                 "isolated": False,
                 "images": [],
                 "missing_images": [],
-                "detail": "未配置代码执行后端",
+                "detail": "no code execution backend configured",
             }
         )
         return backends
@@ -1001,7 +1001,7 @@ _default_container: Container | None = None
 
 
 def get_container() -> Container:
-    """返回进程级默认容器单例。"""
+    """Return the process-wide default container."""
     global _default_container
     if _default_container is None:
         _default_container = Container()

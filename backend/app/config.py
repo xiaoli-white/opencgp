@@ -1,14 +1,16 @@
-"""配置加载器（单一事实来源）。
+"""Configuration loader (single source of truth).
 
-所有配置从环境变量读取，并支持 ``.env`` 文件（``.env`` 中的值不会覆盖已存在的
-环境变量）。统一前缀 ``OPENCGP_``，模块用双下划线后缀区分，例如：
+All settings come from environment variables, optionally seeded by a ``.env`` file
+(values already present in the environment are never overridden). Prefix ``OPENCGP_``,
+suffixed per module, for example:
 
     OPENCGP_DATABASE_BACKEND=sqlite
     OPENCGP_DATABASE_PATH=data/opencgp.db
 
-兼容旧前缀 ``COURSE_STUDIO_``（仅作回退，新部署请统一用 ``OPENCGP_``）。
+The legacy prefix ``COURSE_STUDIO_`` is still honoured as a fallback; new deployments
+should use ``OPENCGP_`` only.
 
-原则：代码里不硬编码任何可配置项；切换 adapter 只改配置、不改代码。
+Rule: never hard-code configurable values; switching an adapter is a config change.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from pathlib import Path
 ENV_PREFIX = "OPENCGP_"
 LEGACY_ENV_PREFIXES = ("COURSE_STUDIO_",)
 
-# 各模块允许的 adapter 名称（供文档与校验参考）
+# Adapter names accepted per module (used by docs and validation)
 DATABASE_BACKENDS = ("sqlite", "postgres")
 STORAGE_BACKENDS = ("local", "s3", "rustfs")
 LLM_BACKENDS = ("openai_compat", "dummy")
@@ -47,7 +49,7 @@ EXECUTOR_BACKENDS = ("docker", "local", "none")
 
 
 def _find_dotenv() -> Path | None:
-    """向上查找 ``.env``（当前目录 → backend/ → 项目根）。"""
+    """Look for ``.env`` upwards: cwd, then backend/, then the project root."""
     cwd = Path.cwd()
     for base in (cwd, cwd / "backend", cwd.parent):
         candidate = base / ".env"
@@ -57,7 +59,7 @@ def _find_dotenv() -> Path | None:
 
 
 def _load_dotenv(path: Path | None = None) -> None:
-    """解析 ``.env`` 并注入 ``os.environ``（不覆盖已存在的环境变量）。"""
+    """Parse ``.env`` and inject it into ``os.environ`` without overriding existing values."""
     path = path or _find_dotenv()
     if path is None or not path.is_file():
         return
@@ -73,7 +75,7 @@ def _load_dotenv(path: Path | None = None) -> None:
 
 
 def _env(key: str, default: str = "") -> str:
-    """读取 ``OPENCGP_<KEY>`` 环境变量，回退旧前缀，再回退默认值。"""
+    """Read ``OPENCGP_<KEY>``, fall back to the legacy prefix, then to the default."""
     value = os.environ.get(ENV_PREFIX + key)
     if value is not None:
         return value
@@ -502,7 +504,7 @@ class ExecConfig:
 
 @dataclass
 class Settings:
-    """应用总配置。"""
+    """Top level application settings."""
 
     app_name: str = "OpenCGP"
     env: str = "development"
@@ -555,6 +557,6 @@ class Settings:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """返回全局唯一配置单例（首次调用时加载 ``.env``）。"""
+    """Return the process-wide settings singleton, loading ``.env`` on first use."""
     _load_dotenv()
     return Settings.load()
