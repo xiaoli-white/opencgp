@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import re
+
 import asyncio
 import tempfile
 from pathlib import Path
@@ -25,12 +28,14 @@ class VideoService:
         backend: str = "none",
         max_images: int = MAX_IMAGES,
         public_base_url: str = "",
+        duration_frames: int = 300,
     ) -> None:
         self.media = media
         self.public_base_url = (public_base_url or "").rstrip("/")
         self.renderer = renderer
         self.backend = (backend or "none").strip().lower()
         self.max_images = max(0, int(max_images))
+        self.duration_frames = max(30, int(duration_frames or 300))
 
     def available(self) -> tuple[bool, str]:
         if self.backend != "remotion":
@@ -48,6 +53,25 @@ class VideoService:
         if callable(checker):
             return checker()
         return True, ""
+
+
+    async def _inline(self, ctx: AuthContext, url: str) -> str:
+        """Inline a media asset so the headless browser needs no credentials.
+
+        The renderer runs outside the API process and cannot send the auth
+        header, so protected media URLs would 401. Assets that already point at
+        a remote URL are left untouched.
+        """
+        match = re.search(r"/api/v1/media/([A-Za-z0-9_\-]+)", url or "")
+        if not match or self.media is None:
+            return url
+        try:
+            asset = self.media.get_asset(ctx, match.group(1))
+            data = self.media.read_bytes(asset)
+        except Exception:  # noqa: BLE001 - fall back to the raw url
+            return url
+        content_type = getattr(asset, "content_type", "") or "image/png"
+        return f"data:{content_type};base64,{base64.b64encode(data).decode('ascii')}"
 
     async def generate(
         self,
@@ -80,6 +104,10 @@ class VideoService:
             resolved_images.append(url)
         if len(resolved_images) > self.max_images:
             resolved_images = resolved_images[: self.max_images]
+        if self.media is not None:
+            resolved_images = [
+                await self._inline(ctx, url) for url in resolved_images
+            ]
 
         # Keep the JSON shape aligned with tools/remotion/render.mjs.
         props: dict[str, Any] = {
@@ -87,7 +115,7 @@ class VideoService:
             "points": resolved_bullets,
             "images": resolved_images,
             "brand": "OpenCGP",
-            "durationInFrames": 300,
+            "durationInFrames": max(30, int(getattr(self, "duration_frames", 300) or 300)),
             "fps": 30,
         }
 

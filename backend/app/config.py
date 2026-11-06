@@ -448,6 +448,7 @@ class VideoConfig:
     project: str = "tools/remotion"
     public_base_url: str = ""
     timeout: float = 300.0
+    duration_frames: int = 300
 
     @classmethod
     def from_env(cls) -> "VideoConfig":
@@ -457,6 +458,7 @@ class VideoConfig:
             project=_env("VIDEO_PROJECT", "tools/remotion") or "tools/remotion",
             public_base_url=_env("VIDEO_PUBLIC_BASE_URL", ""),
             timeout=max(1.0, float(_env("VIDEO_TIMEOUT", "300") or 300)),
+            duration_frames=max(30, int(_env("VIDEO_DURATION_FRAMES", "300") or 300)),
         )
 
 

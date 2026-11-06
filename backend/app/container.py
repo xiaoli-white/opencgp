@@ -856,6 +856,7 @@ class Container:
                 renderer=self.video_renderer(),
                 backend=self.settings.video.backend,
                 public_base_url=getattr(self.settings.video, "public_base_url", ""),
+                duration_frames=getattr(self.settings.video, "duration_frames", 300),
             )
 
         return self._get_or_build("video_service", build)
