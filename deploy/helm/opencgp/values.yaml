@@ -381,6 +381,8 @@ secrets:
   s3AccessKey: ""
   s3SecretKey: ""
   llmApiKey: ""
+  embeddingApiKey: ""
+  rerankApiKey: ""
   imageApiKey: ""
   websearchApiKey: ""
   smtpPassword: ""
@@ -401,3 +403,99 @@ networkPolicy:
   monitoringNamespaceLabel:
     key: kubernetes.io/metadata.name
     value: monitoring
+
+# Advanced backend tuning. Each key becomes OPENCGP_<KEY> in the ConfigMap.
+# Defaults mirror backend/app/config.py.
+tuning:
+  # Hybrid retrieval: fusion strategy, quotas, vector scan limits
+  HYBRID_FUSION: "rrf"
+  HYBRID_LSH_BITS: "12"
+  HYBRID_MAX_PER_SOURCE: "3"
+  HYBRID_MAX_VECTOR_ROWS: "200000"
+  HYBRID_RRF_K: "60"
+  HYBRID_VECTOR_WEIGHT: "0.55"
+
+  # Keyword score floor
+  SEARCH_MIN_SCORE: "0.15"
+
+  # Chunking and upload limits
+  INGEST_CHUNK_OVERLAP: "120"
+  INGEST_CHUNK_SIZE: "800"
+  INGEST_MAX_FILE_MB: "20"
+
+  # Document parser backend
+  PARSER_BACKEND: "builtin"
+
+  # Embedding provider defaults (API key comes from secrets)
+  EMBEDDING_BASE_URL: ""
+  EMBEDDING_BATCH: "32"
+  EMBEDDING_DIM: ""
+  EMBEDDING_DIMENSION: "1024"
+  EMBEDDING_MODEL: "text-embedding-3-small"
+  EMBEDDING_QUERY_PREFIX: ""
+  EMBEDDING_TIMEOUT: "20"
+
+  # Rerank defaults (API key comes from secrets)
+  RERANK_BACKEND: "none"
+  RERANK_BASE_URL: ""
+  RERANK_BATCH: "100"
+  RERANK_CHARS: "2000"
+  RERANK_MODEL: ""
+  RERANK_NORMALIZE: "auto"
+  RERANK_RAW_SCORES: false
+  RERANK_RETRIES: "2"
+  RERANK_TIMEOUT: "20"
+  RERANK_TOP_N: "12"
+  RERANK_WEIGHT: "0.5"
+
+  # Evidence budget for generation
+  GENERATION_DEFAULT_MODE: "strict"
+  GENERATION_EVIDENCE_CHAR_LIMIT: "600"
+  GENERATION_MAX_EVIDENCE: "8"
+  GENERATION_TOP_K: "8"
+
+  # Outline blueprint defaults
+  BLUEPRINT_DEFAULT_MODE: ""
+  BLUEPRINT_TOP_K: "6"
+
+  # Follow-up context budget
+  CONVERSATION_CONTENT_CHAR_LIMIT: "6000"
+  CONVERSATION_EVIDENCE_CHAR_LIMIT: "600"
+  CONVERSATION_HISTORY_CHAR_LIMIT: "400"
+  CONVERSATION_HISTORY_LIMIT: "20"
+
+  # Queue behaviour and SSE cadence
+  JOB_BRPOP_TIMEOUT: "2"
+  JOB_MAX_ATTEMPTS: "3"
+  JOB_SSE_INTERVAL: "0.6"
+  JOB_SSE_MAX_SECONDS: "600"
+
+  # Page fetch used to enrich search snippets
+  WEBSEARCH_FETCH_CHARS: "4000"
+  WEBSEARCH_FETCH_ENABLED: true
+  WEBSEARCH_FETCH_TIMEOUT: "8"
+  WEBSEARCH_FETCH_TOP: "2"
+  WEBSEARCH_TIMEOUT: "10"
+
+  # EPUB/PDF export
+  EXPORTER_FONT_BOLD: ""
+  EXPORTER_FONT_REGULAR: ""
+  EXPORTER_PDF_MARGIN_MM: "18"
+
+  # Image generation limits
+  IMAGE_MAX_BYTES: "8388608"
+  IMAGE_TIMEOUT: "60"
+
+  # Code sandbox limits
+  EXEC_IMAGES: ""
+  EXEC_MAX_BYTES: "65536"
+
+  # Object storage timeout
+  S3_TIMEOUT: "10"
+
+  # Vector store connection pool
+  VECTORSTORE_POOL_SIZE: "8"
+
+  # Fallback recipients for admin notices
+  NOTIFY_ADMIN_EMAIL: ""
+

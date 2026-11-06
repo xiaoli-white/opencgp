@@ -57,6 +57,10 @@ data:
   {{- range $key, $value := .Values.config.extraEnv }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
+  {{- range $key, $value := .Values.tuning }}
+  OPENCGP_{{ $key }}: {{ $value | quote }}
+  {{- end }}
+
 ---
 apiVersion: v1
 kind: ConfigMap

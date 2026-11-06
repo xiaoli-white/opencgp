@@ -1,36 +1,33 @@
 # ============================================================
-# AI 课程工作室 · Docker Compose（M0 占位）
+# OpenCGP · docker compose
 #
-# 说明：M0 阶段前后端以「本地进程」方式启动即可（见 README）。
-# 本文件先占位，后续补齐 Dockerfile 后即可 `docker compose up` 一键起。
+# NOTE: this file expects backend/Dockerfile and frontend/Dockerfile,
+# which are not part of the repo yet. For local development start the
+# two processes directly (see README "Quick start").
 # ============================================================
 
 services:
   backend:
     build:
       context: ./backend
-    container_name: course-studio-backend
+    container_name: opencgp-backend
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     env_file:
       - ./backend/.env
     volumes:
       - ./backend/data:/app/data
-    # healthcheck:
-    #   test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-    #   interval: 10s
-    #   timeout: 5s
-    #   retries: 5
     restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
-    container_name: course-studio-frontend
+      args:
+        # API base URL baked into the bundle
+        VITE_API_BASE: ${VITE_API_BASE:-http://127.0.0.1:8000}
+    container_name: opencgp-frontend
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
-    environment:
-      - NEXT_PUBLIC_API_BASE_URL=http://backend:8000
+      - "${FRONTEND_PORT:-3001}:80"
     depends_on:
       - backend
     restart: unless-stopped
