@@ -33,7 +33,7 @@ import {
   policyLabel,
   profileDescriptionLabel,
   profileNameLabel,
-  unitNameLabel,
+  profileUnitNameLabel,
   validatorLabel,
 } from "@/i18n/labels";
 
@@ -67,7 +67,7 @@ function ProfileCard({
   canWrite: boolean;
 }) {
   const unitName = profile.spec?.unit?.name
-    ? unitNameLabel(t, profile.spec.unit.name)
+    ? profileUnitNameLabel(t, profile, profile.spec.unit.name)
     : "-";
   const words = profile.spec?.unit?.default_words ?? 0;
   const validators = profile.spec?.validation?.validators ?? [];

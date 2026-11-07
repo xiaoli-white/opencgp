@@ -573,6 +573,15 @@ export type Series = {
   updated_at: number;
 };
 
+export type LockSummary = {
+  user_id?: string;
+  user_name?: string;
+  token?: string;
+  expires_at?: number;
+  heartbeat_at?: number;
+  is_mine?: boolean;
+};
+
 export type Unit = {
   id: string;
   series_id: string;
@@ -586,6 +595,10 @@ export type Unit = {
   last_mode: GenerationMode | "";
   created_at: number;
   updated_at: number;
+  lock?: LockSummary | null;
+  lock_state?: string;
+  locked_by_me?: boolean;
+  locked_by_other?: boolean;
 };
 
 export type UnitVersion = {
@@ -879,6 +892,10 @@ export type Piece = {
   citations: Citation[];
   created_at: number;
   updated_at: number;
+  lock?: LockSummary | null;
+  lock_state?: string;
+  locked_by_me?: boolean;
+  locked_by_other?: boolean;
 };
 
 export type PieceVersion = {

@@ -38,6 +38,7 @@ type BatchPayload = {
   jobIds?: unknown;
   jobs?: unknown;
   unit_jobs?: unknown;
+  units?: unknown;
 };
 
 type SeriesGenerateAllPanelProps = {
@@ -238,7 +239,12 @@ export default function SeriesGenerateAllPanel({
         batchPayload = await api.generateAllSeries(seriesId, { regenerate });
       } catch (err) {
         if (!(err instanceof ApiError) || ![404, 405, 501].includes(err.status)) {
-          setError(err instanceof Error ? err.message : t("errors.saveFailed"));
+          const message =
+            err instanceof Error ? err.message : t("errors.saveFailed");
+          setError(message);
+          for (const unit of selected) {
+            patchRun(unit.id, { status: "failed", error: message });
+          }
           setRunning(false);
           return;
         }
@@ -256,14 +262,39 @@ export default function SeriesGenerateAllPanel({
             if (jobId) mapping.set(unit.id, jobId);
           });
         }
-        if (mapping.size > 0) {
-          mapping.forEach((jobId, unitId) => {
-            if (!initial[unitId]) return;
-            patchRun(unitId, { jobId, status: "queued" });
-            watchJob(jobId, unitId);
-          });
-          return;
+
+        const handled = new Set<string>();
+        if (Array.isArray(batchPayload.units)) {
+          for (const item of batchPayload.units) {
+            if (!item || typeof item !== "object") continue;
+            const record = item as Record<string, unknown>;
+            const unitId = String(record.unit_id ?? record.unitId ?? "");
+            if (!unitId || !initial[unitId]) continue;
+            handled.add(unitId);
+            const jobId = String(record.job_id ?? record.jobId ?? "");
+            if (jobId) mapping.set(unitId, jobId);
+            const status = String(record.status ?? "");
+            if (status === "failed") {
+              patchRun(unitId, {
+                status: "failed",
+                error: String(record.error ?? record.reason ?? ""),
+              });
+            }
+          }
         }
+
+        mapping.forEach((jobId, unitId) => {
+          if (!initial[unitId]) return;
+          patchRun(unitId, { jobId, status: "queued" });
+          watchJob(jobId, unitId);
+        });
+
+        const fallbackUnits = selected.filter(
+          (unit) => !mapping.has(unit.id) && !handled.has(unit.id),
+        );
+        if (fallbackUnits.length === 0) return;
+        await enqueueFallback(fallbackUnits);
+        return;
       }
 
       // The batch endpoint is not available yet: enqueue each unit from the client.
@@ -327,11 +358,6 @@ export default function SeriesGenerateAllPanel({
               className="text-lg font-semibold tabular-nums text-slate-900 dark:text-white"
             >
               {done} / {total}
-            </span>
-            <span className="text-[11px] text-slate-500 dark:text-slate-400">
-              {batchMode === "regenerate"
-                ? t("series.regenerateAll")
-                : t("series.generateAll")}
             </span>
           </div>
           <div className="mt-2 h-1.5 w-56 max-w-full overflow-hidden rounded-full bg-slate-200/70 dark:bg-white/10">

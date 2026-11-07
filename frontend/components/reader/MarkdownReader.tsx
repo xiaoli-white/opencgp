@@ -210,6 +210,14 @@ export default function MarkdownReader({
     dismiss();
   }, [content, dismiss]);
 
+  const { body, notice } = useMemo(
+    () =>
+      variant === "reader"
+        ? splitLooseNotice(content)
+        : { body: content, notice: "" },
+    [content, variant],
+  );
+
   const entries = useMemo<CitationEntry[]>(() => {
     const map = new Map<string, Citation>();
     citations.forEach((citation, index) => {
@@ -218,10 +226,13 @@ export default function MarkdownReader({
     evidence?.forEach((item) => {
       map.set(item.marker, item.citation);
     });
-    return Array.from(map, ([marker, citation]) => ({ marker, citation })).sort(
-      (a, b) => Number(a.marker.slice(1)) - Number(b.marker.slice(1)),
+    const inline = new Set(
+      Array.from(body.matchAll(/\[E(\d+)\]/g), (match) => `E${match[1]}`),
     );
-  }, [citations, evidence]);
+    return Array.from(map, ([marker, citation]) => ({ marker, citation }))
+      .filter((entry) => inline.has(entry.marker))
+      .sort((a, b) => Number(a.marker.slice(1)) - Number(b.marker.slice(1)));
+  }, [body, citations, evidence]);
 
   const lookup = useMemo(
     () => new Map(entries.map((entry) => [entry.marker, entry.citation])),
@@ -384,14 +395,6 @@ export default function MarkdownReader({
       window.removeEventListener("resize", dismiss);
     };
   }, [askEnabled, onAskSelection, dismiss]);
-
-  const { body, notice } = useMemo(
-    () =>
-      variant === "reader"
-        ? splitLooseNotice(content)
-        : { body: content, notice: "" },
-    [content, variant],
-  );
 
   const loose = variant === "reader" && (mode === "loose" || Boolean(notice));
 

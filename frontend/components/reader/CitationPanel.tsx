@@ -240,6 +240,7 @@ export function CitationEvidencePanel({
   const tr = useCitationText();
   const panelRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const openedRef = useRef(false);
 
   const index = useMemo(
     () => entries.findIndex((entry) => entry.marker === activeMarker),
@@ -248,7 +249,12 @@ export function CitationEvidencePanel({
   const entry = index >= 0 ? entries[index] : null;
 
   useEffect(() => {
-    if (!entry) return;
+    if (!entry) {
+      openedRef.current = false;
+      return;
+    }
+    if (openedRef.current) return;
+    openedRef.current = true;
     const node = closeRef.current;
     if (node) node.focus({ preventScroll: true });
   }, [entry]);

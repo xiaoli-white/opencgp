@@ -39,6 +39,7 @@ import {
 import { cancelJob, runJob } from "@/lib/jobs";
 import {
   createEditLockController,
+  lockStateFromRead,
   type EditLockController,
   type EditLockState,
 } from "@/lib/editLock";
@@ -86,7 +87,7 @@ function useElapsed(active: boolean): number {
 export default function PieceEditorPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
-  const { can, roleKey, roleName, tenant } = useSession();
+  const { can, roleKey, roleName, tenant, me } = useSession();
   const { t } = useI18n();
   const writable = can("write");
 
@@ -226,13 +227,20 @@ export default function PieceEditorPage() {
         ]);
         setPiece(detail);
         setVersions(versionData.versions);
+        const readLock = lockStateFromRead(
+          detail,
+          "piece",
+          detail.id,
+          me?.user?.id ?? "",
+        );
+        if (readLock) setEditLockState(readLock);
       } catch (err) {
         setError(err instanceof Error ? err.message : t("piece.loadFailed"));
       } finally {
         setLoading(false);
       }
     },
-    [id, t],
+    [id, me?.user?.id, t],
   );
 
   useEffect(() => {

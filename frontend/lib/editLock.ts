@@ -120,12 +120,32 @@ function isMissingEndpoint(error: unknown): boolean {
   );
 }
 
-async function acquireGeneric(kind: EditLockKind, id: string): Promise<LockHolder> {
+async function acquireGeneric(
+  kind: EditLockKind,
+  id: string,
+  force = false,
+): Promise<LockHolder> {
   const payload = await request<Record<string, unknown>>(
     `/api/v1/locks/${kind}/${encodeURIComponent(id)}`,
-    { method: "POST", body: JSON.stringify({}) },
+    { method: "POST", body: JSON.stringify({ force }) },
   );
   return normalizeGeneric(payload, kind, id);
+}
+
+async function acquireLegacy(
+  kind: EditLockKind,
+  id: string,
+  force = false,
+): Promise<LockHolder> {
+  if (kind === "unit") {
+    const result = await api.acquireUnitLock(id, force);
+    return normalizeLegacyUnit(result.lock, id);
+  }
+  const result = await request<Record<string, unknown>>(
+    `/api/v1/pieces/${encodeURIComponent(id)}/lock`,
+    { method: "POST", body: JSON.stringify({ force }) },
+  );
+  return normalizeGeneric(result, kind, id);
 }
 
 export async function acquireEditLock(
@@ -134,18 +154,25 @@ export async function acquireEditLock(
   force = false,
 ): Promise<AcquireOutcome> {
   try {
-    if (kind === "unit") {
-      const result = await api.acquireUnitLock(id, force);
-      return { kind: "held", holder: normalizeLegacyUnit(result.lock, id) };
-    }
-    const holder = await acquireGeneric(kind, id);
+    const holder = await acquireGeneric(kind, id, force);
     return { kind: "held", holder };
   } catch (error) {
-    if (isMissingEndpoint(error)) return { kind: "unsupported" };
-    if (error instanceof ApiError && error.status === 409) {
-      return conflictFromError(error, kind, id);
+    if (!isMissingEndpoint(error)) {
+      if (error instanceof ApiError && error.status === 409) {
+        return conflictFromError(error, kind, id);
+      }
+      throw error;
     }
-    throw error;
+    try {
+      const holder = await acquireLegacy(kind, id, force);
+      return { kind: "held", holder };
+    } catch (legacyError) {
+      if (isMissingEndpoint(legacyError)) return { kind: "unsupported" };
+      if (legacyError instanceof ApiError && legacyError.status === 409) {
+        return conflictFromError(legacyError, kind, id);
+      }
+      throw legacyError;
+    }
   }
 }
 
@@ -154,12 +181,21 @@ export async function renewEditLock(
   id: string,
   token: string,
 ): Promise<LockHolder> {
+  try {
+    const payload = await request<Record<string, unknown>>(
+      `/api/v1/locks/${kind}/${encodeURIComponent(id)}/renew`,
+      { method: "POST", body: JSON.stringify({ token }) },
+    );
+    return normalizeGeneric(payload, kind, id);
+  } catch (error) {
+    if (!isMissingEndpoint(error)) throw error;
+  }
   if (kind === "unit") {
     const result = await api.heartbeatUnitLock(id, token);
     return normalizeLegacyUnit(result.lock, id);
   }
   const payload = await request<Record<string, unknown>>(
-    `/api/v1/locks/${kind}/${encodeURIComponent(id)}/renew`,
+    `/api/v1/pieces/${encodeURIComponent(id)}/lock/heartbeat`,
     { method: "POST", body: JSON.stringify({ token }) },
   );
   return normalizeGeneric(payload, kind, id);
@@ -171,12 +207,21 @@ export async function releaseEditLock(
   token: string,
 ): Promise<void> {
   if (!token && kind === "unit") return;
+  try {
+    await request<{ ok?: boolean }>(
+      `/api/v1/locks/${kind}/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}`,
+      { method: "DELETE" },
+    );
+    return;
+  } catch (error) {
+    if (!isMissingEndpoint(error)) throw error;
+  }
   if (kind === "unit") {
     await api.releaseUnitLock(id, token);
     return;
   }
   await request<{ ok?: boolean }>(
-    `/api/v1/locks/${kind}/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}`,
+    `/api/v1/pieces/${encodeURIComponent(id)}/lock?token=${encodeURIComponent(token)}`,
     { method: "DELETE" },
   );
 }
@@ -192,17 +237,21 @@ export function releaseEditLockBeacon(
   const tenant = getTenantId();
   if (auth) headers["Authorization"] = `Bearer ${auth}`;
   if (tenant) headers["X-Tenant-Id"] = tenant;
-  const path =
+  const legacyPath =
     kind === "unit"
       ? `/api/v1/units/${encodeURIComponent(id)}/lock`
-      : `/api/v1/locks/${kind}/${encodeURIComponent(id)}`;
-  try {
-    void fetch(
-      `${API_BASE}${path}?token=${encodeURIComponent(token)}`,
-      { method: "DELETE", headers, keepalive: true },
-    );
-  } catch {
-    return;
+      : `/api/v1/pieces/${encodeURIComponent(id)}/lock`;
+  const query = `?token=${encodeURIComponent(token)}`;
+  for (const path of [`/api/v1/locks/${kind}/${encodeURIComponent(id)}`, legacyPath]) {
+    try {
+      void fetch(`${API_BASE}${path}${query}`, {
+        method: "DELETE",
+        headers,
+        keepalive: true,
+      });
+    } catch {
+      // Best effort only; the lock also expires on its own TTL.
+    }
   }
 }
 
@@ -212,6 +261,40 @@ export function formatLockRemaining(expiresAt: number | null, now = Date.now()):
   const minutes = Math.floor(total / 60);
   const rest = total % 60;
   return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+/** Read-only lock snapshot included by unit/piece read responses. */
+export function lockStateFromRead(
+  payload:
+    | {
+        lock?: unknown;
+        lock_state?: string;
+        state?: string;
+        locked_by_me?: boolean;
+      }
+    | null
+    | undefined,
+  kind: EditLockKind,
+  id: string,
+  currentUserId = "",
+): EditLockState | null {
+  if (!payload) return null;
+  const state = String(payload.lock_state ?? payload.state ?? "").toLowerCase();
+  const rawLock =
+    payload.lock && typeof payload.lock === "object"
+      ? (payload.lock as Record<string, unknown>)
+      : null;
+  if (!rawLock || state === "free") return { status: "idle" };
+  const holder = normalizeGeneric({ lock: rawLock }, kind, id);
+  if (payload.locked_by_me || (currentUserId && holder.userId === currentUserId)) {
+    // A lock owned by this user in another tab is not this tab's edit session.
+    return { status: "idle" };
+  }
+  return {
+    status: "blocked",
+    name: holder.userName || "another member",
+    expiresAt: holder.expiresAt || null,
+  };
 }
 
 export function isLockConflict(error: unknown): boolean {

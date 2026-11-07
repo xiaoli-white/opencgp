@@ -36,6 +36,7 @@ import {
 } from "@/lib/api";
 import {
   createEditLockController,
+  lockStateFromRead,
   releaseEditLockBeacon,
   type EditLockController,
   type EditLockState,
@@ -87,7 +88,7 @@ const VIEWS: { value: WorkspaceView; key: string; icon: typeof BookOpen }[] = [
 ];
 
 export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
-  const { can, roleKey, roleName } = useSession();
+  const { can, roleKey, roleName, me } = useSession();
   const { t } = useI18n();
   const canWrite = can("write");
   const canManage = can("manage_members");
@@ -257,6 +258,27 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
     () => detail?.units.find((unit) => unit.id === activeId) ?? null,
     [detail, activeId],
   );
+
+  useEffect(() => {
+    if (!activeId || editingUnitId) return;
+    let alive = true;
+    api
+      .getUnit(activeId)
+      .then((unit) => {
+        if (!alive || editingUnitRef.current || lockController.current) return;
+        const next = lockStateFromRead(
+          unit,
+          "unit",
+          activeId,
+          me?.user?.id ?? "",
+        );
+        if (next) setLockState(next);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [activeId, editingUnitId, me?.user?.id]);
 
   const currentVersionRecord = useMemo(
     () =>

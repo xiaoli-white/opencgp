@@ -353,6 +353,14 @@ const BUILTIN_PROFILE_KEYS: Record<string, string> = {
   profile_builtin_essay: "essay",
 };
 
+const BUILTIN_PROFILE_UNIT_KEYS: Record<string, string> = {
+  profile_builtin_tutorial: "lesson",
+  profile_builtin_article: "section",
+  profile_builtin_novel: "chapter",
+  profile_builtin_report: "part",
+  profile_builtin_essay: "passage",
+};
+
 type ProfileLike = {
   id: string;
   name: string;
@@ -384,6 +392,28 @@ export function profileDescriptionLabel(
   const raw = profile.description || fallback;
   if (!key) return raw;
   return lookup(t, `profile.builtin.${key}.description`) ?? raw;
+}
+
+export function profileUnitNameLabel(
+  t: Translate,
+  profile: ProfileLike | null | undefined,
+  fallback = "",
+): string {
+  if (!profile) return fallback;
+  const key = BUILTIN_PROFILE_UNIT_KEYS[profile.id];
+  if (!key) return fallback;
+  return enumLabel(t, "unitName", key, fallback);
+}
+
+export function profileUnitPluralLabel(
+  t: Translate,
+  profile: ProfileLike | null | undefined,
+  fallback = "",
+): string {
+  if (!profile) return fallback;
+  const key = BUILTIN_PROFILE_UNIT_KEYS[profile.id];
+  if (!key) return fallback;
+  return enumLabel(t, "unitName", `${key}Plural`, fallback);
 }
 
 const BUILTIN_TAGS = [
