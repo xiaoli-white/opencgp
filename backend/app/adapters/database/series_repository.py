@@ -605,6 +605,7 @@ def _load_list(raw: Any) -> list[Any]:
 
 def _to_series(row: Mapping[str, Any]) -> Series:
     keys = set(row.keys())
+    stored_language = str(row["language"] or "") if "language" in keys else ""
     return Series(
         id=str(row["id"]),
         title=str(row["title"]),
@@ -612,7 +613,8 @@ def _to_series(row: Mapping[str, Any]) -> Series:
         brief=str(row["brief"] or "") if "brief" in keys else "",
         audience=str(row["audience"] or ""),
         difficulty=str(row["difficulty"] or "intermediate"),
-        language=str(row["language"] or "zh"),
+        language=stored_language or "zh",
+        language_explicit=bool(stored_language.strip()),
         user_id=str(row["user_id"] or "") if "user_id" in keys else "",
         profile_id=str(row["profile_id"] or "") if "profile_id" in keys else "",
         created_at=float(row["created_at"]),

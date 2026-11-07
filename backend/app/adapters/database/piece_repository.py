@@ -25,6 +25,8 @@ SCHEMA: tuple[str, ...] = (
         current_version INTEGER NOT NULL DEFAULT 0,
         target_words INTEGER NOT NULL DEFAULT 3000,
         last_mode TEXT NOT NULL DEFAULT '',
+        grounded INTEGER NOT NULL DEFAULT 0,
+        gate_json TEXT NOT NULL DEFAULT '{}',
         citations_json TEXT NOT NULL DEFAULT '[]',
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
@@ -50,6 +52,8 @@ SCHEMA: tuple[str, ...] = (
 COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("pieces", "brief", "TEXT NOT NULL DEFAULT ''"),
     ("pieces", "profile_id", "TEXT NOT NULL DEFAULT ''"),
+    ("pieces", "grounded", "INTEGER NOT NULL DEFAULT 0"),
+    ("pieces", "gate_json", "TEXT NOT NULL DEFAULT '{}'"),
 )
 
 
@@ -80,9 +84,9 @@ class DatabasePieceRepository(PieceRepository):
             """
             INSERT INTO pieces
                 (id, tenant_id, user_id, title, brief, profile_json, outline_json, content,
-                 status, current_version, target_words, last_mode, citations_json,
-                 profile_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 status, current_version, target_words, last_mode, grounded, gate_json,
+                 citations_json, profile_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 piece.id,
@@ -97,6 +101,8 @@ class DatabasePieceRepository(PieceRepository):
                 int(piece.current_version),
                 int(piece.target_words),
                 piece.last_mode,
+                1 if piece.grounded else 0,
+                json.dumps(piece.gate or {}, ensure_ascii=False),
                 _dump_citations(piece.citations),
                 piece.profile_id,
                 created,
@@ -195,6 +201,8 @@ class DatabasePieceRepository(PieceRepository):
         citations: Sequence[Citation] | None = None,
         note: str = "",
         mode: str = "",
+        grounded: bool | None = None,
+        gate: dict[str, Any] | None = None,
     ) -> tuple[Piece, PieceVersion] | None:
         self.ensure_schema()
         current = self.get(piece_id)
@@ -237,7 +245,8 @@ class DatabasePieceRepository(PieceRepository):
         self.database.execute(
             """
             UPDATE pieces SET content = ?, outline_json = ?, citations_json = ?,
-                status = ?, current_version = ?, last_mode = ?, updated_at = ?
+                status = ?, current_version = ?, last_mode = ?, grounded = ?,
+                gate_json = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -247,6 +256,12 @@ class DatabasePieceRepository(PieceRepository):
                 "completed" if content.strip() else current.status,
                 version,
                 mode or current.last_mode,
+                (1 if grounded else 0)
+                if grounded is not None
+                else (1 if current.grounded else 0),
+                json.dumps(gate, ensure_ascii=False)
+                if gate is not None
+                else json.dumps(current.gate or {}, ensure_ascii=False),
                 now,
                 piece_id,
             ),
@@ -358,6 +373,10 @@ def _row_to_piece(row: Mapping[str, Any]) -> Piece:
         current_version=int(row["current_version"] or 0),
         target_words=int(row["target_words"] or 0),
         last_mode=str(row["last_mode"] or ""),
+        grounded=bool(row["grounded"]) if "grounded" in row.keys() else False,
+        gate=_load_json(row["gate_json"], {})
+        if "gate_json" in row.keys()
+        else {},
         citations=[item for item in citations if isinstance(item, dict)]
         if isinstance(citations, list)
         else [],

@@ -265,6 +265,27 @@ class SimpleVectorStore(VectorStore):
     ) -> list[dict]:
         return await asyncio.to_thread(self._list_chunks_sync, tenant_id, source_id)
 
+    async def count_chunks(
+        self, tenant_id: str = "", source_ids: Sequence[str] | None = None
+    ) -> int:
+        return await asyncio.to_thread(
+            self._count_chunks_sync, tenant_id, list(source_ids or [])
+        )
+
+    def _count_chunks_sync(
+        self, tenant_id: str, source_ids: Sequence[str]
+    ) -> int:
+        conn = self._connection()
+        clause, params = _tenant_filter_plain(tenant_id)
+        sql = "SELECT count(*) FROM chunks WHERE 1 = 1" + clause
+        values: list[object] = [*params]
+        if source_ids:
+            placeholders = ",".join("?" for _ in source_ids)
+            sql += f" AND source_id IN ({placeholders})"
+            values.extend(source_ids)
+        row = conn.execute(sql, values).fetchone()
+        return int(row[0]) if row else 0
+
     async def embedded_index(
         self, tenant_id: str = "", source_id: str = "", provider_id: str = ""
     ) -> dict[str, tuple[str, int]]:

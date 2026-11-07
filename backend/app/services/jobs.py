@@ -30,6 +30,7 @@ from app.services.errors import (
     JobNotFoundError,
     JobNotTerminalError,
     UnsupportedJobKindError,
+    InsufficientEvidenceError,
 )
 
 STAGE_START = 0.05
@@ -40,6 +41,23 @@ STAGE_DONE = 0.95
 # a worker that died without releasing its claim; normal completion releases
 # the claim immediately.
 GENERATION_CLAIM_STALE_SECONDS = 6 * 60 * 60
+
+CLAIM_TARGETS: dict[str, tuple[str, str, str, str, str]] = {
+    KIND_UNIT_GENERATE: (
+        "unit_id",
+        "try_claim_generation",
+        "get_generation_claim",
+        "clear_generation_claim",
+        "finish_generation",
+    ),
+    KIND_BLUEPRINT_GENERATE: (
+        "series_id",
+        "try_claim_blueprint_generation",
+        "get_blueprint_generation_claim",
+        "clear_blueprint_generation_claim",
+        "finish_blueprint_generation",
+    ),
+}
 
 
 @dataclass
@@ -85,6 +103,8 @@ class JobService:
     llm_for: Callable[[str], Any] | None = None
     embedding_for: Callable[[str, str, str], Any] | None = None
     retrieval_for: Callable[[str, str], Any] | None = None
+    series_repository: Any = None
+    profiles: Any = None
     events: Any = None
     vectorstore: Any = None
     embedder: Any = None
@@ -139,18 +159,21 @@ class JobService:
     def submit_idempotent(
         self, kind: str, payload: dict[str, Any], ctx: JobContext
     ) -> tuple[Job, bool]:
-        """Submit a job, deduplicating unit generation per unit.
+        """Submit a job, deduplicating generation per claimed resource.
 
-        Returns ``(job, created)``.  When a unit already has an active
-        ``unit_generate`` job, the existing job is returned and ``created`` is
-        false.  The claim is stored in the database, so the check is safe for
-        both a single process and multiple API/worker processes.
+        Returns ``(job, created)``.  When the unit or series already has an
+        active generation job of the same kind, the existing job is returned
+        and ``created`` is false.  The claim is stored in the database, so the
+        check is safe for a single process and for multiple API/worker
+        processes.
         """
         resolved = (kind or "").strip().lower()
         body = dict(payload or {})
-        unit_id = str(body.get("unit_id") or "").strip()
-        claimer = getattr(self.repository, "try_claim_generation", None)
-        if resolved != KIND_UNIT_GENERATE or not unit_id or not callable(claimer):
+        target = CLAIM_TARGETS.get(resolved)
+        claim_key = target[0] if target else ""
+        resource_id = str(body.get(claim_key) or "").strip()
+        claimer = getattr(self.repository, target[1], None) if target else None
+        if not target or not resource_id or not callable(claimer):
             return self.submit(resolved, body, ctx), True
 
         job = Job.create(
@@ -165,7 +188,7 @@ class JobService:
         stale_before = time.time() - GENERATION_CLAIM_STALE_SECONDS
         try:
             claimed, existing_job_id = claimer(
-                unit_id, ctx.tenant_id, job.id, stale_before
+                resource_id, ctx.tenant_id, job.id, stale_before
             )
         except Exception:
             self.repository.delete(job.id)
@@ -178,18 +201,19 @@ class JobService:
             if existing is None and existing_job_id:
                 # The claim row may reference a job that was deleted; retry
                 # once after clearing the orphaned claim.
-                clear = getattr(self.repository, "clear_generation_claim", None)
-                if callable(clear):
+                getter = getattr(self.repository, target[2], None)
+                clear = getattr(self.repository, target[3], None)
+                if callable(getter) and callable(clear):
                     try:
-                        current = self.repository.get_generation_claim(unit_id)
+                        current = getter(resource_id)
                         if current is not None and str(
                             current.get("job_id") or ""
                         ) == existing_job_id:
-                            clear(unit_id)
+                            clear(resource_id)
                     except Exception:
                         pass
                 claimed, existing_job_id = claimer(
-                    unit_id, ctx.tenant_id, job.id, stale_before
+                    resource_id, ctx.tenant_id, job.id, stale_before
                 )
                 if not claimed:
                     existing = (
@@ -200,7 +224,7 @@ class JobService:
                     if existing is not None:
                         return existing, False
                     raise QueueUnavailableError(
-                        "another generation job owns this unit but cannot be loaded"
+                        "another generation job owns this resource but cannot be loaded"
                     )
                 # The second attempt won; restore the job row we deleted.
                 self.repository.create(job)
@@ -208,7 +232,7 @@ class JobService:
                 if existing is not None:
                     return existing, False
                 raise QueueUnavailableError(
-                    "another generation job owns this unit but cannot be loaded"
+                    "another generation job owns this resource but cannot be loaded"
                 )
 
         quota_kind = QUOTA_KIND_BY_JOB_KIND.get(resolved, "generate")
@@ -219,9 +243,9 @@ class JobService:
                 )
             except Exception:
                 self.repository.delete(job.id)
-                finisher = getattr(self.repository, "finish_generation", None)
+                finisher = getattr(self.repository, target[4], None)
                 if callable(finisher):
-                    finisher(unit_id, job.id, "failed")
+                    finisher(resource_id, job.id, "failed")
                 raise
         if self.queue is not None:
             try:
@@ -230,9 +254,9 @@ class JobService:
                 self.repository.update_status(
                     job.id, "failed", error=f"queue unavailable: {exc}"
                 )
-                finisher = getattr(self.repository, "finish_generation", None)
+                finisher = getattr(self.repository, target[4], None)
                 if callable(finisher):
-                    finisher(unit_id, job.id, "failed")
+                    finisher(resource_id, job.id, "failed")
                 raise QueueUnavailableError(
                     f"job queue is unavailable: {exc}"
                 ) from exc
@@ -308,6 +332,16 @@ class JobService:
                 claim = getter(unit_id)
                 if claim is not None and str(claim.get("job_id") or "") == job.id:
                     clearer(unit_id)
+        elif job.kind == KIND_BLUEPRINT_GENERATE:
+            series_id = str((job.payload or {}).get("series_id") or "").strip()
+            getter = getattr(self.repository, "get_blueprint_generation_claim", None)
+            clearer = getattr(
+                self.repository, "clear_blueprint_generation_claim", None
+            )
+            if series_id and callable(getter) and callable(clearer):
+                claim = getter(series_id)
+                if claim is not None and str(claim.get("job_id") or "") == job.id:
+                    clearer(series_id)
         return job
 
     def recover_stale(self) -> int:
@@ -379,45 +413,54 @@ class JobService:
             self._finish_generation_claim(job)
 
     def _finish_generation_claim(self, job: Job) -> None:
-        if job.kind != KIND_UNIT_GENERATE:
+        target = CLAIM_TARGETS.get(job.kind)
+        if target is None:
             return
-        unit_id = str((job.payload or {}).get("unit_id") or "").strip()
-        finisher = getattr(self.repository, "finish_generation", None)
-        if not unit_id or not callable(finisher):
+        claim_key, _, _, _, finisher_name = target
+        resource_id = str((job.payload or {}).get(claim_key) or "").strip()
+        finisher = getattr(self.repository, finisher_name, None)
+        if not resource_id or not callable(finisher):
             return
         current = self.repository.get(job.id)
         state = current.status if current is not None else STATUS_FAILED
         try:
-            finisher(unit_id, job.id, state)
+            finisher(resource_id, job.id, state)
         except Exception as exc:  # noqa: BLE001
-            print(f"[jobs] failed to release the generation claim for {unit_id}: {exc!r}")
+            print(f"[jobs] failed to release the generation claim for {resource_id}: {exc!r}")
 
-    def _ensure_unit_generation_claim(self, job: Job) -> bool:
-        """Make sure this job still owns the unit before running it."""
-        if job.kind != KIND_UNIT_GENERATE:
+    def _ensure_generation_claim(self, job: Job) -> bool:
+        """Make sure this job still owns the resource before running it."""
+        target = CLAIM_TARGETS.get(job.kind)
+        if target is None:
             return True
-        unit_id = str((job.payload or {}).get("unit_id") or "").strip()
-        if not unit_id:
+        claim_key, _, getter_name, _, _ = target
+        resource_id = str((job.payload or {}).get(claim_key) or "").strip()
+        if not resource_id:
             return True
-        getter = getattr(self.repository, "get_generation_claim", None)
-        marker = getattr(self.repository, "mark_generation_state", None)
+        getter = getattr(self.repository, getter_name, None)
+        marker_name = (
+            "mark_generation_state"
+            if job.kind == KIND_UNIT_GENERATE
+            else "mark_blueprint_generation_state"
+        )
+        marker = getattr(self.repository, marker_name, None)
         if not callable(getter) or not callable(marker):
             return True
-        claim = getter(unit_id)
+        claim = getter(resource_id)
         if claim is not None:
             owner = str(claim.get("job_id") or "")
             if owner and owner != job.id:
                 state = str(claim.get("state") or "")
                 message = (
-                    "another generation job is already active for this unit"
+                    "another generation job is already active for this resource"
                     if state in ("queued", "generating")
-                    else "a newer generation job already ran for this unit"
+                    else "a newer generation job already ran for this resource"
                 )
                 self._set_status(job.id, STATUS_FAILED, None, message)
                 return False
-            return bool(marker(unit_id, job.id, "generating"))
+            return bool(marker(resource_id, job.id, "generating"))
         # Legacy job enqueued before generation claims existed: let it run.
-        marker(unit_id, job.id, "generating")
+        marker(resource_id, job.id, "generating")
         return True
 
     async def _handle_job(self, job: Job) -> None:
@@ -427,7 +470,7 @@ class JobService:
         if self.repository.has_cancel_request(job_id):
             self._set_status(job_id, STATUS_CANCELED, None, "Canceled")
             return
-        if not self._ensure_unit_generation_claim(job):
+        if not self._ensure_generation_claim(job):
             return
         self._set_status(job_id, STATUS_RUNNING)
         retrieval = None
@@ -457,6 +500,11 @@ class JobService:
         except JobCanceled:
             self._set_status(job_id, STATUS_CANCELED, None, "Canceled")
             return
+        except InsufficientEvidenceError as exc:
+            self._set_status(
+                job_id, STATUS_FAILED, {"error": exc.payload}, exc.message
+            )
+            raise JobFailure(exc.message) from exc
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
             message = str(exc)[:ERROR_MAX_CHARS] or type(exc).__name__
@@ -610,6 +658,18 @@ class JobService:
             ctx.report(0.1 + 0.8 * (done / max(1, total)))
             ctx.ensure_active()
 
+        spec = None
+        if self.profiles is not None:
+            try:
+                repository = getattr(self.piece, "repository", None)
+                current_piece = (
+                    repository.get(piece_id) if repository is not None else None
+                )
+                if current_piece is not None:
+                    spec = self.profiles.resolve_for_piece(current_piece)
+            except Exception:  # noqa: BLE001
+                spec = None
+
         piece = await self.piece.generate_all(
             piece_id,
             mode=payload.get("mode") or self.default_mode,
@@ -618,15 +678,22 @@ class JobService:
             llm=ctx.llm,
             on_progress=on_progress,
             retrieval=ctx.retrieval,
+            spec=spec,
+            allow_without_evidence=bool(payload.get("allow_without_evidence")),
         )
         ctx.report(0.9)
         ctx.ensure_active()
+        gate = dict(getattr(piece, "gate", {}) or {})
         return {
             "piece_id": piece.id,
             "title": piece.title,
             "current_version": piece.current_version,
             "words": len(piece.content),
             "sections": len(piece.outline),
+            "local_evidence_count": int(gate.get("local_passages") or 0),
+            "web_evidence_count": int(gate.get("web_passages") or 0),
+            "evidence_origin": str(gate.get("evidence_origin") or ""),
+            "web_fallback": dict(gate.get("web_fallback") or {}),
             "warnings": list(piece.warnings),
             "retrieval": dict(piece.retrieval),
         }
@@ -729,6 +796,16 @@ class JobService:
             raise ValueError("missing unit_id")
         series_repository = getattr(self.generation, "repository", None)
         previous_status = ""
+        spec = None
+        if series_repository is not None and self.profiles is not None:
+            try:
+                unit_before = series_repository.get_unit(unit_id)
+                if unit_before is not None:
+                    spec = self.profiles.resolve_for_series(
+                        series_repository.get_series(unit_before.series_id)
+                    )
+            except Exception:  # noqa: BLE001 - a missing profile must not block generation
+                spec = None
         if series_repository is not None:
             unit_before = series_repository.get_unit(unit_id)
             if unit_before is not None:
@@ -745,6 +822,8 @@ class JobService:
                 tenant_id=ctx.tenant_id,
                 llm=ctx.llm,
                 retrieval=ctx.retrieval,
+                spec=spec,
+                allow_without_evidence=bool(payload.get("allow_without_evidence")),
             )
         except Exception:
             if series_repository is not None and previous_status:
@@ -766,6 +845,10 @@ class JobService:
             "mode": result.mode,
             "grounded": result.grounded,
             "citations": len(result.citations),
+            "local_evidence_count": result.local_evidence_count,
+            "web_evidence_count": result.web_evidence_count,
+            "evidence_origin": result.evidence_origin,
+            "web_fallback": dict(result.web_fallback),
             "words": len(result.content),
             "warnings": list(result.warnings),
             "retrieval": dict(result.retrieval),
@@ -775,10 +858,23 @@ class JobService:
         self, job: Job, payload: dict[str, Any], ctx: JobContext
     ) -> dict[str, Any]:
         ctx.ensure_active()
-        ctx.report(0.2)
+        ctx.report(0.1)
         series_id = str(payload.get("series_id") or "").strip()
         if not series_id:
             raise ValueError("missing series_id")
+        spec = None
+        if self.series_repository is not None and self.profiles is not None:
+            try:
+                series = self.series_repository.get_series(series_id)
+                if series is not None:
+                    spec = self.profiles.resolve_for_series(series)
+            except Exception:
+                spec = None
+
+        def on_progress(value: float) -> None:
+            ctx.ensure_active()
+            ctx.report(value)
+
         blueprint = await self.blueprint.generate(
             series_id,
             mode=payload.get("mode"),
@@ -787,16 +883,24 @@ class JobService:
             focus=str(payload.get("focus") or ""),
             tenant_id=ctx.tenant_id,
             llm=ctx.llm,
+            spec=spec,
             retrieval=ctx.retrieval,
+            progress=on_progress,
+            allow_without_evidence=bool(payload.get("allow_without_evidence")),
         )
         ctx.report(0.9)
         return {
             "series_id": blueprint.series_id,
+            "title": str(payload.get("title") or ""),
             "version": blueprint.version,
             "stages": len(blueprint.learning_path),
             "nodes": len(blueprint.outline),
             "glossary": len(blueprint.glossary),
             "grounded": blueprint.grounded,
+            "local_evidence_count": blueprint.local_evidence_count,
+            "web_evidence_count": blueprint.web_evidence_count,
+            "evidence_origin": blueprint.evidence_origin,
+            "web_fallback": dict(blueprint.web_fallback),
             "warnings": list(blueprint.warnings),
             "retrieval": dict(blueprint.retrieval),
         }

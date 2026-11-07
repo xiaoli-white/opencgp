@@ -20,6 +20,8 @@ import {
 import clsx from "clsx";
 import { api, type Citation, type GenerationMode } from "@/lib/api";
 import MarkdownReader from "@/components/reader/MarkdownReader";
+import EvidenceGapNotice from "@/components/reader/EvidenceGapNotice";
+import WebEvidenceNotice from "@/components/reader/WebEvidenceNotice";
 import { useI18n } from "@/i18n/I18nProvider";
 import {
   FONT_MAX,
@@ -37,6 +39,7 @@ type Chapter = {
   content: string;
   mode: GenerationMode | "";
   citations: Citation[];
+  gaps: string[];
 };
 
 const CHIP_BTN =
@@ -54,6 +57,7 @@ function splitSeriesChapters(
     content: string;
     order_index: number;
     last_mode?: GenerationMode | "";
+    evidence_gaps?: string[];
   }[],
   t: TranslateFn,
 ): Chapter[] {
@@ -66,6 +70,7 @@ function splitSeriesChapters(
       content: unit.content,
       mode: unit.last_mode || "",
       citations: [],
+      gaps: unit.evidence_gaps ?? [],
     }));
 }
 
@@ -161,6 +166,7 @@ export default function ReaderModePage() {
           content: section.content,
           mode: (data.last_mode as GenerationMode) || "",
           citations: data.citations ?? [],
+          gaps: [],
         }));
       if (sections.length === 0 && (data.content ?? "").trim()) {
         sections.push({
@@ -169,6 +175,7 @@ export default function ReaderModePage() {
           content: data.content,
           mode: (data.last_mode as GenerationMode) || "",
           citations: data.citations ?? [],
+          gaps: [],
         });
       }
       setChapters(sections);
@@ -514,6 +521,8 @@ export default function ReaderModePage() {
                 <h1 className="mt-2 text-xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-2xl">
                   {chapter.title}
                 </h1>
+                <EvidenceGapNotice gaps={chapter.gaps} />
+                <WebEvidenceNotice citations={chapter.citations} />
                 <div
                   className="reader-surface mt-6"
                   style={{ ["--rm-font-size" as string]: `${prefs.fontSize}px` }}

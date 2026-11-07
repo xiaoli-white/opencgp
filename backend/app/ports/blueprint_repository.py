@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from app.models.blueprint import SeriesBlueprint, UnitReview
 
@@ -10,7 +10,22 @@ class BlueprintRepository(Protocol):
     def get_blueprint(self, series_id: str) -> SeriesBlueprint | None:
         ...
 
-    def save_blueprint(self, blueprint: SeriesBlueprint) -> SeriesBlueprint:
+    def save_blueprint(
+        self,
+        blueprint: SeriesBlueprint,
+        *,
+        author: str | None = None,
+        change_source: str | None = None,
+        note: str = "",
+    ) -> SeriesBlueprint:
+        ...
+
+    def list_blueprint_versions(self, series_id: str) -> list[dict[str, Any]]:
+        ...
+
+    def get_blueprint_version(
+        self, series_id: str, version: int
+    ) -> SeriesBlueprint | None:
         ...
 
     def add_review(

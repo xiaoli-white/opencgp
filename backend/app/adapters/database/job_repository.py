@@ -47,6 +47,18 @@ SCHEMA: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_unit_generation_claims_job"
     " ON unit_generation_claims(job_id)",
+    """
+    CREATE TABLE IF NOT EXISTS blueprint_generation_claims (
+        series_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT '',
+        job_id TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'queued',
+        created_at REAL NOT NULL DEFAULT 0,
+        updated_at REAL NOT NULL DEFAULT 0
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_blueprint_generation_claims_job"
+    " ON blueprint_generation_claims(job_id)",
 )
 
 MIGRATIONS: tuple[tuple[str, str, str], ...] = (
@@ -343,6 +355,100 @@ class DatabaseJobRepository:
         self.ensure_schema()
         self.database.execute(
             "DELETE FROM unit_generation_claims WHERE unit_id = ?", (unit_id,)
+        )
+
+
+    # -- per-series blueprint generation claims ----------------------------
+    #
+    # A series may have at most one active blueprint_generate job.  The
+    # primary key on series_id is the cross-process lock and the conditional
+    # UPDATE below is the atomic takeover path, mirroring unit claims.
+
+    def get_blueprint_generation_claim(self, series_id: str) -> dict[str, Any] | None:
+        self.ensure_schema()
+        row = self.database.fetchone(
+            "SELECT * FROM blueprint_generation_claims WHERE series_id = ?",
+            (series_id,),
+        )
+        return dict(row) if row is not None else None
+
+    def try_claim_blueprint_generation(
+        self, series_id: str, tenant_id: str, job_id: str, stale_before: float
+    ) -> tuple[bool, str]:
+        self.ensure_schema()
+        now = time.time()
+        row = self.get_blueprint_generation_claim(series_id)
+        if row is None:
+            self.database.execute(
+                "INSERT INTO blueprint_generation_claims (series_id, tenant_id,"
+                " job_id, state, created_at, updated_at)"
+                " VALUES (?, ?, ?, 'queued', ?, ?)"
+                " ON CONFLICT(series_id) DO NOTHING",
+                (series_id, tenant_id or "", job_id, now, now),
+            )
+            row = self.get_blueprint_generation_claim(series_id)
+            if row is None:
+                return False, ""
+            return str(row["job_id"]) == job_id, str(row["job_id"] or "")
+
+        existing_job_id = str(row["job_id"] or "")
+        if existing_job_id == job_id:
+            return True, job_id
+        existing_job = self.get(existing_job_id) if existing_job_id else None
+        updated_at = float(row["updated_at"] or 0.0)
+        if existing_job is None:
+            if now - updated_at < 30.0:
+                return False, existing_job_id
+        elif existing_job.status in (STATUS_QUEUED, STATUS_RUNNING):
+            if updated_at >= stale_before:
+                return False, existing_job_id
+
+        self.database.execute(
+            "UPDATE blueprint_generation_claims SET tenant_id = ?, job_id = ?,"
+            " state = 'queued', created_at = ?, updated_at = ?"
+            " WHERE series_id = ? AND job_id = ? AND updated_at = ?",
+            (
+                tenant_id or "",
+                job_id,
+                now,
+                now,
+                series_id,
+                existing_job_id,
+                updated_at,
+            ),
+        )
+        row = self.get_blueprint_generation_claim(series_id)
+        if row is None:
+            return False, ""
+        return str(row["job_id"]) == job_id, str(row["job_id"] or "")
+
+    def mark_blueprint_generation_state(
+        self, series_id: str, job_id: str, state: str
+    ) -> bool:
+        self.ensure_schema()
+        self.database.execute(
+            "UPDATE blueprint_generation_claims SET state = ?, updated_at = ?"
+            " WHERE series_id = ? AND job_id = ?",
+            (state, time.time(), series_id, job_id),
+        )
+        row = self.get_blueprint_generation_claim(series_id)
+        return bool(row is not None and str(row["job_id"] or "") == job_id)
+
+    def finish_blueprint_generation(
+        self, series_id: str, job_id: str, state: str
+    ) -> None:
+        self.ensure_schema()
+        self.database.execute(
+            "UPDATE blueprint_generation_claims SET state = ?, updated_at = ?"
+            " WHERE series_id = ? AND job_id = ?",
+            (state or "finished", time.time(), series_id, job_id),
+        )
+
+    def clear_blueprint_generation_claim(self, series_id: str) -> None:
+        self.ensure_schema()
+        self.database.execute(
+            "DELETE FROM blueprint_generation_claims WHERE series_id = ?",
+            (series_id,),
         )
 
 

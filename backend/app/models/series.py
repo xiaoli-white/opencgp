@@ -17,6 +17,7 @@ class Series(BaseModel):
     audience: str = ""
     difficulty: str = "intermediate"
     language: str = "zh"
+    language_explicit: bool = True
     user_id: str = ""
     profile_id: str = ""
     created_at: float

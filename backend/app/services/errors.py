@@ -18,12 +18,43 @@ class NoEvidenceError(RuntimeError):
     pass
 
 
+class InsufficientEvidenceError(RuntimeError):
+    def __init__(self, payload: dict, message: str = "") -> None:
+        self.payload = dict(payload or {})
+        self.message = (
+            message
+            or str(self.payload.get("message") or "")
+            or "insufficient evidence to generate"
+        )
+        super().__init__(self.message)
+
+
 class BlueprintNotFoundError(LookupError):
     pass
 
 
 class BlueprintParseError(RuntimeError):
     pass
+
+
+class BlueprintValidationError(ValueError):
+    """A hand-edited blueprint failed structured-field validation."""
+
+    def __init__(self, errors: list[dict[str, str]]) -> None:
+        self.errors = list(errors or [])
+        first = self.errors[0]["message"] if self.errors else "invalid blueprint"
+        super().__init__(first)
+
+
+class BlueprintApplyConfirmationError(RuntimeError):
+    """Applying would delete units and the caller has not confirmed the plan."""
+
+    def __init__(self, plan: dict, message: str = "") -> None:
+        self.plan = dict(plan or {})
+        super().__init__(
+            message
+            or "applying this blueprint removes units; review the diff and confirm the removals"
+        )
 
 
 class AuthRequiredError(RuntimeError):

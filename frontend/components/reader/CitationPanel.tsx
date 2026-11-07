@@ -437,6 +437,23 @@ export function CitationEvidencePanel({
                 </p>
               </div>
 
+              {kind === "web" ? (
+                <div
+                  data-testid="citation-archived-notice"
+                  className="mt-2 rounded-xl border border-amber-300/50 bg-amber-50/60 px-3 py-2 text-[10.5px] leading-relaxed text-amber-800 dark:border-amber-300/20 dark:bg-amber-400/10 dark:text-amber-200"
+                >
+                  <p>{tr("citation.archivedPassage")}</p>
+                  {typeof citation.meta?.retrieved_at === "string" &&
+                  citation.meta.retrieved_at ? (
+                    <p className="mt-0.5 opacity-80">
+                      {tr("citation.retrievedAt", {
+                        time: citation.meta.retrieved_at,
+                      })}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
               <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10.5px] tabular-nums text-slate-400 dark:text-slate-500">
                 <span>
                   {tr("citation.position", {

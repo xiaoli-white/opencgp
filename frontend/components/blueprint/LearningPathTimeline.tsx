@@ -18,6 +18,7 @@ type Translate = (path: string, vars?: Record<string, string | number>) => strin
 
 type LearningPathTimelineProps = {
   blueprint: Blueprint;
+  highlightedUnitIds?: Set<string>;
   onOpenUnit: (unitId: string) => void;
 };
 
@@ -29,6 +30,7 @@ function nodeMinutes(t: Translate, node: OutlineNode): string {
 
 export default function LearningPathTimeline({
   blueprint,
+  highlightedUnitIds,
   onOpenUnit,
 }: LearningPathTimelineProps) {
   const { t } = useI18n();
@@ -60,9 +62,13 @@ export default function LearningPathTimeline({
 
   const renderNode = (node: OutlineNode, index: number) => {
     const bound = Boolean(node.unit_id);
+    const applied = Boolean(node.unit_id && highlightedUnitIds?.has(node.unit_id));
     return (
       <motion.li
         key={node.id || `${node.title}-${index}`}
+        data-testid="blueprint-node"
+        data-applied={applied ? "true" : "false"}
+        data-unit-id={node.unit_id ?? ""}
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.22, delay: Math.min(index * 0.03, 0.2) }}
@@ -77,16 +83,25 @@ export default function LearningPathTimeline({
         <div
           className={clsx(
             "rounded-2xl border px-3 py-2.5 transition",
-            bound
-              ? "border-indigo-300/50 bg-white/60 hover:border-indigo-400/60 hover:bg-white/80 dark:border-indigo-400/25 dark:bg-white/[0.05] dark:hover:border-indigo-400/40 dark:hover:bg-white/[0.08]"
-              : "border-slate-200/70 bg-white/40 dark:border-white/10 dark:bg-white/[0.03]",
+            applied
+              ? "border-emerald-400/60 bg-emerald-500/10 ring-1 ring-emerald-400/30 dark:border-emerald-300/35 dark:bg-emerald-400/10"
+              : bound
+                ? "border-indigo-300/50 bg-white/60 hover:border-indigo-400/60 hover:bg-white/80 dark:border-indigo-400/25 dark:bg-white/[0.05] dark:hover:border-indigo-400/40 dark:hover:bg-white/[0.08]"
+                : "border-slate-200/70 bg-white/40 dark:border-white/10 dark:bg-white/[0.03]",
           )}
         >
           <div className="flex flex-wrap items-start justify-between gap-2">
             <p className="min-w-0 flex-1 text-[13px] font-medium leading-snug text-slate-700 dark:text-slate-200">
               {node.title}
             </p>
-            <StatusBadge status={node.status} />
+            <div className="flex items-center gap-1.5">
+              {applied ? (
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-500/25 dark:bg-emerald-400/15 dark:text-emerald-300 dark:ring-emerald-300/25">
+                  {t("blueprint.appliedBadge")}
+                </span>
+              ) : null}
+              <StatusBadge status={node.status} />
+            </div>
           </div>
           {node.summary ? (
             <p className="mt-1 text-[11.5px] leading-relaxed text-slate-500 dark:text-slate-400">

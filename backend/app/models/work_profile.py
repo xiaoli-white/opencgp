@@ -35,6 +35,7 @@ class ProfileMeta(BaseModel):
     description: str = ""
     tags: list[str] = Field(default_factory=list)
     icon: str = "book"
+    language: str = ""
 
 
 class ProfileUnit(BaseModel):
@@ -62,6 +63,8 @@ class ProfileGrounding(BaseModel):
     citation_policy: str = "optional"
     min_evidence: int = 0
     allow_web: bool = False
+    # Explicit per-profile opt-out: only the user's own material may be used.
+    local_only: bool = False
 
 
 class ProfileAssets(BaseModel):
@@ -245,6 +248,7 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
         description=_as_str(meta_raw.get("description"), "meta.description", errors),
         tags=_as_str_list(meta_raw.get("tags"), "meta.tags", errors),
         icon=_as_str(meta_raw.get("icon"), "meta.icon", errors, "book") or "book",
+        language=_as_str(meta_raw.get("language"), "meta.language", errors),
     )
 
     unit_name = (
@@ -342,6 +346,9 @@ def normalize_spec(raw: Any) -> tuple[ProfileSpec, list[dict[str, str]], list[di
         ),
         allow_web=_as_bool(
             grounding_raw.get("allow_web"), "grounding.allow_web", errors, False
+        ),
+        local_only=_as_bool(
+            grounding_raw.get("local_only"), "grounding.local_only", errors, False
         ),
     )
 

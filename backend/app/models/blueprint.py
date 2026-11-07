@@ -27,6 +27,7 @@ class OutlineNode(BaseModel):
     summary: str = ""
     objectives: list[str] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
     estimated_minutes: int = 0
     unit_id: str | None = None
     status: str = "planned"
@@ -42,9 +43,19 @@ class SeriesBlueprint(BaseModel):
     outline: list[OutlineNode] = Field(default_factory=list)
     glossary: list[GlossaryTerm] = Field(default_factory=list)
     provider: str = ""
+    author: str = ""
+    change_source: str = ""
     warning: str = ""
     warnings: list[str] = Field(default_factory=list)
+    objective_rejections: list[dict[str, str]] = Field(default_factory=list)
     retrieval: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_count: int = 0
+    local_evidence_count: int = 0
+    web_evidence_count: int = 0
+    evidence_origin: str = ""
+    web_fallback: dict[str, Any] = Field(default_factory=dict)
+    gate: dict[str, Any] = Field(default_factory=dict)
     updated_at: float = 0.0
 
 

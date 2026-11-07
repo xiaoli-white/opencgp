@@ -15,10 +15,13 @@ Rule: never hard-code configurable values; switching an adapter is a config chan
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+
+from app.services.topic_aliases import DEFAULT_TOPIC_ALIASES
 
 ENV_PREFIX = "OPENCGP_"
 LEGACY_ENV_PREFIXES = ("COURSE_STUDIO_",)
@@ -85,6 +88,29 @@ def _env(key: str, default: str = "") -> str:
         if legacy is not None:
             return legacy
     return default
+
+
+def _topic_aliases(raw: str) -> dict[str, tuple[str, ...]]:
+    text = (raw or "").strip()
+    if not text:
+        return dict(DEFAULT_TOPIC_ALIASES)
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return dict(DEFAULT_TOPIC_ALIASES)
+    if not isinstance(parsed, dict):
+        return dict(DEFAULT_TOPIC_ALIASES)
+    aliases: dict[str, tuple[str, ...]] = {}
+    for key, value in parsed.items():
+        canonical = str(key or "").strip()
+        if not canonical:
+            continue
+        items = value if isinstance(value, (list, tuple)) else [value]
+        values = tuple(
+            str(item).strip() for item in items if str(item or "").strip()
+        )
+        aliases[canonical] = values or (canonical,)
+    return aliases or dict(DEFAULT_TOPIC_ALIASES)
 
 
 @dataclass
@@ -298,6 +324,7 @@ class GenerationConfig:
     max_evidence: int = 0
     citation_gap_action: str = "report"
     default_mode: str = "strict"
+    default_language: str = "zh"
     assets_auto_images: bool = True
     assets_max_images: int = 3
 
@@ -319,6 +346,7 @@ class GenerationConfig:
             ),
             citation_gap_action=gap_action,
             default_mode=_env("GENERATION_DEFAULT_MODE", "strict"),
+            default_language=_env("GENERATION_DEFAULT_LANGUAGE", "zh") or "zh",
             assets_auto_images=(_env("ASSETS_AUTO_IMAGES", "true") or "true").strip().lower()
             in ("1", "true", "yes", "on"),
             assets_max_images=max(0, int(_env("ASSETS_MAX_IMAGES", "3") or 3)),
@@ -335,6 +363,84 @@ class BlueprintConfig:
         return cls(
             top_k=int(_env("BLUEPRINT_TOP_K", "6") or 6),
             default_mode=_env("BLUEPRINT_DEFAULT_MODE", ""),
+        )
+
+
+@dataclass
+class EvidenceGateConfig:
+    enabled: bool = True
+    min_passages: int = 1
+    min_score: float = 0.35
+    allow_override: bool = False
+    require_topical_coverage: bool = True
+    topic_max_terms: int = 8
+    topic_min_matches: int = 1
+    topic_aliases: dict[str, tuple[str, ...]] = field(
+        default_factory=lambda: dict(DEFAULT_TOPIC_ALIASES)
+    )
+
+    @classmethod
+    def from_env(cls) -> "EvidenceGateConfig":
+        return cls(
+            enabled=(_env("EVIDENCE_GATE_ENABLED", "true") or "true")
+            .strip()
+            .lower()
+            not in ("0", "false", "no", "off"),
+            min_passages=max(
+                1, int(_env("EVIDENCE_GATE_MIN_PASSAGES", "1") or 1)
+            ),
+            min_score=max(
+                0.0, min(1.0, float(_env("EVIDENCE_GATE_MIN_SCORE", "0.35") or 0.35))
+            ),
+            allow_override=(_env("EVIDENCE_GATE_ALLOW_OVERRIDE", "false") or "false")
+            .strip()
+            .lower()
+            in ("1", "true", "yes", "on"),
+            require_topical_coverage=(
+                _env("EVIDENCE_GATE_REQUIRE_TOPICAL_COVERAGE", "true") or "true"
+            )
+            .strip()
+            .lower()
+            not in ("0", "false", "no", "off"),
+            topic_max_terms=max(
+                1, min(32, int(_env("EVIDENCE_GATE_TOPIC_MAX_TERMS", "8") or 8))
+            ),
+            topic_min_matches=max(
+                1, int(_env("EVIDENCE_GATE_TOPIC_MIN_MATCHES", "1") or 1)
+            ),
+            topic_aliases=_topic_aliases(_env("EVIDENCE_GATE_TOPIC_ALIASES", "")),
+        )
+
+
+@dataclass
+class WebFallbackConfig:
+    """Web evidence fallback used only when local evidence is insufficient."""
+
+    enabled: bool = True
+    max_results: int = 5
+    max_chars: int = 4000
+    cache_ttl: float = 300.0
+    max_keywords: int = 8
+
+    @classmethod
+    def from_env(cls) -> "WebFallbackConfig":
+        return cls(
+            enabled=(_env("WEB_FALLBACK_ENABLED", "true") or "true")
+            .strip()
+            .lower()
+            not in ("0", "false", "no", "off"),
+            max_results=max(
+                1, min(20, int(_env("WEB_FALLBACK_MAX_RESULTS", "5") or 5))
+            ),
+            max_chars=max(
+                200, int(_env("WEB_FALLBACK_MAX_CHARS", "4000") or 4000)
+            ),
+            cache_ttl=max(
+                0.0, float(_env("WEB_FALLBACK_CACHE_TTL", "300") or 300)
+            ),
+            max_keywords=max(
+                1, min(20, int(_env("WEB_FALLBACK_MAX_KEYWORDS", "8") or 8))
+            ),
         )
 
 
@@ -561,6 +667,8 @@ class Settings:
     ingest: IngestConfig = field(default_factory=IngestConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     blueprint: BlueprintConfig = field(default_factory=BlueprintConfig)
+    evidence_gate: EvidenceGateConfig = field(default_factory=EvidenceGateConfig)
+    web_fallback: WebFallbackConfig = field(default_factory=WebFallbackConfig)
     conversation: ConversationConfig = field(default_factory=ConversationConfig)
     auth: AuthConfig = field(default_factory=AuthConfig)
     locks: LockConfig = field(default_factory=LockConfig)
@@ -587,6 +695,8 @@ class Settings:
             ingest=IngestConfig.from_env(),
             generation=GenerationConfig.from_env(),
             blueprint=BlueprintConfig.from_env(),
+            evidence_gate=EvidenceGateConfig.from_env(),
+            web_fallback=WebFallbackConfig.from_env(),
             conversation=ConversationConfig.from_env(),
             auth=AuthConfig.from_env(),
             locks=LockConfig.from_env(),

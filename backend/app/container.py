@@ -539,6 +539,7 @@ class Container:
                 validators=ValidatorRunner(
                     citation_gap_action=self.settings.generation.citation_gap_action
                 ),
+                web_evidence=self.web_evidence(),
             )
 
         return self._get_or_build("generation", build)
@@ -585,6 +586,7 @@ class Container:
                 max_evidence=self.settings.generation.max_evidence,
                 top_k_ceiling=self.settings.generation.top_k_ceiling,
                 min_score=self.settings.vectorstore.min_score,
+                web_evidence=self.web_evidence(),
             )
 
         return self._get_or_build("blueprint", build)
@@ -792,6 +794,17 @@ class Container:
 
         return self._get_or_build("web_search", build)
 
+    def web_evidence(self):
+        def build():
+            from app.services.web_evidence import WebEvidenceService
+
+            return WebEvidenceService(
+                web_search=self.web_search(),
+                config=self.settings.web_fallback,
+            )
+
+        return self._get_or_build("web_evidence", build)
+
     def research_repository(self) -> ResearchRepository:
         def build() -> ResearchRepository:
             from app.adapters.database.research_repository import (
@@ -839,6 +852,7 @@ class Container:
                 top_k_ceiling=self.settings.generation.top_k_ceiling,
                 evidence_char_limit=self.settings.generation.evidence_char_limit,
                 asset_max_images=getattr(self.settings.generation, "assets_max_images", 3),
+                web_evidence=self.web_evidence(),
             )
 
         return self._get_or_build("piece", build)
@@ -905,6 +919,8 @@ class Container:
                 llm_for=self.llm_for,
                 embedding_for=self.retrieval_embedding_for,
                 retrieval_for=self.retrieval_context,
+                series_repository=self.series_repository(),
+                profiles=self.profiles(),
                 events=self.job_events(),
                 vectorstore=self.vectorstore(),
                 embedder=self.embedder(),

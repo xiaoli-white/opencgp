@@ -395,6 +395,15 @@ export default function JobsPage() {
                     <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
                       {jobKindLabel(t, job.kind)}
                     </span>
+                    {typeof job.payload?.title === "string" &&
+                    job.payload.title ? (
+                      <span
+                        className="max-w-[16rem] truncate text-[12px] text-slate-500 dark:text-slate-400"
+                        data-testid="job-title"
+                      >
+                        · {job.payload.title}
+                      </span>
+                    ) : null}
                     <span
                       className={clsx(
                         "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1",

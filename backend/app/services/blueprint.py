@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import time
-from typing import Any, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Callable, Mapping, Sequence
 
 from app.models.blueprint import (
     SeriesBlueprint,
@@ -23,18 +25,43 @@ from app.models.work_profile import ProfileSpec
 from app.services.errors import (
     BlueprintNotFoundError,
     BlueprintParseError,
+    BlueprintApplyConfirmationError,
+    BlueprintValidationError,
     UnitContentEmptyError,
     UnitNotFoundError,
     NoEvidenceError,
+    InsufficientEvidenceError,
     VersionConflictError,
 )
+from app.services.evidence_gate import (
+    EvidenceGate,
+    build_evidence_gate,
+    markers_of,
+    passage_relevance,
+    text_admits_missing_coverage,
+    text_cites_markers,
+)
+from app.services.language import language_name, with_output_language
 from app.services.prompting import (
     extra_requirement,
+    policy_of,
     prompt_values,
     system_prefix,
     unit_name,
 )
 from app.services.retrieval_providers import RetrievalContext
+from app.services.web_evidence import (
+    WebEvidenceService,
+    counts_by_origin,
+    resolve_evidence,
+)
+from app.services.blueprint_titles import sanitize_blueprint, sanitize_payload
+from app.services.blueprint_validation import validate_blueprint_for_edit
+from app.services.objective_guard import (
+    derive_objectives,
+    extract_gaps,
+    sanitize_blueprint_nodes,
+)
 
 NO_EVIDENCE_MESSAGE = (
     "No evidence related to the course topic was found in the knowledge base, so strict mode cannot generate a blueprint; upload material first or switch to loose mode"
@@ -98,6 +125,26 @@ def _node_counts(spec: ProfileSpec | None, stage_count: int) -> list[int]:
     return [base + (1 if index < remainder else 0) for index in range(stage_count)]
 
 
+@dataclass
+class BlueprintApplyResult:
+    blueprint: SeriesBlueprint
+    created: list[Unit] = field(default_factory=list)
+    updated: list[Unit] = field(default_factory=list)
+    unchanged: list[Unit] = field(default_factory=list)
+    removed: list[Unit] = field(default_factory=list)
+    failures: list[dict[str, str]] = field(default_factory=list)
+    stage_count: int = 0
+    node_count: int = 0
+
+    @property
+    def affected_unit_ids(self) -> list[str]:
+        return [unit.id for unit in [*self.created, *self.updated]]
+
+    @property
+    def applied_count(self) -> int:
+        return len(self.created) + len(self.updated)
+
+
 class BlueprintService:
     def __init__(
         self,
@@ -111,6 +158,8 @@ class BlueprintService:
         top_k_ceiling: int = 0,
         evidence_char_limit: int = 400,
         min_score: float = 0.15,
+        evidence_gate: EvidenceGate | None = None,
+        web_evidence: WebEvidenceService | None = None,
     ) -> None:
         self.repository = repository
         self.series_repository = series_repository
@@ -122,6 +171,8 @@ class BlueprintService:
         self.top_k_ceiling = max(0, int(top_k_ceiling or 0))
         self.evidence_char_limit = evidence_char_limit
         self.min_score = float(min_score)
+        self.evidence_gate = evidence_gate or build_evidence_gate()
+        self.web_evidence = web_evidence
 
     async def generate(
         self,
@@ -134,22 +185,33 @@ class BlueprintService:
         llm: LLMProvider | None = None,
         spec: ProfileSpec | None = None,
         retrieval: RetrievalContext | None = None,
+        progress: Callable[[float], None] | None = None,
+        allow_without_evidence: bool = False,
     ) -> SeriesBlueprint:
         series = self.series_repository.get_series(series_id)
         if series is None:
             raise BlueprintNotFoundError(f"course not found: {series_id}")
+        series = with_output_language(series, spec)
         resolved_mode = GenerationMode.normalize(mode or self.default_mode)
         resolved_top_k = max(1, int(top_k or self.default_top_k))
         if self.top_k_ceiling > 0:
             resolved_top_k = min(resolved_top_k, self.top_k_ceiling)
         units = self.series_repository.list_units(series_id)
         min_score = (
-            self.min_score if resolved_mode is GenerationMode.strict else None
+            self.min_score
+            if (
+                not self.evidence_gate.config.enabled
+                and resolved_mode is GenerationMode.strict
+            )
+            else None
         )
+        if progress is not None:
+            progress(0.15)
+        query = self._build_query(series, focus, units)
         if retrieval is not None:
             citations, _ = await retrieval.search(
                 self.vectorstore,
-                self._build_query(series, focus, units),
+                query,
                 top_k=resolved_top_k,
                 source_ids=source_ids,
                 tenant_id=tenant_id,
@@ -157,7 +219,7 @@ class BlueprintService:
             )
         else:
             citations = await self.vectorstore.search(
-                self._build_query(series, focus, units),
+                query,
                 top_k=resolved_top_k,
                 source_ids=source_ids,
                 tenant_id=tenant_id,
@@ -165,12 +227,39 @@ class BlueprintService:
             )
         if self.max_evidence > 0:
             citations = citations[: self.max_evidence]
+        policy = policy_of(spec, resolved_mode.value)
+        local_only = bool(getattr(getattr(spec, "grounding", None), "local_only", False))
+        topic_texts = self._topic_texts(series, units, focus)
+        gate, citations, _web_status = await resolve_evidence(
+            gate=self.evidence_gate,
+            store=self.vectorstore,
+            local_query=query,
+            citations=citations,
+            topic=series.title,
+            tenant_id=tenant_id,
+            source_ids=source_ids,
+            mode=resolved_mode,
+            citation_policy=policy,
+            allow_without_evidence=allow_without_evidence,
+            web_service=self.web_evidence,
+            web_topic=series.title,
+            web_title=(units[0].title if units else ""),
+            web_extra=f"{series.subtitle} {focus}".strip(),
+            local_only=local_only,
+            topic_texts=topic_texts,
+        )
+        if not gate.allowed:
+            raise InsufficientEvidenceError(gate.payload(), gate.message)
+        if resolved_mode is GenerationMode.strict and not gate.opted_out:
+            citations = list(gate.usable_citations)
+        elif policy == "forbidden":
+            citations = []
         evidence = [
-            Evidence(marker=f"E{index}", citation=citation)
+            Evidence(marker=citation.marker or f"E{index}", citation=citation)
             for index, citation in enumerate(citations, start=1)
         ]
-        if resolved_mode is GenerationMode.strict and not evidence:
-            raise NoEvidenceError(NO_EVIDENCE_MESSAGE)
+        if progress is not None:
+            progress(0.35)
 
         llm_provider = llm or self.llm
         provider_name = type(llm_provider).__name__
@@ -179,15 +268,76 @@ class BlueprintService:
                 series, evidence, resolved_mode, provider_name, spec
             )
         else:
+            if progress is not None:
+                progress(0.45)
             payload = await self._request_payload(
                 series, evidence, resolved_mode, focus, llm_provider, spec
             )
             blueprint = self._blueprint_from_payload(
                 series, payload, evidence, resolved_mode, provider_name
             )
+        if progress is not None:
+            progress(0.85)
         if retrieval is not None:
             blueprint.warnings = list(retrieval.warnings)
             blueprint.retrieval = retrieval.summary()
+        if gate.grounded:
+            admitted = text_admits_missing_coverage(blueprint.overview)
+            if admitted:
+                gate.mark_coverage_admission(
+                    "The generated overview states that the evidence does not "
+                    "cover the course topic."
+                )
+            else:
+                cited_text = " ".join(
+                    [blueprint.overview]
+                    + [node.summary for node in blueprint.outline]
+                )
+                if not text_cites_markers(
+                    cited_text, markers_of([item.citation for item in evidence])
+                ):
+                    gate.mark_evidence_unused()
+        blueprint.grounded = gate.grounded
+        blueprint.evidence_count = len(evidence)
+        local_used, web_used = counts_by_origin([item.citation for item in evidence])
+        if local_used and web_used:
+            evidence_origin = "mixed"
+        elif web_used:
+            evidence_origin = "web"
+        elif local_used:
+            evidence_origin = "local"
+        else:
+            evidence_origin = "none"
+        blueprint.local_evidence_count = local_used
+        blueprint.web_evidence_count = web_used
+        blueprint.evidence_origin = evidence_origin
+        blueprint.web_fallback = dict(gate.payload().get("web_fallback") or {})
+        blueprint.evidence = [
+            {
+                "marker": item.marker,
+                "source_id": item.citation.source_id,
+                "source_name": item.citation.source_name,
+                "chunk_id": item.citation.chunk_id,
+                "chunk_index": int(item.citation.chunk_index),
+                "score": round(passage_relevance(item.citation), 6),
+                "snippet": (item.citation.text or item.citation.snippet or "")[:240],
+                "kind": str((item.citation.meta or {}).get("kind") or "kb"),
+                "origin": str((item.citation.meta or {}).get("origin") or "knowledge_base"),
+                "url": str((item.citation.meta or {}).get("url") or ""),
+                "retrieved_at": str((item.citation.meta or {}).get("retrieved_at") or ""),
+                "citation": item.citation.model_dump(),
+            }
+            for item in evidence
+        ]
+        blueprint.gate = gate.summary()
+        if gate.warnings:
+            blueprint.warnings = [*blueprint.warnings, *gate.warnings]
+        if gate.message and not gate.grounded:
+            blueprint.warning = (
+                f"{blueprint.warning}; {gate.message}"
+                if blueprint.warning
+                else gate.message
+            )
         return self.repository.save_blueprint(blueprint)
 
     def get_blueprint(self, series_id: str) -> SeriesBlueprint | None:
@@ -198,43 +348,359 @@ class BlueprintService:
         series_id: str,
         blueprint: SeriesBlueprint,
         expected_version: int | None = None,
+        author: str = "manual",
+        note: str = "manual edit",
     ) -> SeriesBlueprint:
+        """Save a hand-edited blueprint as a new, reversible version."""
         existing = self.repository.get_blueprint(series_id)
         current = existing.version if existing else 0
         if expected_version is not None and int(expected_version) != current:
             raise VersionConflictError(int(expected_version), current)
         blueprint = blueprint.model_copy(update={"series_id": series_id})
-        return self.repository.save_blueprint(blueprint)
+        errors = validate_blueprint_for_edit(blueprint)
+        if errors:
+            raise BlueprintValidationError(errors)
+        blueprint = _normalize_stage_links(blueprint)
+        series = self.series_repository.get_series(series_id)
+        if series is not None:
+            series = with_output_language(series)
+            # The sanitizer now only normalises formatting; every placeholder
+            # in a structured field was already rejected above, while prose
+            # fields remain free to mention an evidence gap.
+            blueprint, _repaired = sanitize_blueprint(blueprint, series.title)
+            rejections = sanitize_blueprint_nodes(
+                blueprint.outline,
+                blueprint.learning_path,
+                series_title=series.title,
+                language=series.language,
+            )
+            for node in blueprint.outline:
+                node.gaps = extract_gaps(node.summary)
+            if rejections:
+                blueprint.objective_rejections = [
+                    *blueprint.objective_rejections,
+                    *rejections,
+                ]
+        return self.repository.save_blueprint(
+            blueprint,
+            author=author or "manual",
+            change_source="manual",
+            note=note or "manual edit",
+        )
 
-    def apply(self, series_id: str) -> tuple[SeriesBlueprint, list[Unit]]:
+    def validate_blueprint(
+        self, series_id: str, blueprint: SeriesBlueprint
+    ) -> list[dict[str, str]]:
+        del series_id  # validation is purely structural today
+        return validate_blueprint_for_edit(blueprint)
+
+    def list_versions(self, series_id: str) -> list[dict[str, Any]]:
+        return self.repository.list_blueprint_versions(series_id)
+
+    def get_version(self, series_id: str, version: int) -> SeriesBlueprint | None:
+        return self.repository.get_blueprint_version(series_id, version)
+
+    def restore_version(
+        self,
+        series_id: str,
+        version: int,
+        expected_version: int | None = None,
+        author: str = "manual",
+    ) -> SeriesBlueprint:
+        target = self.repository.get_blueprint_version(series_id, int(version))
+        if target is None:
+            raise BlueprintNotFoundError(
+                f"blueprint version not found: {series_id} v{version}"
+            )
+        current = self.repository.get_blueprint(series_id)
+        current_version = current.version if current else 0
+        if expected_version is not None and int(expected_version) != current_version:
+            raise VersionConflictError(int(expected_version), current_version)
+        restored = target.model_copy(
+            update={"series_id": series_id, "version": 0, "updated_at": time.time()}
+        )
+        series = self.series_repository.get_series(series_id)
+        if series is not None:
+            restored, _repaired = sanitize_blueprint(restored, series.title)
+        return self.repository.save_blueprint(
+            restored,
+            author=author or "manual",
+            change_source="restore",
+            note=f"restored from v{int(version)}",
+        )
+
+    def apply_plan(self, series_id: str) -> dict[str, Any]:
+        """Compute the diff an apply would produce, without touching units."""
         blueprint = self.repository.get_blueprint(series_id)
         if blueprint is None:
             raise BlueprintNotFoundError(f"course blueprint not found: {series_id}")
-        if self.series_repository.get_series(series_id) is None:
+        series = self.series_repository.get_series(series_id)
+        if series is None:
             raise BlueprintNotFoundError(f"course not found: {series_id}")
+        series = with_output_language(series)
+        units = self.series_repository.list_units(series_id)
+        unit_by_id = {unit.id: unit for unit in units}
+        current_ids = {node.unit_id for node in blueprint.outline if node.unit_id}
+        previous = (
+            self.repository.get_blueprint_version(series_id, blueprint.version - 1)
+            if blueprint.version > 1
+            else None
+        )
+        previous_ids = (
+            {node.unit_id for node in previous.outline if node.unit_id}
+            if previous is not None
+            else set()
+        )
+        # Removals are only useful if they survive more than one save. Union
+        # the unit ids referenced by earlier versions; units that no longer
+        # exist are filtered out below.
+        if previous is not None:
+            try:
+                for item in self.repository.list_blueprint_versions(series_id)[:50]:
+                    if int(item.get("version") or 0) >= blueprint.version:
+                        continue
+                    older = self.repository.get_blueprint_version(
+                        series_id, int(item["version"])
+                    )
+                    if older is not None:
+                        previous_ids.update(
+                            node.unit_id for node in older.outline if node.unit_id
+                        )
+            except Exception:
+                pass
+        created: list[dict[str, Any]] = []
+        renamed: list[dict[str, Any]] = []
+        updated: list[dict[str, Any]] = []
+        unchanged: list[dict[str, Any]] = []
+        for node in blueprint.outline:
+            unit = unit_by_id.get(node.unit_id or "")
+            if unit is None:
+                created.append(
+                    {
+                        "node_id": node.id,
+                        "title": node.title,
+                        "stage_id": node.stage_id,
+                        "has_content": False,
+                    }
+                )
+                continue
+            old_title = unit.title
+            if old_title != node.title:
+                renamed.append(
+                    {
+                        "node_id": node.id,
+                        "unit_id": unit.id,
+                        "from": old_title,
+                        "to": node.title,
+                        "has_content": bool((unit.content or "").strip()),
+                        "content_preserved": True,
+                    }
+                )
+            objectives_changed = list(node.objectives) != list(unit.learning_objectives)
+            prerequisites_changed = list(node.prerequisites) != list(unit.prerequisites)
+            if objectives_changed or prerequisites_changed:
+                updated.append(
+                    {
+                        "node_id": node.id,
+                        "unit_id": unit.id,
+                        "title": node.title,
+                        "has_content": bool((unit.content or "").strip()),
+                        "content_preserved": True,
+                        "objectives_changed": objectives_changed,
+                        "prerequisites_changed": prerequisites_changed,
+                    }
+                )
+            if old_title == node.title and not objectives_changed and not prerequisites_changed:
+                unchanged.append(
+                    {
+                        "node_id": node.id,
+                        "unit_id": unit.id,
+                        "title": node.title,
+                    }
+                )
+        removed: list[dict[str, Any]] = []
+        for unit_id in sorted(previous_ids - current_ids):
+            unit = unit_by_id.get(unit_id)
+            if unit is None:
+                continue
+            has_content = bool((unit.content or "").strip())
+            removed.append(
+                {
+                    "unit_id": unit.id,
+                    "title": unit.title,
+                    "order_index": unit.order_index,
+                    "has_content": has_content,
+                    "content_chars": len(unit.content or ""),
+                    "current_version": unit.current_version,
+                }
+            )
+        kept_unlinked = [
+            {
+                "unit_id": unit.id,
+                "title": unit.title,
+                "has_content": bool((unit.content or "").strip()),
+            }
+            for unit in units
+            if unit.id not in current_ids and unit.id not in previous_ids
+        ]
+        plan = {
+            "series_id": series_id,
+            "blueprint_version": blueprint.version,
+            "stage_count": len(blueprint.learning_path),
+            "node_count": len(blueprint.outline),
+            "created": created,
+            "renamed": renamed,
+            "updated": updated,
+            "unchanged": unchanged,
+            "removed": removed,
+            "kept_unlinked": kept_unlinked,
+            "removals_require_confirmation": bool(removed),
+            "content_loss": [
+                {
+                    "unit_id": item["unit_id"],
+                    "title": item["title"],
+                    "content_chars": item["content_chars"],
+                }
+                for item in removed
+                if item["has_content"]
+            ],
+            "summary": {
+                "created": len(created),
+                "renamed": len(renamed),
+                "updated": len(updated),
+                "unchanged": len(unchanged),
+                "removed": len(removed),
+                "kept_unlinked": len(kept_unlinked),
+            },
+        }
+        plan["token"] = _plan_token(plan)
+        return plan
+
+    def apply(
+        self,
+        series_id: str,
+        *,
+        confirm_removals: bool = False,
+        expected_version: int | None = None,
+        plan_token: str = "",
+        author: str = "manual",
+    ) -> BlueprintApplyResult:
+        plan = self.apply_plan(series_id)
+        current_version = int(plan["blueprint_version"])
+        if expected_version is not None and int(expected_version) != current_version:
+            raise VersionConflictError(int(expected_version), current_version)
+        if plan_token and plan_token != plan.get("token"):
+            raise VersionConflictError(current_version, current_version)
+        if plan["removed"] and not confirm_removals:
+            raise BlueprintApplyConfirmationError(plan)
+        blueprint = self.repository.get_blueprint(series_id)
+        if blueprint is None:
+            raise BlueprintNotFoundError(f"course blueprint not found: {series_id}")
+        series = self.series_repository.get_series(series_id)
+        if series is None:
+            raise BlueprintNotFoundError(f"course not found: {series_id}")
+        series = with_output_language(series)
+        blueprint, _repaired = sanitize_blueprint(blueprint, series.title)
+        rejections = sanitize_blueprint_nodes(
+            blueprint.outline,
+            blueprint.learning_path,
+            series_title=series.title,
+            language=series.language,
+        )
+        for node in blueprint.outline:
+            node.gaps = extract_gaps(node.summary)
+        if rejections:
+            blueprint.objective_rejections = [
+                *blueprint.objective_rejections,
+                *rejections,
+            ]
 
         created: list[Unit] = []
+        updated: list[Unit] = []
+        unchanged: list[Unit] = []
+        removed: list[Unit] = []
+        failures: list[dict[str, str]] = []
         existing = self.series_repository.list_units(series_id)
         next_index = max((unit.order_index for unit in existing), default=0) + 1
         for node in blueprint.outline:
-            unit: Unit | None = None
-            if node.unit_id:
-                unit = self.series_repository.get_unit(node.unit_id)
-            if unit is None:
-                unit = self.series_repository.create_unit(
-                    series_id=series_id,
-                    title=node.title,
-                    order_index=next_index,
-                    learning_objectives=node.objectives,
-                    prerequisites=node.prerequisites,
-                    status=NODE_PLANNED,
+            try:
+                unit: Unit | None = None
+                if node.unit_id:
+                    unit = self.series_repository.get_unit(node.unit_id)
+                if unit is None:
+                    unit = self.series_repository.create_unit(
+                        series_id=series_id,
+                        title=node.title,
+                        order_index=next_index,
+                        learning_objectives=node.objectives,
+                        prerequisites=node.prerequisites,
+                        status=NODE_PLANNED,
+                    )
+                    created.append(unit)
+                    next_index += 1
+                    node.unit_id = unit.id
+                else:
+                    changes: dict[str, Any] = {}
+                    title = (node.title or "").strip()
+                    if title and title != unit.title:
+                        changes["title"] = title
+                    if list(node.objectives) != list(unit.learning_objectives):
+                        changes["learning_objectives"] = list(node.objectives)
+                    if list(node.prerequisites) != list(unit.prerequisites):
+                        changes["prerequisites"] = list(node.prerequisites)
+                    if changes:
+                        refreshed = self.series_repository.update_unit(
+                            unit.id, **changes
+                        )
+                        if refreshed is not None:
+                            unit = refreshed
+                        updated.append(unit)
+                    else:
+                        unchanged.append(unit)
+                node.status = self._node_status_for_unit(unit)
+            except Exception as exc:
+                failures.append(
+                    {
+                        "node_id": node.id,
+                        "title": node.title,
+                        "reason": str(exc)[:300] or type(exc).__name__,
+                    }
                 )
-                created.append(unit)
-                next_index += 1
-                node.unit_id = unit.id
-            node.status = self._node_status_for_unit(unit)
-        saved = self.repository.save_blueprint(blueprint)
-        return saved, created
+        if confirm_removals:
+            for item in plan["removed"]:
+                unit = self.series_repository.get_unit(item["unit_id"])
+                if unit is None:
+                    continue
+                try:
+                    self.series_repository.delete_unit(unit.id)
+                    removed.append(unit)
+                except Exception as exc:
+                    failures.append(
+                        {
+                            "node_id": "",
+                            "title": unit.title,
+                            "reason": f"remove failed: {str(exc)[:280] or type(exc).__name__}",
+                        }
+                    )
+        saved = self.repository.save_blueprint(
+            blueprint,
+            author=author or "manual",
+            change_source="apply",
+            note="applied to series",
+        )
+        recorder = getattr(self.repository, "record_application", None)
+        if callable(recorder):
+            recorder(series_id, blueprint.version, author)
+        return BlueprintApplyResult(
+            blueprint=saved,
+            created=created,
+            updated=updated,
+            unchanged=unchanged,
+            removed=removed,
+            failures=failures,
+            stage_count=len(blueprint.learning_path),
+            node_count=len(blueprint.outline),
+        )
 
     def set_glossary(
         self, series_id: str, terms: Sequence[GlossaryTerm]
@@ -366,6 +832,25 @@ class BlueprintService:
             ordered.append(text)
         return " ".join(ordered)
 
+    def _topic_texts(
+        self, series: Series, units: Sequence[Any] | None = None, focus: str = ""
+    ) -> list[str]:
+        parts = [series.title, series.subtitle]
+        for unit in list(units or []):
+            parts.append(getattr(unit, "title", "") or "")
+            for objective in list(getattr(unit, "learning_objectives", None) or []):
+                parts.append(str(objective))
+        parts.append(focus)
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for part in parts:
+            text = str(part or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            ordered.append(text)
+        return ordered or [series.title]
+
     async def _request_payload(
         self,
         series: Series,
@@ -422,7 +907,8 @@ class BlueprintService:
                 f"- Content requirements: {(series.brief or '').strip() or '(not specified)'}",
                 f"- Target audience: {series.audience or '(not specified)'}",
                 f"- Difficulty: {series.difficulty}",
-                f"- Language: {series.language}",
+                f"- Language: {language_name(series.language)}",
+                f"- Write every prose field in {language_name(series.language)}; do not switch language.",
                 f"- Writing unit: {unit}",
                 f"- Additional focus: {focus.strip() or '(none)'}",
                 "",
@@ -435,7 +921,8 @@ class BlueprintService:
                     "strict (strict mode) hard constraints:",
                     "1. overview and the summary of every outline node may only be written from the content in the \"Evidence\" section below.",
                     "2. Paragraphs that use evidence must carry a source marker in the form [E1]; cite multiple items as [E1][E2].",
-                    "3. Parts not covered by the evidence must explicitly state \"Insufficient material: <gap description>\"; never fill gaps with common knowledge.",
+                    "3. Gap disclosure applies only to prose: the overview and each node's summary. Where the evidence does not cover a topic, write \"Insufficient material: <gap description>\" in those prose fields and never fill the gap with common knowledge or speculation.",
+                    "4. Structured fields must always carry real, specific values: learning_path[].title and goal, outline[].title, objectives[], prerequisites[], glossary[].term and glossary[].definition must never contain \"Insufficient material\", \"not covered by evidence\", \"no evidence\", or an unfilled template such as \"<title>\" or \"讲 title\"; derive them from the course title and the stage plan, and keep all outline titles distinct.",
                 ]
             )
         else:
@@ -532,11 +1019,20 @@ class BlueprintService:
         mode: GenerationMode,
         provider_name: str,
     ) -> SeriesBlueprint:
+        payload, _repaired = sanitize_payload(payload, series.title)
         stages = _parse_stages(payload.get("learning_path") or payload.get("stages"))
         nodes = _parse_nodes(payload.get("outline") or payload.get("nodes"))
         if not nodes:
             raise BlueprintParseError("the course blueprint returned by the model has no outline nodes and cannot be used")
         _assign_stages(stages, nodes)
+        rejections = sanitize_blueprint_nodes(
+            nodes,
+            stages,
+            series_title=series.title,
+            language=series.language,
+        )
+        for node in nodes:
+            node.gaps = extract_gaps(node.summary)
         terms = _parse_terms(payload.get("glossary"))
         if not terms:
             terms = self._placeholder_terms(series, evidence, [node.id for node in nodes])
@@ -556,6 +1052,7 @@ class BlueprintService:
             glossary=terms,
             provider=provider_name,
             warning="" if grounded else (LOOSE_WARNING if mode is GenerationMode.loose else ""),
+            objective_rejections=rejections,
             updated_at=time.time(),
         )
 
@@ -601,10 +1098,15 @@ class BlueprintService:
                         stage_id=stage_id,
                         title=node_title,
                         summary=summary,
-                        objectives=[
-                            f"Can explain \"{node_title}\" in one's own words",
-                            f"Can identify common issues related to this topic in \"{title}\"",
-                        ],
+                        objectives=derive_objectives(
+                            series_title=title,
+                            node_title=node_title,
+                            stage_title=stage_title,
+                            stage_goal="",
+                            node_position=node_index,
+                            stage_position=position + 1,
+                            language=series.language,
+                        ),
                         prerequisites=[]
                         if position == 0
                         else ["Core concepts from the previous stage"],
@@ -698,6 +1200,34 @@ class BlueprintService:
                 )
             )
         return terms
+
+
+def _normalize_stage_links(blueprint: SeriesBlueprint) -> SeriesBlueprint:
+    """Keep stage.node_ids and node.stage_id consistent after hand editing."""
+    by_stage: dict[str, list[str]] = {stage.id: [] for stage in blueprint.learning_path}
+    for node in blueprint.outline:
+        if node.stage_id in by_stage:
+            by_stage[node.stage_id].append(node.id)
+    for stage in blueprint.learning_path:
+        stage.node_ids = by_stage.get(stage.id, [])
+    return blueprint
+
+
+def _plan_token(plan: Mapping[str, Any]) -> str:
+    material = {
+        "series_id": plan.get("series_id"),
+        "blueprint_version": plan.get("blueprint_version"),
+        "created": [item.get("node_id") for item in plan.get("created") or []],
+        "renamed": [
+            [item.get("unit_id"), item.get("to")]
+            for item in plan.get("renamed") or []
+        ],
+        "updated": [item.get("unit_id") for item in plan.get("updated") or []],
+        "removed": [item.get("unit_id") for item in plan.get("removed") or []],
+    }
+    return hashlib.sha256(
+        json.dumps(material, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 def _parse_stages(raw: Any) -> list[LearningStage]:

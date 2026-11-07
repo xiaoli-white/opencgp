@@ -52,6 +52,8 @@ class Piece(BaseModel):
     current_version: int = 0
     target_words: int = 3000
     last_mode: str = ""
+    grounded: bool = False
+    gate: dict[str, Any] = Field(default_factory=dict)
     profile_id: str = ""
     citations: list[Citation] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

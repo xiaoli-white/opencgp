@@ -29,9 +29,11 @@ import {
   X,
 } from "lucide-react";
 import clsx from "clsx";
+import WebEvidenceNotice from "@/components/reader/WebEvidenceNotice";
 import {
   ApiError,
   api,
+  evidenceGateError,
   type GenerationMode,
   type Piece,
   type PieceVersion,
@@ -297,7 +299,21 @@ export default function PieceEditorPage() {
         }),
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("piece.generateFailed"));
+      const gate = evidenceGateError(err);
+      setError(
+        gate
+          ? `${t("blueprint.gateReason", {
+              topic: gate.topic || "—",
+              searched: gate.chunks_searched,
+              best: Number(gate.best_score ?? 0).toFixed(3),
+              threshold: Number(gate.threshold ?? 0).toFixed(3),
+              usable: gate.usable_passages,
+              required: gate.min_passages,
+            })} ${t("blueprint.gateNextStep")}`
+          : err instanceof Error
+            ? err.message
+            : t("piece.generateFailed"),
+      );
     } finally {
       setBusy("");
       setJobId(null);
@@ -324,7 +340,21 @@ export default function PieceEditorPage() {
       const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
       setNotice(t("piece.generatedSection", { seconds }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("piece.generateSectionFailed"));
+      const gate = evidenceGateError(err);
+      setError(
+        gate
+          ? `${t("blueprint.gateReason", {
+              topic: gate.topic || "—",
+              searched: gate.chunks_searched,
+              best: Number(gate.best_score ?? 0).toFixed(3),
+              threshold: Number(gate.threshold ?? 0).toFixed(3),
+              usable: gate.usable_passages,
+              required: gate.min_passages,
+            })} ${t("blueprint.gateNextStep")}`
+          : err instanceof Error
+            ? err.message
+            : t("piece.generateSectionFailed"),
+      );
     } finally {
       setBusy("");
     }
@@ -1018,6 +1048,8 @@ export default function PieceEditorPage() {
             {notice}
           </div>
         ) : null}
+
+        <WebEvidenceNotice gate={piece?.gate} />
 
         {!writable ? (
           <div className="mt-3 rounded-2xl border border-amber-300/50 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-300">

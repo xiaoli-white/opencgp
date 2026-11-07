@@ -29,6 +29,7 @@ import clsx from "clsx";
 import {
   ApiError,
   api,
+  evidenceGateError,
   type SeriesDetail,
   type SeriesProgress,
   type GenerationMode,
@@ -42,6 +43,7 @@ import {
   type EditLockState,
 } from "@/lib/editLock";
 import { contentLength, formatRelative } from "@/lib/format";
+import { guardUnits } from "@/lib/objectiveGuard";
 import {
   difficultyLabel,
   profileNameLabel,
@@ -53,6 +55,7 @@ import {
 } from "@/i18n/labels";
 import { useI18n } from "@/i18n/I18nProvider";
 import MarkdownReader from "@/components/reader/MarkdownReader";
+import EvidenceGapNotice from "@/components/reader/EvidenceGapNotice";
 import SeriesReader from "@/components/reader/SeriesReader";
 import VersionPanel from "@/components/reader/VersionPanel";
 import ChatPanel from "@/components/chat/ChatPanel";
@@ -119,6 +122,8 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
   const [view, setView] = useState<WorkspaceView>("reader");
   const [progress, setProgress] = useState<SeriesProgress | null>(null);
   const [blueprintTick, setBlueprintTick] = useState(0);
+  const [blueprintDirty, setBlueprintDirty] = useState(false);
+  const [appliedUnitIds, setAppliedUnitIds] = useState<string[]>([]);
   const [lockState, setLockState] = useState<EditLockState>({
     status: "idle",
   });
@@ -253,9 +258,14 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
     setPendingSelection(null);
   }, [activeId]);
 
+  const guardedUnits = useMemo(
+    () => guardUnits(detail?.units ?? [], detail?.series.title ?? ""),
+    [detail],
+  );
+
   const activeUnit = useMemo(
-    () => detail?.units.find((unit) => unit.id === activeId) ?? null,
-    [detail, activeId],
+    () => guardedUnits.find((unit) => unit.id === activeId) ?? null,
+    [guardedUnits, activeId],
   );
 
   useEffect(() => {
@@ -387,7 +397,33 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
           retry: () => runGenerate(current),
         });
       } else {
-        setError(err instanceof Error ? err.message : t("series.errors.generate"));
+        const gate = evidenceGateError(err);
+        if (gate) {
+          const offTopic =
+            (gate.off_topic_passages ?? 0) > 0
+              ? ` ${t("blueprint.gateOffTopic", {
+                  count: gate.off_topic_passages ?? 0,
+                  sources:
+                    (
+                      (gate.off_topic_local_sources ?? []).length > 0
+                        ? gate.off_topic_local_sources
+                        : gate.off_topic_sources
+                    )?.join(", ") || "—",
+                })}`
+              : "";
+          setError(
+            `${t("blueprint.gateReason", {
+              topic: gate.topic || "—",
+              searched: gate.chunks_searched,
+              best: Number(gate.best_score ?? 0).toFixed(3),
+              threshold: Number(gate.threshold ?? 0).toFixed(3),
+              usable: gate.usable_passages,
+              required: gate.min_passages,
+            })}${offTopic} ${t("blueprint.gateNextStep")}`,
+          );
+        } else {
+          setError(err instanceof Error ? err.message : t("series.errors.generate"));
+        }
       }
     } finally {
       setGenerating(false);
@@ -564,7 +600,10 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
   const handleUnitsChanged = useCallback(async () => {
     await loadSeries(activeId);
     await refreshProgress();
+    setBlueprintTick((tick) => tick + 1);
   }, [activeId, loadSeries, refreshProgress]);
+
+  const appliedUnitSet = useMemo(() => new Set(appliedUnitIds), [appliedUnitIds]);
 
   const handleSeriesDelete = async () => {
     setSeriesBusy(true);
@@ -829,7 +868,17 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
               <button
                 key={item.value}
                 type="button"
-                onClick={() => setView(item.value)}
+                onClick={() => {
+                  if (
+                    view === "blueprint" &&
+                    item.value !== "blueprint" &&
+                    blueprintDirty &&
+                    !window.confirm(t("blueprint.editor.discardConfirm"))
+                  ) {
+                    return;
+                  }
+                  setView(item.value);
+                }}
                 className={clsx(
                   "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium transition",
                   active
@@ -845,7 +894,13 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {progress ? (
-            <span className="chip-muted">
+            <span
+              className="chip-muted"
+              data-testid="series-progress"
+              data-approved={progress.approved}
+              data-total={progress.total}
+              data-pending={progress.pending_review}
+            >
               {t("series.progress.approved", {
                 approved: progress.approved,
                 total: progress.total,
@@ -853,7 +908,12 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
               })}
             </span>
           ) : null}
-          <span className="chip-muted">
+          <span
+            className="chip-muted"
+            data-testid="series-blueprint-badge"
+            data-ready={progress?.blueprint_ready ? "true" : "false"}
+            data-version={progress?.blueprint_version ?? 0}
+          >
             {progress?.blueprint_ready
               ? t("series.progress.blueprintReady", {
                   version: progress.blueprint_version,
@@ -975,7 +1035,11 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
             )}
           </AnimatePresence>
 
-          <div className="no-scrollbar mt-3 flex-1 space-y-1 overflow-y-auto pr-0.5">
+          <div
+            className="no-scrollbar mt-3 flex-1 space-y-1 overflow-y-auto pr-0.5"
+            data-testid="series-unit-list"
+            data-unit-count={detail.units.length}
+          >
             {detail.units.length === 0 ? (
               <p className="px-2 py-4 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
                 {t("series.emptyUnits")}
@@ -983,11 +1047,15 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
             ) : (
               detail.units.map((unit, unitIndex) => {
                 const active = unit.id === activeId;
+                const applied = appliedUnitSet.has(unit.id);
                 return (
                   <div
                     key={unit.id}
                     role="button"
                     tabIndex={0}
+                    data-testid="series-unit-row"
+                    data-unit-id={unit.id}
+                    data-applied={applied ? "true" : "false"}
                     onClick={() => {
                       setActiveId(unit.id);
                       setGenerateOpen(false);
@@ -1002,9 +1070,11 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
                     }}
                     className={clsx(
                       "group flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition",
-                      active
-                        ? "bg-indigo-500/12 dark:bg-indigo-400/15"
-                        : "hover:bg-white/60 dark:hover:bg-white/[0.06]",
+                      applied
+                        ? "bg-emerald-500/10 ring-1 ring-emerald-400/35 dark:bg-emerald-400/10"
+                        : active
+                          ? "bg-indigo-500/12 dark:bg-indigo-400/15"
+                          : "hover:bg-white/60 dark:hover:bg-white/[0.06]",
                     )}
                   >
                     <span
@@ -1033,6 +1103,11 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
                           ? `v${unit.current_version}`
                           : t("series.toGenerate")}{" "}
                         · {unitStatusLabel(t, unit.status)}
+                        {applied ? (
+                          <span className="ml-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300">
+                            {t("blueprint.appliedBadge")}
+                          </span>
+                        ) : null}
                       </span>
                     </span>
                     {canWrite ? (
@@ -1307,7 +1382,10 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
               )}
 
               {activeUnit.learning_objectives.length > 0 && (
-                <div className="mt-5 rounded-2xl border border-indigo-200/50 bg-indigo-500/5 p-4 dark:border-indigo-400/20 dark:bg-indigo-400/5">
+                <div
+                  data-testid="unit-objectives-card"
+                  className="mt-5 rounded-2xl border border-indigo-200/50 bg-indigo-500/5 p-4 dark:border-indigo-400/20 dark:bg-indigo-400/5"
+                >
                   <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-indigo-500 dark:text-indigo-300">
                     <Target size={12} />
                     {t("series.objectives")}
@@ -1322,6 +1400,8 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
                   </ul>
                 </div>
               )}
+
+              <EvidenceGapNotice gaps={activeUnit.evidence_gaps ?? []} />
 
               {activeUnit.prerequisites.length > 0 && (
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -1482,13 +1562,15 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
           onNotice={setNotice}
           onError={setError}
           onProgressRefresh={() => void refreshProgress()}
+          onUnitsApplied={(unitIds) => setAppliedUnitIds(unitIds)}
           onVersionConflict={setConflict}
+          onDirtyChange={setBlueprintDirty}
         />
       ) : null}
 
       {view === "continuous" ? (
         <SeriesReader
-          units={detail.units}
+          units={guardedUnits}
           progress={progress}
           onOpenUnit={handleOpenUnit}
           onGoReader={() => setView("reader")}

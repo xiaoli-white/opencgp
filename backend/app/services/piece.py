@@ -30,14 +30,26 @@ from app.services.errors import (
     PieceNotFoundError,
     PieceSectionNotFoundError,
     VersionConflictError,
+    InsufficientEvidenceError,
+)
+from app.services.evidence_gate import (
+    EvidenceGate,
+    build_evidence_gate,
+    markers_of,
+    text_cites_markers,
 )
 from app.services.prompting import (
     citation_taxonomy_lines,
     extra_requirement,
+    policy_of,
     prompt_values,
     unit_name,
 )
 from app.services.retrieval_providers import RetrievalContext
+from app.services.web_evidence import (
+    WebEvidenceService,
+    resolve_evidence,
+)
 
 DEFAULT_SECTIONS = (
     ("introduction", "Introduction", "Open with a scenario or question that introduces the topic and explains why the reader should keep reading."),
@@ -73,6 +85,8 @@ class PieceService:
         evidence_char_limit: int = 400,
         default_mode: str = "loose",
         asset_max_images: int = 0,
+        evidence_gate: EvidenceGate | None = None,
+        web_evidence: WebEvidenceService | None = None,
     ) -> None:
         self.repository = repository
         self.vectorstore = vectorstore
@@ -83,6 +97,8 @@ class PieceService:
         self.top_k_ceiling = max(0, int(top_k_ceiling or 0))
         self.evidence_char_limit = evidence_char_limit
         self.default_mode = GenerationMode.normalize(default_mode).value
+        self.evidence_gate = evidence_gate or build_evidence_gate()
+        self.web_evidence = web_evidence
 
     async def create(
         self,
@@ -327,6 +343,7 @@ class PieceService:
         spec: ProfileSpec | None = None,
         ctx: AuthContext | None = None,
         assets: AssetMaterializer | None = None,
+        allow_without_evidence: bool = False,
     ) -> tuple[OutlineSection, Piece]:
         piece = self._require(piece_id)
         section = next(
@@ -336,12 +353,42 @@ class PieceService:
             raise PieceSectionNotFoundError(section_id)
         resolved_mode = GenerationMode.normalize(mode or piece.last_mode or self.default_mode)
         provider = llm or self.llm
+        policy = self._citation_policy(piece, spec, resolved_mode.value)
         citations, evidence = await self._evidence(
             piece, section, top_k, tenant_id, retrieval
         )
+        gate_query = self._section_query(piece, section)
+        local_only = bool(getattr(getattr(spec, "grounding", None), "local_only", False))
+        gate, citations, _web_status = await resolve_evidence(
+            gate=self.evidence_gate,
+            store=self.vectorstore,
+            local_query=gate_query,
+            citations=citations,
+            topic=section.title or piece.title,
+            tenant_id=tenant_id,
+            mode=resolved_mode,
+            citation_policy=policy,
+            allow_without_evidence=allow_without_evidence,
+            web_service=self.web_evidence,
+            web_topic=piece.title,
+            web_title=section.title,
+            web_extra=section.summary,
+            local_only=local_only,
+        )
+        if not gate.allowed:
+            raise InsufficientEvidenceError(gate.payload(), gate.message)
+        if resolved_mode is GenerationMode.strict and not gate.opted_out:
+            citations = list(gate.usable_citations)
+        elif policy == "forbidden":
+            citations = []
+        evidence = self._evidence_items(citations, section, policy, resolved_mode)
         content = await self._write_section(
             provider, piece, section, evidence, resolved_mode, citations, spec
         )
+        if gate.grounded and not text_cites_markers(
+            content, markers_of(citations)
+        ):
+            gate.mark_evidence_unused()
         content, asset_ids, asset_errors = await self._materialize_content(
             ctx, assets, spec, content
         )
@@ -382,6 +429,8 @@ class PieceService:
             citations=merged_citations,
             note=note,
             mode=resolved_mode.value,
+            grounded=gate.grounded,
+            gate=gate.summary(),
         )
         if applied is None:
             raise PieceNotFoundError(piece_id)
@@ -389,6 +438,7 @@ class PieceService:
         if retrieval is not None:
             updated.warnings = list(retrieval.warnings)
             updated.retrieval = retrieval.summary()
+        updated.warnings = [*updated.warnings, *gate.warnings]
         refreshed = next(
             (item for item in updated.outline if item.id == section.id), section
         )
@@ -406,20 +456,50 @@ class PieceService:
         spec: ProfileSpec | None = None,
         ctx: AuthContext | None = None,
         assets: AssetMaterializer | None = None,
+        allow_without_evidence: bool = False,
     ) -> Piece:
         piece = self._require(piece_id)
         resolved_mode = GenerationMode.normalize(mode or piece.last_mode or self.default_mode)
         provider = llm or self.llm
+        policy = self._citation_policy(piece, spec, resolved_mode.value)
         sections: list[OutlineSection] = []
         citations: list[Citation] = []
         by_key: dict[tuple[str, int], Citation] = {}
         asset_ids_total: list[str] = []
         asset_errors: list[str] = []
+        gates = []
         total = max(1, len(piece.outline))
         for index, section in enumerate(piece.outline, start=1):
-            found, evidence = await self._evidence(
+            found, _unused = await self._evidence(
                 piece, section, top_k, tenant_id, retrieval
             )
+            local_only = bool(
+                getattr(getattr(spec, "grounding", None), "local_only", False)
+            )
+            gate, found, _web_status = await resolve_evidence(
+                gate=self.evidence_gate,
+                store=self.vectorstore,
+                local_query=self._section_query(piece, section),
+                citations=found,
+                topic=section.title or piece.title,
+                tenant_id=tenant_id,
+                mode=resolved_mode,
+                citation_policy=policy,
+                allow_without_evidence=allow_without_evidence,
+                web_service=self.web_evidence,
+                web_topic=piece.title,
+                web_title=section.title,
+                web_extra=section.summary,
+                local_only=local_only,
+            )
+            if not gate.allowed:
+                raise InsufficientEvidenceError(gate.payload(), gate.message)
+            gates.append(gate)
+            if resolved_mode is GenerationMode.strict and not gate.opted_out:
+                found = list(gate.usable_citations)
+            elif policy == "forbidden":
+                found = []
+            evidence = self._evidence_items(found, section, policy, resolved_mode)
             for citation in found:
                 key = (citation.source_id, citation.chunk_index)
                 existing = by_key.get(key)
@@ -436,6 +516,10 @@ class PieceService:
             content = await self._write_section(
                 provider, piece, section, evidence, resolved_mode, found, spec
             )
+            if gate.grounded and not text_cites_markers(
+                content, markers_of(found)
+            ):
+                gate.mark_evidence_unused()
             budget_assets = assets
             if assets is not None:
                 budget_assets = assets.with_profile(spec).with_limit(
@@ -458,6 +542,45 @@ class PieceService:
             note = f"{note};assets:error={';'.join(asset_errors)[:200]}"
         elif asset_ids_total:
             note = f"{note};assets:{len(asset_ids_total)}"
+        overall_grounded = bool(gates) and all(item.grounded for item in gates)
+        local_total = sum(int(item.local_passages) for item in gates)
+        web_total = sum(int(item.web_passages) for item in gates)
+        if local_total and web_total:
+            evidence_origin = "mixed"
+        elif web_total:
+            evidence_origin = "web"
+        elif local_total:
+            evidence_origin = "local"
+        else:
+            evidence_origin = "none"
+        web_statuses = [
+            item.web_fallback for item in gates if item.web_fallback
+        ]
+        gate_payload = {
+            "code": (
+                "evidence_gate_passed"
+                if overall_grounded
+                else "evidence_gate_not_grounded"
+            ),
+            "grounded": overall_grounded,
+            "threshold": max((item.threshold for item in gates), default=0.0),
+            "min_passages": max((item.min_passages for item in gates), default=1),
+            "chunks_searched": max(
+                (item.chunks_searched for item in gates), default=0
+            ),
+            "best_score": max((item.best_score for item in gates), default=0.0),
+            "usable_passages": min(
+                (item.usable_passages for item in gates), default=0
+            ),
+            "local_passages": local_total,
+            "web_passages": web_total,
+            "evidence_origin": evidence_origin,
+            "web_fallback": web_statuses[0] if web_statuses else {},
+            "sections": [item.summary() for item in gates],
+        }
+        gate_warnings = [
+            warning for item in gates for warning in item.warnings
+        ]
         applied = self.repository.append_version(
             piece_id,
             content=self._compose(piece, sections),
@@ -465,6 +588,8 @@ class PieceService:
             citations=citations,
             note=note,
             mode=resolved_mode.value,
+            grounded=overall_grounded,
+            gate=gate_payload,
         )
         if applied is None:
             raise PieceNotFoundError(piece_id)
@@ -472,6 +597,7 @@ class PieceService:
         if retrieval is not None:
             updated.warnings = list(retrieval.warnings)
             updated.retrieval = retrieval.summary()
+        updated.warnings = [*updated.warnings, *gate_warnings]
         return updated
 
     async def rewrite(
@@ -506,6 +632,12 @@ class PieceService:
             citations=piece.citations,
             note=f"rewrite:{instruction[:40]}",
             mode=resolved_mode.value,
+            grounded=False,
+            gate={
+                "code": "rewrite_not_grounded",
+                "grounded": False,
+                "message": "A rewrite runs from the existing text without new evidence; this version is not marked as grounded.",
+            },
         )
         if applied is None:
             raise PieceNotFoundError(piece_id)
@@ -525,6 +657,12 @@ class PieceService:
             citations=target.citations,
             note=note or f"revert:{version}",
             mode=target.mode,
+            grounded=False,
+            gate={
+                "code": "revert_not_grounded",
+                "grounded": False,
+                "message": "A reverted version is restored without re-checking evidence; it is not marked as grounded.",
+            },
         )
         if applied is None:
             raise PieceNotFoundError(piece_id)
@@ -715,6 +853,40 @@ class PieceService:
             citation.meta["section_title"] = section.title
             evidence.append(Evidence(marker=citation.marker, citation=citation))
         return citations, evidence
+
+    @staticmethod
+    def _section_query(piece: Piece, section: OutlineSection) -> str:
+        return " ".join(
+            part
+            for part in (piece.title, section.title, section.summary)
+            if part
+        ).strip()
+
+    @staticmethod
+    def _citation_policy(
+        piece: Piece, spec: ProfileSpec | None, mode: str
+    ) -> str:
+        if spec is not None:
+            return policy_of(spec, mode)
+        value = (piece.profile.citation_policy or "optional").strip().lower()
+        return value if value in ("required", "optional", "forbidden") else "optional"
+
+    @staticmethod
+    def _evidence_items(
+        citations: Sequence[Citation],
+        section: OutlineSection,
+        policy: str,
+        mode: GenerationMode,
+    ) -> list[Evidence]:
+        if policy == "forbidden":
+            return []
+        evidence: list[Evidence] = []
+        for index, citation in enumerate(citations, start=1):
+            citation.marker = f"E{index}"
+            citation.meta["section_id"] = section.id
+            citation.meta["section_title"] = section.title
+            evidence.append(Evidence(marker=citation.marker, citation=citation))
+        return evidence
 
     async def _write_section(
         self,

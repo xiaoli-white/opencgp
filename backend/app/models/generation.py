@@ -32,6 +32,12 @@ class GenerationResult(BaseModel):
     citation_coverage: CitationCoverage | None = None
     missing_evidence: list[CitationGap] = Field(default_factory=list)
     grounded: bool = False
+    evidence_count: int = 0
+    local_evidence_count: int = 0
+    web_evidence_count: int = 0
+    evidence_origin: str = ""
+    web_fallback: dict[str, Any] = Field(default_factory=dict)
+    gate: dict[str, Any] = Field(default_factory=dict)
     provider: str = ""
     prompt: str = ""
     warnings: list[str] = Field(default_factory=list)

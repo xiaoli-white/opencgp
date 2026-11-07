@@ -288,7 +288,9 @@ class ResearchService:
         rerank_candidates = citations[:top_n] if top_n > 0 else citations
         try:
             scores = await reranker.rerank(
-                query, [citation.text for citation in rerank_candidates], top_n
+                query,
+                [citation.text for citation in rerank_candidates],
+                top_n or len(rerank_candidates),
             )
         except Exception as exc:  # noqa: BLE001
             print(f"[research] rerank failed, skipping rerank: {exc!r}")

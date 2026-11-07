@@ -23,6 +23,8 @@ import { contentLength } from "@/lib/format";
 import { modeLabel } from "@/i18n/labels";
 import { useI18n } from "@/i18n/I18nProvider";
 import MarkdownReader from "@/components/reader/MarkdownReader";
+import EvidenceGapNotice from "@/components/reader/EvidenceGapNotice";
+import WebEvidenceNotice from "@/components/reader/WebEvidenceNotice";
 import StatusBadge, { statusDotClass } from "@/components/series/StatusBadge";
 
 type UnitMeta = {
@@ -358,6 +360,9 @@ export default function SeriesReader({
                   ))}
                 </ul>
               ) : null}
+
+              <EvidenceGapNotice gaps={unit.evidence_gaps ?? []} />
+              <WebEvidenceNotice citations={citations} />
 
               <div className="mt-5">
                 <MarkdownReader

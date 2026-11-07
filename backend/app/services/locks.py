@@ -24,6 +24,10 @@ from app.services.errors import (
 
 RESOURCE_UNIT = "unit"
 RESOURCE_PIECE = "piece"
+# A blueprint is edited as one document (overview + stages + outline), so the
+# lock key is the series id rather than an individual node.
+RESOURCE_BLUEPRINT = "blueprint"
+LOCKABLE_RESOURCES = frozenset({RESOURCE_UNIT, RESOURCE_PIECE, RESOURCE_BLUEPRINT})
 
 
 @dataclass
@@ -75,6 +79,8 @@ class EditLock:
             payload["unit_id"] = self.resource_id
         elif self.resource_type == RESOURCE_PIECE:
             payload["piece_id"] = self.resource_id
+        elif self.resource_type == RESOURCE_BLUEPRINT:
+            payload["series_id"] = self.resource_id
         return payload
 
 

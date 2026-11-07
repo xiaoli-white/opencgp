@@ -18,7 +18,7 @@ import re
 import sqlite3
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 from urllib.parse import quote
 
 import psycopg
@@ -63,14 +63,17 @@ from app.models.research import ResearchRun
 from app.models.job import (
     JOB_KINDS,
     JOB_STATUSES,
+    KIND_BLUEPRINT_GENERATE,
     KIND_KB_EMBED_BACKFILL,
     KIND_PIECE_VIDEO,
     KIND_UNIT_GENERATE,
     Job,
 )
 from app.models.factcheck import FactCheckReport
+from app.services.blueprint import NO_EVIDENCE_MESSAGE
 from app.services.jobs import JobContext
 from app.services.retrieval_providers import retrieval_request_cache
+from app.services.objective_guard import guard_unit_dicts
 from app.services.codecheck import CodeCheckService
 from app.services.media import detect_image_type
 from app.services.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
@@ -97,6 +100,8 @@ from app.services.errors import (
     AvatarInvalidError,
     AuthRequiredError,
     BlueprintNotFoundError,
+    BlueprintApplyConfirmationError,
+    BlueprintValidationError,
     EmailAlreadyRegisteredError,
     InvalidCredentialsError,
     MembershipNotFoundError,
@@ -108,6 +113,7 @@ from app.services.errors import (
     UnitNotFoundError,
     MessageNotFoundError,
     NoEvidenceError,
+    InsufficientEvidenceError,
     QuotaExceededError,
     VersionConflictError,
     UnitLockedError,
@@ -424,6 +430,10 @@ def _require_lock_resource(
         return _require_unit(resource_id, ctx, level)
     if resource_type == "piece":
         return _require_piece(resource_id, ctx, level)
+    if resource_type == "blueprint":
+        # A blueprint is keyed by its series id; lock access follows the same
+        # series read/write permissions as editing the plan itself.
+        return _require_series(resource_id, ctx, level)
     raise HTTPException(
         status_code=404,
         detail=f"unknown lock resource type: {resource_type}",
@@ -857,7 +867,8 @@ async def kb_search(
         rerank_candidate_count = len(rerank_candidates)
         try:
             docs = [citation.text for citation in rerank_candidates]
-            scores = await rerank.adapter.rerank(req.query, docs, top_n)
+            # 0 means "score every candidate"; pass the concrete size to adapters.
+            scores = await rerank.adapter.rerank(req.query, docs, top_n or len(docs))
         except Exception as exc:  # noqa: BLE001
             print(f"[search] rerank failed, skipping reordering: {exc!r}")
             scores = []
@@ -1419,6 +1430,7 @@ class UnitGenerateRequest(BaseModel):
     source_ids: list[str] | None = None
     mode: GenerationMode = GenerationMode.strict
     expected_version: int | None = None
+    allow_without_evidence: bool = False
 
 
 class SeriesUnitGenerateRequest(BaseModel):
@@ -1428,6 +1440,7 @@ class SeriesUnitGenerateRequest(BaseModel):
     top_k: int | None = Field(default=None, ge=1, le=20)
     source_ids: list[str] | None = None
     expected_version: int | None = None
+    allow_without_evidence: bool = False
 
 
 class SeriesGenerateAllRequest(SeriesUnitGenerateRequest):
@@ -1525,6 +1538,16 @@ def _require_unit(
     return unit
 
 
+def _guarded_units(units: Sequence[Unit], series: Series) -> list[dict[str, Any]]:
+    blueprint = container.blueprint().get_blueprint(series.id)
+    return guard_unit_dicts(
+        [unit.model_dump() for unit in units],
+        series_title=series.title,
+        language=series.language,
+        blueprint=blueprint,
+    )
+
+
 def _series_spec(series: Series | None) -> Any:
     try:
         return container.profiles().resolve_for_series(series)
@@ -1587,7 +1610,7 @@ def get_series(
     return {
         "series": series.model_dump(),
         "unit_count": len(units),
-        "units": [unit.model_dump() for unit in units],
+        "units": _guarded_units(units, series),
         "progress": container.blueprint().progress(series_id),
     }
 
@@ -1628,12 +1651,12 @@ def list_units(
     series_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    _require_series(series_id, ctx)
+    series = _require_series(series_id, ctx)
     units = container.series_repository().list_units(series_id)
     return {
         "series_id": series_id,
         "count": len(units),
-        "units": [unit.model_dump() for unit in units],
+        "units": _guarded_units(units, series),
     }
 
 
@@ -1643,8 +1666,10 @@ def get_unit(
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
     unit = _require_unit(unit_id, ctx)
+    series = container.series_repository().get_series(unit.series_id)
+    payload = _guarded_units([unit], series)[0] if series is not None else unit.model_dump()
     # Reading never acquires a lock; it only reports the current state.
-    return _attach_lock_state(unit.model_dump(), "unit", unit_id, ctx)
+    return _attach_lock_state(payload, "unit", unit_id, ctx)
 
 
 def _asset_materializer(spec: Any = None, *, auto_images: bool | None = None,
@@ -1719,9 +1744,12 @@ async def generate_unit(
             assets=_asset_materializer(
                 _series_spec(container.series_repository().get_series(unit.series_id))
             ),
+            allow_without_evidence=payload.allow_without_evidence,
         )
     except UnitNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}") from exc
+    except InsufficientEvidenceError as exc:
+        raise HTTPException(status_code=409, detail=exc.payload) from exc
     except VersionConflictError as exc:
         return _conflict(exc)
     return result.model_dump()
@@ -1745,6 +1773,8 @@ def _unit_generation_payload(
         payload["mode"] = req.mode.value
     if req.expected_version is not None:
         payload["expected_version"] = req.expected_version
+    if getattr(req, "allow_without_evidence", False):
+        payload["allow_without_evidence"] = True
     return payload
 
 
@@ -2381,11 +2411,28 @@ class BlueprintGenerateRequest(BaseModel):
     top_k: int | None = Field(default=None, ge=1, le=20)
     source_ids: list[str] | None = None
     focus: str = ""
+    allow_without_evidence: bool = False
 
 
 class BlueprintSaveRequest(BaseModel):
     blueprint: SeriesBlueprint
     expected_version: int | None = None
+    note: str = ""
+
+
+class BlueprintValidateRequest(BaseModel):
+    blueprint: SeriesBlueprint
+
+
+class BlueprintRestoreRequest(BaseModel):
+    expected_version: int | None = None
+    note: str = ""
+
+
+class BlueprintApplyRequest(BaseModel):
+    confirm_removals: bool = False
+    expected_version: int | None = None
+    plan_token: str = ""
 
 
 class GlossaryUpdateRequest(BaseModel):
@@ -2413,10 +2460,19 @@ def get_series_blueprint(
     _enforce(ctx, "read")
     _require_series(series_id, ctx)
     blueprint = container.blueprint().get_blueprint(series_id)
-    return {
+    applied = None
+    getter = getattr(container.blueprint().repository, "get_application", None)
+    if callable(getter):
+        applied = getter(series_id)
+    payload: dict[str, Any] = {
         "exists": blueprint is not None,
         "blueprint": blueprint.model_dump() if blueprint else None,
+        "applied_version": int(applied["version"]) if applied else None,
+        "applied_at": float(applied["applied_at"]) if applied else None,
     }
+    # Reading is lock-free: this only reports who currently holds the edit
+    # lock, exactly like the unit and piece read endpoints.
+    return _attach_lock_state(payload, "blueprint", series_id, ctx)
 
 
 @app.post("/api/v1/series/{series_id}/blueprint/generate")
@@ -2425,29 +2481,141 @@ async def generate_series_blueprint(
     req: BlueprintGenerateRequest | None = None,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
+    """Compatibility wrapper: queue the job and wait for its result.
+
+    Blueprint generation has a single code path now: every request becomes a
+    ``blueprint_generate`` job in the shared queue.  This legacy synchronous
+    route simply waits for that job so existing API clients keep working.
+    """
     _enforce(ctx, "write")
     payload = req or BlueprintGenerateRequest()
     series = _require_series(series_id, ctx, "write")
-    _charge(ctx, "blueprint", 1, ref_id=series_id)
     try:
-        blueprint = await container.blueprint().generate(
-            series_id,
-            mode=payload.mode.value,
-            top_k=payload.top_k,
-            source_ids=payload.source_ids,
-            focus=payload.focus,
-            tenant_id=_tenant_of(ctx),
-            llm=container.llm_for(ctx.user.id),
-            spec=_series_spec(series),
-            retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
+        job, _ = _enqueue_blueprint_generation(series, payload, ctx)
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except QueueUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 900.0
+    while True:
+        current = container.job_service().get(job.id, _tenant_of(ctx))
+        if current is None:
+            raise HTTPException(status_code=500, detail=f"job disappeared: {job.id}")
+        if current.status == "succeeded":
+            break
+        if current.status in ("failed", "canceled"):
+            detail = current.error or "blueprint generation failed"
+            result = current.result if isinstance(current.result, dict) else {}
+            structured = result.get("error") if isinstance(result, dict) else None
+            if isinstance(structured, dict) and structured.get("code"):
+                raise HTTPException(
+                    status_code=409 if structured.get("code") == "insufficient_evidence" else 502,
+                    detail=structured,
+                )
+            status_code = 409 if NO_EVIDENCE_MESSAGE in detail else 502
+            raise HTTPException(status_code=status_code, detail=detail)
+        if loop.time() >= deadline:
+            raise HTTPException(
+                status_code=504,
+                detail=f"blueprint generation is still running as job {job.id}",
+            )
+        await asyncio.sleep(0.25)
+    blueprint = container.blueprint().get_blueprint(series_id)
+    if blueprint is None:
+        raise HTTPException(
+            status_code=502,
+            detail="the blueprint job finished but no blueprint was stored",
         )
-    except NoEvidenceError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except BlueprintParseError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except BlueprintNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return blueprint.model_dump()
+
+
+def _blueprint_job_payload(
+    series: Series, req: BlueprintGenerateRequest
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "series_id": series.id,
+        "title": series.title,
+        "mode": req.mode.value,
+    }
+    if req.top_k is not None:
+        body["top_k"] = req.top_k
+    if req.source_ids is not None:
+        body["source_ids"] = list(req.source_ids)
+    if req.focus:
+        body["focus"] = req.focus
+    if req.allow_without_evidence:
+        body["allow_without_evidence"] = True
+    return body
+
+
+def _enqueue_blueprint_generation(
+    series: Series, req: BlueprintGenerateRequest, ctx: AuthContext
+) -> tuple[Job, bool]:
+    return container.job_service().submit_idempotent(
+        KIND_BLUEPRINT_GENERATE, _blueprint_job_payload(series, req), _job_ctx(ctx)
+    )
+
+
+@app.post("/api/v1/series/{series_id}/blueprint/generate-job")
+@app.post("/api/v1/series/{series_id}/blueprint/generate/async")
+def enqueue_series_blueprint(
+    series_id: str,
+    req: BlueprintGenerateRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Any:
+    """Enqueue one blueprint generation and return its job.
+
+    Calling this while a blueprint job for the same series is queued or
+    running returns the existing job with ``duplicate: true`` instead of
+    starting a second generation.
+    """
+    _enforce(ctx, "write")
+    series = _require_series(series_id, ctx, "write")
+    payload = req or BlueprintGenerateRequest()
+    try:
+        job, created = _enqueue_blueprint_generation(series, payload, ctx)
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except QueueUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except UnsupportedJobKindError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse(
+        status_code=202 if created else 200,
+        content={
+            "job": _job_payload(job),
+            "job_id": job.id,
+            "created": created,
+            "duplicate": not created,
+            "events": f"/api/v1/jobs/{job.id}/events",
+        },
+    )
+
+
+def _blueprint_validation_payload(errors: list[dict[str, str]]) -> dict[str, Any]:
+    first = errors[0]["message"] if errors else "invalid blueprint"
+    return {
+        "code": "blueprint_validation_failed",
+        "message": first,
+        "errors": errors,
+    }
+
+
+@app.post("/api/v1/series/{series_id}/blueprint/validate")
+def validate_series_blueprint(
+    series_id: str,
+    req: BlueprintValidateRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_series(series_id, ctx, "write")
+    errors = container.blueprint().validate_blueprint(series_id, req.blueprint)
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "message": errors[0]["message"] if errors else "",
+    }
 
 
 @app.put("/api/v1/series/{series_id}/blueprint")
@@ -2455,34 +2623,180 @@ def save_series_blueprint(
     series_id: str,
     req: BlueprintSaveRequest,
     ctx: AuthContext = Depends(get_auth_context),
-) -> dict[str, Any]:
+) -> Any:
     _enforce(ctx, "write")
     _require_series(series_id, ctx, "write")
     try:
+        container.lock_service().guard_edit("blueprint", series_id, ctx.user.id)
+    except UnitLockedError as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": {
+                    "code": "blueprint_locked",
+                    "message": f"this blueprint is being edited by {exc.name}",
+                },
+                "state": "other",
+                "lock": _lock_dump(exc.lock, ctx),
+            },
+        )
+    try:
         saved = container.blueprint().save_blueprint(
-            series_id, req.blueprint, expected_version=req.expected_version
+            series_id,
+            req.blueprint,
+            expected_version=req.expected_version,
+            author=ctx.user.display_name or ctx.user.email or "manual",
+            note=req.note,
+        )
+    except BlueprintValidationError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": _blueprint_validation_payload(exc.errors)},
         )
     except BlueprintNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except VersionConflictError as exc:
         return _conflict(exc)
-    return saved.model_dump()
+    # Saving releases the editor lock; closing the editor calls DELETE /lock.
+    container.lock_service().release_for_user("blueprint", series_id, ctx.user.id)
+    payload = saved.model_dump()
+    state = _edit_lock_state("blueprint", series_id, ctx)
+    payload["lock"] = state["lock"]
+    payload["lock_state"] = state["state"]
+    return payload
+
+
+@app.get("/api/v1/series/{series_id}/blueprint/versions")
+def list_series_blueprint_versions(
+    series_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_series(series_id, ctx)
+    current = container.blueprint().get_blueprint(series_id)
+    versions = container.blueprint().list_versions(series_id)
+    return {
+        "series_id": series_id,
+        "current_version": current.version if current else 0,
+        "count": len(versions),
+        "versions": versions,
+    }
+
+
+@app.get("/api/v1/series/{series_id}/blueprint/versions/{version}")
+def get_series_blueprint_version(
+    series_id: str,
+    version: int,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_series(series_id, ctx)
+    blueprint = container.blueprint().get_version(series_id, version)
+    if blueprint is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"blueprint version not found: {series_id} v{version}",
+        )
+    return {"blueprint": blueprint.model_dump()}
+
+
+@app.post("/api/v1/series/{series_id}/blueprint/versions/{version}/restore")
+def restore_series_blueprint_version(
+    series_id: str,
+    version: int,
+    req: BlueprintRestoreRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Any:
+    _enforce(ctx, "write")
+    _require_series(series_id, ctx, "write")
+    payload = req or BlueprintRestoreRequest()
+    try:
+        container.lock_service().guard_edit("blueprint", series_id, ctx.user.id)
+    except UnitLockedError as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": {
+                    "code": "blueprint_locked",
+                    "message": f"this blueprint is being edited by {exc.name}",
+                },
+                "state": "other",
+                "lock": _lock_dump(exc.lock, ctx),
+            },
+        )
+    try:
+        restored = container.blueprint().restore_version(
+            series_id,
+            version,
+            expected_version=payload.expected_version,
+            author=ctx.user.display_name or ctx.user.email or "manual",
+        )
+    except BlueprintNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VersionConflictError as exc:
+        return _conflict(exc)
+    return restored.model_dump()
+
+
+@app.get("/api/v1/series/{series_id}/blueprint/apply/plan")
+def preview_series_blueprint_apply(
+    series_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_series(series_id, ctx)
+    try:
+        return container.blueprint().apply_plan(series_id)
+    except BlueprintNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/series/{series_id}/blueprint/apply")
 def apply_series_blueprint(
-    series_id: str, ctx: AuthContext = Depends(get_auth_context)
-) -> dict[str, Any]:
+    series_id: str,
+    req: BlueprintApplyRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Any:
     _enforce(ctx, "write")
     _require_series(series_id, ctx, "write")
+    payload = req or BlueprintApplyRequest()
     try:
-        blueprint, created = container.blueprint().apply(series_id)
+        result = container.blueprint().apply(
+            series_id,
+            confirm_removals=payload.confirm_removals,
+            expected_version=payload.expected_version,
+            plan_token=payload.plan_token,
+            author=ctx.user.display_name or ctx.user.email or "manual",
+        )
+    except BlueprintApplyConfirmationError as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": {
+                    "code": "apply_requires_confirmation",
+                    "message": str(exc),
+                    "plan": exc.plan,
+                }
+            },
+        )
     except BlueprintNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VersionConflictError as exc:
+        return _conflict(exc)
     return {
-        "created_units": [unit.model_dump() for unit in created],
-        "blueprint": blueprint.model_dump(),
-        "created_count": len(created),
+        "created_units": [unit.model_dump() for unit in result.created],
+        "updated_units": [unit.model_dump() for unit in result.updated],
+        "unchanged_units": [unit.model_dump() for unit in result.unchanged],
+        "removed_units": [unit.model_dump() for unit in result.removed],
+        "blueprint": result.blueprint.model_dump(),
+        "created_count": len(result.created),
+        "updated_count": len(result.updated),
+        "unchanged_count": len(result.unchanged),
+        "removed_count": len(result.removed),
+        "affected_unit_ids": result.affected_unit_ids,
+        "stage_count": result.stage_count,
+        "node_count": result.node_count,
+        "failure_count": len(result.failures),
+        "failures": result.failures,
+        "status": "partial" if result.failures else "succeeded",
     }
 
 
@@ -3996,6 +4310,7 @@ class ResearchBlueprintRequest(BaseModel):
     create_series: bool = False
     series_title: str = ""
     mode: str = "loose"
+    allow_without_evidence: bool = False
 
 
 class PieceCreateRequest(BaseModel):
@@ -4014,12 +4329,14 @@ class PieceCreateRequest(BaseModel):
 class PieceSectionRequest(BaseModel):
     mode: str | None = None
     top_k: int | None = Field(default=None, ge=1, le=20)
+    allow_without_evidence: bool = False
 
 
 class PieceGenerateRequest(BaseModel):
     mode: str | None = None
     top_k: int | None = Field(default=None, ge=1, le=20)
     expected_version: int | None = None
+    allow_without_evidence: bool = False
 
 
 class PieceRewriteRequest(BaseModel):
@@ -4148,9 +4465,12 @@ async def research_to_blueprint(
             tenant_id=_tenant_of(ctx),
             llm=container.llm_for(ctx.user.id),
             retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
+            allow_without_evidence=payload.allow_without_evidence,
         )
     except NoEvidenceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InsufficientEvidenceError as exc:
+        raise HTTPException(status_code=409, detail=exc.payload) from exc
     except BlueprintParseError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except (BlueprintNotFoundError, ResearchNotFoundError) as exc:
@@ -4301,9 +4621,12 @@ async def generate_piece_section(
             spec=spec,
             ctx=ctx,
             assets=_asset_materializer(spec),
+            allow_without_evidence=payload.allow_without_evidence,
         )
     except PieceSectionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"section not found: {exc}") from exc
+    except InsufficientEvidenceError as exc:
+        raise HTTPException(status_code=409, detail=exc.payload) from exc
     except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     report = await _validation_report(
@@ -4332,17 +4655,23 @@ async def generate_piece(
         return _conflict(VersionConflictError(int(payload.expected_version), piece.current_version))
     _charge(ctx, "piece", 1, ref_id=piece_id)
     spec = _piece_spec(piece)
-    updated = await container.piece().generate_all(
-        piece_id,
-        mode=payload.mode,
-        top_k=payload.top_k,
-        tenant_id=_tenant_of(ctx),
-        llm=container.llm_for(ctx.user.id),
-        retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
-        spec=spec,
-        ctx=ctx,
-        assets=_asset_materializer(spec),
-    )
+    try:
+        updated = await container.piece().generate_all(
+            piece_id,
+            mode=payload.mode,
+            top_k=payload.top_k,
+            tenant_id=_tenant_of(ctx),
+            llm=container.llm_for(ctx.user.id),
+            retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
+            spec=spec,
+            ctx=ctx,
+            assets=_asset_materializer(spec),
+            allow_without_evidence=payload.allow_without_evidence,
+        )
+    except InsufficientEvidenceError as exc:
+        raise HTTPException(status_code=409, detail=exc.payload) from exc
+    except PieceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     report = await _validation_report(
         _piece_spec(updated),
         updated.content,

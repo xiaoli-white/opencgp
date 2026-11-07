@@ -603,6 +603,7 @@ export type Unit = {
   title: string;
   learning_objectives: string[];
   prerequisites: string[];
+  evidence_gaps?: string[];
   content: string;
   status: string;
   current_version: number;
@@ -657,6 +658,11 @@ export type GenerationResult = {
   grounded: boolean;
   provider: string;
   prompt: string;
+  local_evidence_count?: number;
+  web_evidence_count?: number;
+  evidence_origin?: string;
+  web_fallback?: WebFallbackStatus;
+  gate?: EvidenceGatePayload;
 };
 
 export type AskResult = {
@@ -762,13 +768,117 @@ export type Blueprint = {
   outline: OutlineNode[];
   glossary: GlossaryTerm[];
   provider: string;
+  author?: string;
+  change_source?: string;
   warning: string;
+  evidence_count?: number;
+  evidence?: Record<string, unknown>[];
+  gate?: EvidenceGatePayload;
+  warnings?: string[];
   updated_at: number;
 };
 
 export type BlueprintEnvelope = {
   exists: boolean;
   blueprint: Blueprint | null;
+  /** Blueprint version that was last pushed into the series' units. */
+  applied_version?: number | null;
+  applied_at?: number | null;
+  lock?: LockSummary | null;
+  lock_state?: string;
+  locked_by_me?: boolean;
+  locked_by_other?: boolean;
+};
+
+export type BlueprintValidationError = {
+  path: string;
+  code: string;
+  message: string;
+};
+
+export type BlueprintValidationResult = {
+  ok: boolean;
+  errors: BlueprintValidationError[];
+  message: string;
+};
+
+export type BlueprintVersionSummary = {
+  version: number;
+  author: string;
+  change_source: string;
+  note: string;
+  created_at: number;
+  overview: string;
+  stage_count: number;
+  node_count: number;
+  glossary_count: number;
+  mode: string;
+};
+
+export type BlueprintVersionsPayload = {
+  series_id: string;
+  current_version: number;
+  count: number;
+  versions: BlueprintVersionSummary[];
+};
+
+export type BlueprintApplyRename = {
+  node_id: string;
+  unit_id: string;
+  from: string;
+  to: string;
+  has_content: boolean;
+  content_preserved: boolean;
+};
+
+export type BlueprintApplyCreated = {
+  node_id: string;
+  title: string;
+  stage_id: string;
+  has_content: boolean;
+};
+
+export type BlueprintApplyChanged = {
+  node_id: string;
+  unit_id: string;
+  title: string;
+  has_content: boolean;
+  content_preserved: boolean;
+  objectives_changed: boolean;
+  prerequisites_changed: boolean;
+};
+
+export type BlueprintApplyRemoved = {
+  unit_id: string;
+  title: string;
+  order_index: number;
+  has_content: boolean;
+  content_chars: number;
+  current_version: number;
+};
+
+export type BlueprintApplyPlan = {
+  series_id: string;
+  blueprint_version: number;
+  stage_count: number;
+  node_count: number;
+  created: BlueprintApplyCreated[];
+  renamed: BlueprintApplyRename[];
+  updated: BlueprintApplyChanged[];
+  unchanged: BlueprintApplyCreated[];
+  removed: BlueprintApplyRemoved[];
+  kept_unlinked: { unit_id: string; title: string; has_content: boolean }[];
+  removals_require_confirmation: boolean;
+  content_loss: { unit_id: string; title: string; content_chars: number }[];
+  summary: {
+    created: number;
+    renamed: number;
+    updated: number;
+    unchanged: number;
+    removed: number;
+    kept_unlinked: number;
+  };
+  token: string;
 };
 
 export type UnitReview = {
@@ -798,10 +908,49 @@ export type GlossaryPayload = {
   glossary: GlossaryTerm[];
 };
 
+export type BlueprintApplyFailure = {
+  node_id: string;
+  title: string;
+  reason: string;
+};
+
 export type ApplyBlueprintResult = {
   created_units: Unit[];
+  updated_units: Unit[];
+  unchanged_units: Unit[];
+  removed_units?: Unit[];
   blueprint: Blueprint;
   created_count: number;
+  updated_count: number;
+  unchanged_count: number;
+  removed_count?: number;
+  affected_unit_ids: string[];
+  stage_count: number;
+  node_count: number;
+  failure_count: number;
+  failures: BlueprintApplyFailure[];
+  status: "succeeded" | "partial";
+};
+
+export type QueuedJob = {
+  id: string;
+  kind: string;
+  status: string;
+  progress: number;
+  error: string;
+  result: Record<string, unknown> | null;
+  payload: Record<string, unknown>;
+  created_at: number;
+  started_at: number;
+  finished_at: number;
+};
+
+export type BlueprintJobEnvelope = {
+  job: QueuedJob;
+  job_id: string;
+  created: boolean;
+  duplicate: boolean;
+  events: string;
 };
 
 export type ReviewResult = {
@@ -904,6 +1053,8 @@ export type Piece = {
   target_words: number;
   last_mode: string;
   citations: Citation[];
+  gate?: EvidenceGatePayload;
+  grounded?: boolean;
   created_at: number;
   updated_at: number;
   lock?: LockSummary | null;
@@ -919,6 +1070,60 @@ export type PieceVersion = {
   mode: string;
   created_at: number;
   content_length: number;
+};
+
+export type WebFallbackStatus = {
+  enabled?: boolean;
+  attempted?: boolean;
+  provider?: string;
+  provider_available?: boolean;
+  query?: string;
+  result_count?: number;
+  passage_count?: number;
+  cache_hit?: boolean;
+  cache_ttl_seconds?: number;
+  max_results?: number;
+  max_chars?: number;
+  retrieved_at?: string;
+  error?: string;
+  opted_out?: boolean;
+  opt_out_reason?: string;
+};
+
+export type EvidenceGatePayload = {
+  code: string;
+  message: string;
+  query: string;
+  topic: string;
+  chunks_searched: number;
+  best_score: number;
+  threshold: number;
+  min_passages: number;
+  usable_passages: number;
+  mode: string;
+  citation_policy: string;
+  grounded: boolean;
+  opted_out: boolean;
+  opt_out_reason?: string;
+  overridden: boolean;
+  usable_markers?: string[];
+  local_passages?: number;
+  web_passages?: number;
+  evidence_origin?: string;
+  profile_opted_out_web?: boolean;
+  web_fallback?: WebFallbackStatus;
+  next_step?: string;
+  warnings?: string[];
+  best_usable_score?: number;
+  topical_coverage_required?: boolean;
+  coverage_language?: string;
+  topic_terms?: string[];
+  topic_min_matches?: number;
+  threshold_passages?: number;
+  off_topic_passages?: number;
+  off_topic_sources?: string[];
+  off_topic_local_sources?: string[];
+  off_topic_web_sources?: string[];
 };
 
 export class ApiError extends Error {
@@ -947,6 +1152,15 @@ export class ApiError extends Error {
       expected_version: typeof expected === "number" ? expected : undefined,
     };
   }
+}
+
+export function evidenceGateError(error: unknown): EvidenceGatePayload | null {
+  if (!(error instanceof ApiError) || !error.payload) return null;
+  const detail = error.payload.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const payload = detail as Record<string, unknown>;
+  if (typeof payload.code !== "string") return null;
+  return payload as unknown as EvidenceGatePayload;
 }
 
 type RequestOptions = {
@@ -997,6 +1211,11 @@ export async function request<T>(
           .map((item: { msg?: string }) => item?.msg ?? "")
           .filter(Boolean)
           .join("; ");
+      } else if (detail && typeof detail === "object") {
+        const structured = detail as Record<string, unknown>;
+        if (typeof structured.message === "string") {
+          message = structured.message;
+        }
       }
     } catch {
       message = `${message} ${response.statusText}`.trim();
@@ -1167,6 +1386,7 @@ export type ProfileGroundingSpec = {
   citation_policy?: string;
   min_evidence?: number;
   allow_web?: boolean;
+  local_only?: boolean;
 };
 
 export type ProfileAssetsSpec = {
@@ -1541,18 +1761,99 @@ export const api = {
       }),
     }),
 
+  enqueueBlueprintGeneration: (
+    seriesId: string,
+    payload: {
+      mode?: GenerationMode;
+      source_ids?: string[];
+      focus?: string;
+    } = {},
+  ) =>
+    request<BlueprintJobEnvelope>(
+      `/api/v1/series/${seriesId}/blueprint/generate-job`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          mode: payload.mode ?? "strict",
+          source_ids: payload.source_ids ?? null,
+          focus: payload.focus ?? "",
+        }),
+      },
+    ),
+
   saveBlueprint: (
     seriesId: string,
     blueprint: Blueprint,
     expectedVersion?: number | null,
+    note?: string,
   ) =>
     request<Blueprint>(`/api/v1/series/${seriesId}/blueprint`, {
       method: "PUT",
       body: JSON.stringify({
         blueprint,
         expected_version: expectedVersion ?? null,
+        note: note ?? "",
       }),
     }),
+
+  validateBlueprint: (seriesId: string, blueprint: Blueprint) =>
+    request<BlueprintValidationResult>(
+      `/api/v1/series/${seriesId}/blueprint/validate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ blueprint }),
+      },
+    ),
+
+  listBlueprintVersions: (seriesId: string) =>
+    request<BlueprintVersionsPayload>(
+      `/api/v1/series/${seriesId}/blueprint/versions`,
+    ),
+
+  getBlueprintVersion: (seriesId: string, version: number) =>
+    request<{ blueprint: Blueprint }>(
+      `/api/v1/series/${seriesId}/blueprint/versions/${version}`,
+    ),
+
+  restoreBlueprintVersion: (
+    seriesId: string,
+    version: number,
+    expectedVersion?: number | null,
+  ) =>
+    request<Blueprint>(
+      `/api/v1/series/${seriesId}/blueprint/versions/${version}/restore`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          expected_version: expectedVersion ?? null,
+        }),
+      },
+    ),
+
+  previewBlueprintApply: (seriesId: string) =>
+    request<BlueprintApplyPlan>(
+      `/api/v1/series/${seriesId}/blueprint/apply/plan`,
+    ),
+
+  applyBlueprint: (
+    seriesId: string,
+    payload: {
+      confirm_removals?: boolean;
+      expected_version?: number | null;
+      plan_token?: string;
+    } = {},
+  ) =>
+    request<ApplyBlueprintResult>(
+      `/api/v1/series/${seriesId}/blueprint/apply`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          confirm_removals: payload.confirm_removals ?? false,
+          expected_version: payload.expected_version ?? null,
+          plan_token: payload.plan_token ?? "",
+        }),
+      },
+    ),
 
   getUnitLock: (unitId: string) =>
     request<{ lock: UnitLockInfo | null }>(
@@ -1575,12 +1876,6 @@ export const api = {
     request<{ ok: boolean }>(
       `/api/v1/units/${unitId}/lock?token=${encodeURIComponent(token)}`,
       { method: "DELETE" },
-    ),
-
-  applyBlueprint: (seriesId: string) =>
-    request<ApplyBlueprintResult>(
-      `/api/v1/series/${seriesId}/blueprint/apply`,
-      { method: "POST" },
     ),
 
   getGlossary: (seriesId: string) =>

@@ -2,7 +2,7 @@ import { API_BASE, ApiError, api, type UnitLockInfo } from "@/lib/api";
 import { getTenantId, getToken } from "@/lib/session";
 import { request } from "@/lib/api";
 
-export type EditLockKind = "unit" | "piece";
+export type EditLockKind = "unit" | "piece" | "blueprint";
 
 export const LOCK_HEARTBEAT_MS = 45_000;
 
@@ -240,9 +240,13 @@ export function releaseEditLockBeacon(
   const legacyPath =
     kind === "unit"
       ? `/api/v1/units/${encodeURIComponent(id)}/lock`
-      : `/api/v1/pieces/${encodeURIComponent(id)}/lock`;
+      : kind === "piece"
+        ? `/api/v1/pieces/${encodeURIComponent(id)}/lock`
+        : "";
   const query = `?token=${encodeURIComponent(token)}`;
-  for (const path of [`/api/v1/locks/${kind}/${encodeURIComponent(id)}`, legacyPath]) {
+  const paths = [`/api/v1/locks/${kind}/${encodeURIComponent(id)}`];
+  if (legacyPath) paths.push(legacyPath);
+  for (const path of paths) {
     try {
       void fetch(`${API_BASE}${path}${query}`, {
         method: "DELETE",

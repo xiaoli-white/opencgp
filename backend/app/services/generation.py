@@ -43,7 +43,23 @@ from app.services.citation_audit import (
     attach_citation_markers,
     normalize_evidence,
 )
-from app.services.errors import UnitNotFoundError, VersionConflictError
+from app.services.errors import (
+    UnitNotFoundError,
+    VersionConflictError,
+    InsufficientEvidenceError,
+)
+from app.services.evidence_gate import (
+    EvidenceGate,
+    build_evidence_gate,
+    markers_of,
+    text_cites_markers,
+)
+from app.services.language import language_name, with_output_language
+from app.services.web_evidence import (
+    WebEvidenceService,
+    counts_by_origin,
+    resolve_evidence,
+)
 from app.services.factcheck import FactCheckService
 from app.services.retrieval_providers import RetrievalContext
 from app.services.prompting import (
@@ -101,6 +117,8 @@ class GenerationService:
         factcheck: FactCheckService | None = None,
         validators: ValidatorRunner | None = None,
         asset_max_images: int = 3,
+        evidence_gate: EvidenceGate | None = None,
+        web_evidence: WebEvidenceService | None = None,
     ) -> None:
         self.repository = repository
         self.vectorstore = vectorstore
@@ -116,6 +134,8 @@ class GenerationService:
         self.factcheck = factcheck
         self.validators = validators
         self.asset_max_images = max(0, int(asset_max_images or 0))
+        self.evidence_gate = evidence_gate or build_evidence_gate()
+        self.web_evidence = web_evidence
 
     async def generate_unit(
         self,
@@ -132,6 +152,7 @@ class GenerationService:
         retrieval: RetrievalContext | None = None,
         ctx: AuthContext | None = None,
         assets: AssetMaterializer | None = None,
+        allow_without_evidence: bool = False,
     ) -> GenerationResult:
         unit = self.repository.get_unit(unit_id)
         if unit is None:
@@ -139,6 +160,7 @@ class GenerationService:
         if expected_version is not None and int(expected_version) != unit.current_version:
             raise VersionConflictError(int(expected_version), unit.current_version)
         series = self.repository.get_series(unit.series_id)
+        series = with_output_language(series, spec)
         resolved_mode = GenerationMode.normalize(mode or self.default_mode)
         policy = policy_of(spec, resolved_mode.value)
 
@@ -149,34 +171,69 @@ class GenerationService:
         resolved_top_k = requested_top_k
         min_score = (
             self.min_score
-            if (policy == "required" and resolved_mode is GenerationMode.strict)
+            if (
+                not self.evidence_gate.config.enabled
+                and policy == "required"
+                and resolved_mode is GenerationMode.strict
+            )
             else None
         )
         if policy == "forbidden":
             citations: list[Citation] = []
-        elif retrieval is not None:
-            citations, _ = await retrieval.search(
-                self.vectorstore,
-                self._build_query(resolved_topic, unit),
-                top_k=resolved_top_k,
-                source_ids=source_ids,
-                tenant_id=tenant_id,
-                min_score=min_score,
-            )
-            citations = _diversify(
-                citations, self.max_evidence, per_source=self.max_per_source
-            )
         else:
-            citations = await self.vectorstore.search(
-                self._build_query(resolved_topic, unit),
-                top_k=resolved_top_k,
-                source_ids=source_ids,
-                tenant_id=tenant_id,
-                min_score=min_score,
-            )
+            query = self._build_query(resolved_topic, unit)
+            if retrieval is not None:
+                citations, _ = await retrieval.search(
+                    self.vectorstore,
+                    query,
+                    top_k=resolved_top_k,
+                    source_ids=source_ids,
+                    tenant_id=tenant_id,
+                    min_score=min_score,
+                )
+            else:
+                citations = await self.vectorstore.search(
+                    query,
+                    top_k=resolved_top_k,
+                    source_ids=source_ids,
+                    tenant_id=tenant_id,
+                    min_score=min_score,
+                )
             citations = _diversify(
                 citations, self.max_evidence, per_source=self.max_per_source
             )
+        local_only = bool(getattr(getattr(spec, "grounding", None), "local_only", False))
+        topic_texts = [
+            str(value)
+            for value in [
+                series.title if series is not None else "",
+                unit.title,
+                *list(unit.learning_objectives or []),
+            ]
+            if str(value or "").strip()
+        ]
+        gate, citations, _web_status = await resolve_evidence(
+            gate=self.evidence_gate,
+            store=self.vectorstore,
+            local_query=self._build_query(resolved_topic, unit),
+            citations=citations,
+            topic=resolved_topic,
+            tenant_id=tenant_id,
+            source_ids=source_ids,
+            mode=resolved_mode,
+            citation_policy=policy,
+            allow_without_evidence=allow_without_evidence,
+            web_service=self.web_evidence,
+            web_topic=resolved_topic,
+            web_title=unit.title,
+            web_extra=" ".join(unit.learning_objectives[:4]),
+            local_only=local_only,
+            topic_texts=topic_texts,
+        )
+        if not gate.allowed:
+            raise InsufficientEvidenceError(gate.payload(), gate.message)
+        if resolved_mode is GenerationMode.strict and not gate.opted_out:
+            citations = list(gate.usable_citations)
         evidence = []
         for index, citation in enumerate(citations, start=1):
             citation.marker = f"E{index}"
@@ -199,6 +256,11 @@ class GenerationService:
             content, prompt, provider_name, grounded = await self._write_free(
                 series, unit, resolved_topic, evidence, provider, spec, resolved_mode
             )
+        if gate.grounded and not text_cites_markers(
+            content, markers_of([item.citation for item in evidence])
+        ):
+            gate.mark_evidence_unused()
+        grounded = gate.grounded
 
         evidence_refs = normalize_evidence(evidence)
         checks = await self._run_factcheck(
@@ -264,6 +326,17 @@ class GenerationService:
         )
         assert applied is not None
         updated, version = applied
+        local_used, web_used = counts_by_origin(
+            [item.citation for item in evidence]
+        )
+        if local_used and web_used:
+            evidence_origin = "mixed"
+        elif web_used:
+            evidence_origin = "web"
+        elif local_used:
+            evidence_origin = "local"
+        else:
+            evidence_origin = "none"
 
         return GenerationResult(
             unit_id=unit_id,
@@ -275,13 +348,22 @@ class GenerationService:
             citations=citations,
             evidence=evidence,
             grounded=grounded,
+            evidence_count=len(evidence),
+            local_evidence_count=local_used,
+            web_evidence_count=web_used,
+            evidence_origin=evidence_origin,
+            web_fallback=dict(gate.payload().get("web_fallback") or {}),
+            gate=gate.summary(),
             provider=provider_name,
             prompt=prompt,
             factcheck=checks,
             validation=report,
             citation_coverage=coverage,
             missing_evidence=list(coverage.missing) if coverage is not None else [],
-            warnings=list(retrieval.warnings) if retrieval is not None else [],
+            warnings=[
+                *(list(retrieval.warnings) if retrieval is not None else []),
+                *gate.warnings,
+            ],
             retrieval=retrieval.summary() if retrieval is not None else {},
         )
 
@@ -609,10 +691,12 @@ class GenerationService:
     @staticmethod
     def _brief_lines(series: Series | None) -> list[str]:
         brief = ((series.brief if series else "") or "").strip()
+        language = language_name(series.language) if series else "the language of the course title"
         return [
             "",
             "## Authoring requirements (from the author, not retrieval evidence)",
             brief or "(none)",
+            f"Output language: {language}. Write every prose field in this language; do not switch language.",
             "Use these requirements to decide topic selection, emphasis, and coverage. They are not evidence and must never be cited as a source.",
         ]
 
