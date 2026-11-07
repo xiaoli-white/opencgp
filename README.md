@@ -102,6 +102,8 @@ All settings use the `OPENCGP_` prefix (the legacy `COURSE_STUDIO_` prefix is st
 
 The full, always-current list lives in [`backend/.env.example`](backend/.env.example).
 
+Every key is documented with its default and accepted values in [`docs/configuration.md`](docs/configuration.md).
+
 ## Project layout
 
 ```
@@ -143,6 +145,38 @@ docs/                         # design docs
 Interactive schema: run the backend and open `/docs`.
 
 ## Deployment
+
+### Docker Compose
+
+Two images, one compose file. The backend runs uvicorn as a non-root user with a `/health` probe; the frontend is a static nginx build that also reverse proxies `/api` to the backend, so the browser only ever talks to one origin.
+
+```bash
+cp .env.example .env                     # ports + VITE_API_BASE for the bundle
+cp backend/.env.example backend/.env     # backend settings; set OPENCGP_LLM_* at least
+mkdir -p backend/data && sudo chown -R 10001:10001 backend/data
+docker compose up -d --build
+docker compose ps
+curl -s http://127.0.0.1:8000/health     # {"status":"ok", ...}
+```
+
+Then open <http://127.0.0.1:3001> (or whatever `FRONTEND_PORT` says).
+
+| What | Where |
+|---|---|
+| API | `http://127.0.0.1:${BACKEND_PORT:-8000}` |
+| UI | `http://127.0.0.1:${FRONTEND_PORT:-3001}` |
+| Data volume | `./backend/data` → `/app/data` (SQLite database, uploads, vector store) |
+| Health | `docker inspect --format '{{.State.Health.Status}}' opencgp-backend` |
+
+Things worth knowing:
+
+- Compose brings up **one backend container on SQLite with the in-process queue**. Redis, PostgreSQL and S3 are optional — point `OPENCGP_QUEUE_BACKEND`, `OPENCGP_DATABASE_BACKEND` and `OPENCGP_STORAGE_BACKEND` at external services in `backend/.env` when you need them.
+- `VITE_API_BASE` is baked in at build time. Leave it empty to call the same origin through nginx; set it only when the UI and the API live on different hosts. Rebuild after changing it: `docker compose build --no-cache frontend`.
+- The backend runs as uid `10001`. Make sure the data directory is writable by that user: `sudo chown -R 10001:10001 backend/data`.
+- The image already contains a CJK font and WeasyPrint's native dependencies, so Chinese PDF/EPUB export works without extra packages.
+- Logs: `docker compose logs -f backend`. Stop and remove: `docker compose down` (add `-v` only if you really want to drop the mounted data).
+
+### Kubernetes (Helm)
 
 ```bash
 helm lint deploy/helm/opencgp

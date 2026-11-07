@@ -102,6 +102,8 @@ npm run dev -- --port 3001  # 自动把 /api 代理到 127.0.0.1:8000
 
 完整且持续更新的清单见 [`backend/.env.example`](backend/.env.example)。
 
+每个配置项的默认值、取值范围和含义见 [`docs/configuration.md`](docs/configuration.md)。
+
 ## 目录结构
 
 ```
@@ -143,6 +145,38 @@ docs/                         # 设计文档
 启动后端后访问 `/docs` 可交互调试。
 
 ## 部署
+
+### Docker Compose
+
+两个镜像、一份 compose 文件。后端以非 root 用户跑 uvicorn 并带 `/health` 探针；前端是 nginx 静态站点，同时把 `/api` 反代到后端，浏览器始终只跟一个源打交道。
+
+```bash
+cp .env.example .env                     # 端口 + 打包用的 VITE_API_BASE
+cp backend/.env.example backend/.env     # 后端配置；至少填 OPENCGP_LLM_*
+mkdir -p backend/data && sudo chown -R 10001:10001 backend/data
+docker compose up -d --build
+docker compose ps
+curl -s http://127.0.0.1:8000/health     # {"status":"ok", ...}
+```
+
+然后打开 <http://127.0.0.1:3001>（或你设置的 `FRONTEND_PORT`）。
+
+| 项目 | 地址 / 位置 |
+|---|---|
+| API | `http://127.0.0.1:${BACKEND_PORT:-8000}` |
+| 界面 | `http://127.0.0.1:${FRONTEND_PORT:-3001}` |
+| 数据卷 | `./backend/data` → `/app/data`（SQLite 库、上传文件、向量库） |
+| 健康状态 | `docker inspect --format '{{.State.Health.Status}}' opencgp-backend` |
+
+几点需要注意：
+
+- compose 起的是**单后端容器 + SQLite + 进程内队列**。Redis / PostgreSQL / S3 都是可选项，需要时在 `backend/.env` 里把 `OPENCGP_QUEUE_BACKEND`、`OPENCGP_DATABASE_BACKEND`、`OPENCGP_STORAGE_BACKEND` 指向外部服务。
+- `VITE_API_BASE` 是构建期变量，留空表示走同源经 nginx 反代；只有前后端不同域时才需要设置。改动后要重新构建：`docker compose build --no-cache frontend`。
+- 后端以 uid `10001` 运行，数据目录要可写：`sudo chown -R 10001:10001 backend/data`。
+- 镜像内已装中文字体与 WeasyPrint 依赖，中文 PDF / EPUB 导出开箱可用。
+- 看日志：`docker compose logs -f backend`；停止：`docker compose down`（只有确实想清空挂载数据时才加 `-v`）。
+
+### Kubernetes（Helm）
 
 ```bash
 helm lint deploy/helm/opencgp

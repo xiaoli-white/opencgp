@@ -8,7 +8,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl \
+ && apt-get install -y --no-install-recommends \
+      curl \
+      fonts-wqy-microhei \
+      libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libcairo2 \
+      libgdk-pixbuf-2.0-0 libffi8 shared-mime-info \
  && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./

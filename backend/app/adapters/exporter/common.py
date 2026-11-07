@@ -11,8 +11,23 @@ from app.models.export import ExportChapter
 
 CJK_SAMPLE = "\u5411\u91cf\u68c0\u7d22\u8bfe\u7a0b\u5185\u5bb9\u5b66\u4e60\u76ee\u6807\u53c2\u8003\u6765\u6e90\u7ae0\u8282"
 MIN_CJK_FONT_BYTES = 1_000_000
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-ASSET_ROOT = Path(__file__).resolve().parents[5]
+_THIS_FILE = Path(__file__).resolve()
+
+
+def _parent_at(depth: int) -> Path:
+    """Return an ancestor directory without exploding on shallow installs.
+
+    ``common.py`` sits at ``<repo>/backend/app/adapters/exporter/common.py`` when
+    the repo is checked out, but at ``/app/app/adapters/exporter/common.py`` inside
+    the container, which simply has fewer ancestors. Falling back to the shallowest
+    ancestor keeps optional asset lookups working instead of raising IndexError.
+    """
+    parents = _THIS_FILE.parents
+    return parents[depth] if len(parents) > depth else parents[-1]
+
+
+PROJECT_ROOT = _parent_at(4)
+ASSET_ROOT = _parent_at(5)
 
 _SYSTEM_CANDIDATES = (
     "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",

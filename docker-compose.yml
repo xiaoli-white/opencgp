@@ -1,9 +1,10 @@
 # ============================================================
 # OpenCGP · docker compose
 #
-# NOTE: this file expects backend/Dockerfile and frontend/Dockerfile,
-# which are not part of the repo yet. For local development start the
-# two processes directly (see README "Quick start").
+# Backend: uvicorn as a non-root user, /health probe.
+# Frontend: static nginx build that also reverse proxies /api to the backend,
+# so the browser only talks to one origin. For local development without
+# Docker start the two processes directly (see README "Quick start").
 # ============================================================
 
 services:
@@ -15,7 +16,14 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     env_file:
       - ./backend/.env
+    # Self-contained stack: SQLite on the mounted volume and the in-process
+    # queue. Point these at external services when you run Redis/PostgreSQL/S3.
+    environment:
+      OPENCGP_DATABASE_BACKEND: ${OPENCGP_DATABASE_BACKEND:-sqlite}
+      OPENCGP_QUEUE_BACKEND: ${OPENCGP_QUEUE_BACKEND:-local}
+      OPENCGP_STORAGE_BACKEND: ${OPENCGP_STORAGE_BACKEND:-local}
     volumes:
+      # The container runs as uid 10001; the mounted directory must be owned by it.
       - ./backend/data:/app/data
     restart: unless-stopped
 
@@ -29,5 +37,6 @@ services:
     ports:
       - "${FRONTEND_PORT:-3001}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
