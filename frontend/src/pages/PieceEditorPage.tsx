@@ -37,16 +37,23 @@ import {
   type PieceVersion,
 } from "@/lib/api";
 import { cancelJob, runJob } from "@/lib/jobs";
+import {
+  createEditLockController,
+  type EditLockController,
+  type EditLockState,
+} from "@/lib/editLock";
 import { contentLength, formatChars, formatDateTime } from "@/lib/format";
 import MarkdownReader from "@/components/reader/MarkdownReader";
 import VersionDiffDialog from "@/components/reader/VersionDiffDialog";
 import VersionPreviewDialog from "@/components/reader/VersionPreviewDialog";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
+import { genreLabel, policyLabel, roleLabel } from "@/i18n/labels";
 import SharePanel, { type ShareMember } from "@/components/sharing/SharePanel";
 import ShareLinksDialog from "@/components/share/ShareLinksDialog";
 import ExportMenu from "@/components/export/ExportMenu";
 import ImagePickerDrawer from "@/components/media/ImagePickerDrawer";
+import EditLockChip from "@/components/series/EditLockChip";
 import {
   ConfirmDialog,
   Modal,
@@ -79,14 +86,9 @@ function useElapsed(active: boolean): number {
 export default function PieceEditorPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
-  const { can, roleName, tenant } = useSession();
+  const { can, roleKey, roleName, tenant } = useSession();
   const { t } = useI18n();
   const writable = can("write");
-
-  const genreLabel = (value: string) =>
-    (GENRE_VALUES as readonly string[]).includes(value)
-      ? t(`piece.genre.${value}`)
-      : t("piece.genre.article");
 
   const [piece, setPiece] = useState<Piece | null>(null);
   const [versions, setVersions] = useState<PieceVersion[]>([]);
@@ -119,6 +121,8 @@ export default function PieceEditorPage() {
 
   const [titleEditOpen, setTitleEditOpen] = useState(false);
   const [targetEditOpen, setTargetEditOpen] = useState(false);
+  const [briefEditOpen, setBriefEditOpen] = useState(false);
+  const [briefDraft, setBriefDraft] = useState("");
   const [sectionRename, setSectionRename] = useState<{ id: string; title: string } | null>(
     null,
   );
@@ -140,6 +144,9 @@ export default function PieceEditorPage() {
   );
   const [manualOpen, setManualOpen] = useState(false);
   const [manualText, setManualText] = useState("");
+  const [editLockState, setEditLockState] = useState<EditLockState>({
+    status: "idle",
+  });
   const [dialogBusy, setDialogBusy] = useState(false);
   const [dialogError, setDialogError] = useState("");
 
@@ -196,6 +203,17 @@ export default function PieceEditorPage() {
   );
 
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const pieceLock = useRef<EditLockController | null>(null);
+
+  useEffect(() => {
+    setEditLockState({ status: "idle" });
+    setManualOpen(false);
+    return () => {
+      const controller = pieceLock.current;
+      pieceLock.current = null;
+      controller?.stop(true);
+    };
+  }, [id]);
 
   const load = useCallback(
     async (quiet = false) => {
@@ -436,11 +454,32 @@ export default function PieceEditorPage() {
     setOutlineOpen(false);
   };
 
-  const openManual = () => {
-    if (!piece) return;
+  const openManual = async () => {
+    if (!piece || !writable) return;
     setDialogError("");
-    setManualText(piece.content ?? "");
-    setManualOpen(true);
+    const previous = pieceLock.current;
+    if (previous) previous.stop(true);
+    const controller = createEditLockController({
+      kind: "piece",
+      id: piece.id,
+      onState: setEditLockState,
+      onError: setError,
+    });
+    pieceLock.current = controller;
+    const state = await controller.start();
+    if (pieceLock.current !== controller) return;
+    if (state.status === "held" || state.status === "unsupported") {
+      setManualText(piece.content ?? "");
+      setManualOpen(true);
+    }
+  };
+
+  const closeManual = async () => {
+    const controller = pieceLock.current;
+    pieceLock.current = null;
+    setManualOpen(false);
+    setEditLockState({ status: "idle" });
+    await controller?.release();
   };
 
   const saveManual = async () => {
@@ -456,7 +495,11 @@ export default function PieceEditorPage() {
       setPiece(updated);
       const versionData = await api.listPieceVersions(piece.id);
       setVersions(versionData.versions);
+      const controller = pieceLock.current;
+      pieceLock.current = null;
       setManualOpen(false);
+      setEditLockState({ status: "idle" });
+      await controller?.release();
       setNotice(t("piece.savedAsVersion", { version: updated.current_version }));
     } catch (err) {
       setDialogError(err instanceof Error ? err.message : t("errors.saveFailed"));
@@ -474,6 +517,21 @@ export default function PieceEditorPage() {
       setPiece(updated);
       setTitleEditOpen(false);
       setNotice(t("piece.titleUpdated"));
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : t("piece.updateFailed"));
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  const saveBrief = async () => {
+    if (!piece) return;
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      const updated = await api.updatePiece(piece.id, { brief: briefDraft.trim() });
+      setPiece(updated);
+      setBriefEditOpen(false);
     } catch (err) {
       setDialogError(err instanceof Error ? err.message : t("piece.updateFailed"));
     } finally {
@@ -702,7 +760,7 @@ export default function PieceEditorPage() {
           </Link>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="chip">{genreLabel(piece.profile?.genre ?? "")}</span>
+              <span className="chip">{genreLabel(t, piece.profile?.genre ?? "")}</span>
               <span
                 className={clsx(
                   "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1",
@@ -717,6 +775,15 @@ export default function PieceEditorPage() {
               <span className="chip-muted">
                 {t("piece.sectionCount", { count: piece.outline.length })}
               </span>
+              <EditLockChip
+                state={editLockState}
+                onReadOnly={() => {
+                  pieceLock.current?.stop(false);
+                  pieceLock.current = null;
+                  setEditLockState({ status: "idle" });
+                }}
+                onRetry={() => void pieceLock.current?.retry()}
+              />
             </div>
             <h1 className="mt-2 flex items-center gap-1.5 text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100 sm:text-xl">
               <span className="min-w-0 break-words">{piece.title}</span>
@@ -734,6 +801,14 @@ export default function PieceEditorPage() {
                 </button>
               ) : null}
             </h1>
+            {piece.brief ? (
+              <p className="mt-1.5 max-w-2xl whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                <span className="font-medium text-slate-600 dark:text-slate-300">
+                  {t("piece.briefLabel")}:{" "}
+                </span>
+                <span className="line-clamp-3">{piece.brief}</span>
+              </p>
+            ) : null}
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
               <span className="tabular-nums">
                 {t("piece.charsOfTarget", {
@@ -751,6 +826,19 @@ export default function PieceEditorPage() {
                   className="rounded-full px-1.5 py-0.5 text-[10px] text-indigo-600 transition hover:bg-indigo-500/10 dark:text-indigo-300"
                 >
                   {t("piece.editTarget")}
+                </button>
+              ) : null}
+              {writable ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDialogError("");
+                    setBriefDraft(piece.brief ?? "");
+                    setBriefEditOpen(true);
+                  }}
+                  className="rounded-full px-1.5 py-0.5 text-[10px] text-indigo-600 transition hover:bg-indigo-500/10 dark:text-indigo-300"
+                >
+                  {t("piece.briefLabel")}
                 </button>
               ) : null}
               <span className="h-1.5 w-28 overflow-hidden rounded-full bg-slate-500/15 dark:bg-white/10">
@@ -825,13 +913,14 @@ export default function PieceEditorPage() {
             </button>
             <button
               type="button"
-              onClick={openManual}
+              data-testid="piece-edit"
+              onClick={() => void openManual()}
               disabled={Boolean(busy) || !writable}
               className="btn btn-quiet whitespace-nowrap"
               title={!writable ? t("common.readOnlyRole") : t("piece.manualHint")}
             >
               <PenLine size={13} />
-              {t("piece.manualEdit")}
+              {t("series.edit")}
             </button>
             <button
               type="button"
@@ -923,7 +1012,9 @@ export default function PieceEditorPage() {
 
         {!writable ? (
           <div className="mt-3 rounded-2xl border border-amber-300/50 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-300">
-            {t("piece.readOnlyView", { role: roleName || t("common.readOnly") })}
+            {t("piece.readOnlyView", {
+              role: roleLabel(t, roleKey, roleName) || t("common.readOnly"),
+            })}
           </div>
         ) : null}
       </div>
@@ -1394,6 +1485,47 @@ export default function PieceEditorPage() {
         onClose={() => setTargetEditOpen(false)}
       />
 
+      <Modal
+        open={briefEditOpen}
+        title={t("piece.briefLabel")}
+        subtitle={t("piece.briefHint")}
+        onClose={() => setBriefEditOpen(false)}
+        wide
+      >
+        <div className="space-y-3">
+          <textarea
+            value={briefDraft}
+            onChange={(event) => setBriefDraft(event.target.value)}
+            className="input min-h-[10rem] resize-y"
+            rows={6}
+            placeholder={t("piece.briefPlaceholder")}
+          />
+          {dialogError ? (
+            <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+              {dialogError}
+            </p>
+          ) : null}
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => setBriefEditOpen(false)}
+              className="btn btn-quiet"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveBrief()}
+              disabled={dialogBusy}
+              className="btn btn-primary"
+            >
+              {dialogBusy ? <Loader2 size={13} className="animate-spin" /> : null}
+              {t("common.saveChanges")}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       <PromptDialog
         open={Boolean(sectionRename)}
         title={t("piece.renameSection")}
@@ -1583,7 +1715,7 @@ export default function PieceEditorPage() {
         subtitle={t("piece.manualEditDesc", {
           version: piece?.current_version ?? 0,
         })}
-        onClose={() => setManualOpen(false)}
+        onClose={() => void closeManual()}
         wide
       >
         <div className="space-y-3">
@@ -1603,7 +1735,7 @@ export default function PieceEditorPage() {
           <div className="flex justify-end gap-2">
             <button
               type="button"
-              onClick={() => setManualOpen(false)}
+              onClick={() => void closeManual()}
               className="btn btn-quiet"
             >
               {t("common.cancel")}

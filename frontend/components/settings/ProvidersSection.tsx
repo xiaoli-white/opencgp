@@ -27,6 +27,7 @@ import {
 } from "@/lib/api";
 import { getJob, isTerminal, type Job } from "@/lib/jobs";
 import { useI18n } from "@/i18n/I18nProvider";
+import { retrievalKindLabel } from "@/i18n/labels";
 import { ConfirmDialog } from "@/components/common/Dialogs";
 
 type Props = {
@@ -550,8 +551,8 @@ export default function ProvidersSection({
                 disabled={editing}
                 className="select py-1 text-[11px] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <option value="embedding">embedding</option>
-                <option value="rerank">rerank</option>
+                <option value="embedding">{retrievalKindLabel(t, "embedding")}</option>
+                <option value="rerank">{retrievalKindLabel(t, "rerank")}</option>
               </select>
             </span>
             {editing ? (

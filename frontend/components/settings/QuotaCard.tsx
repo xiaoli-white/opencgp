@@ -4,6 +4,7 @@ import { Loader2, ShieldCheck } from "lucide-react";
 import { api, type Quota, type QuotaUsage } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
+import { roleLabel } from "@/i18n/labels";
 
 function formatBytes(value: number): string {
   if (!value) return "0 B";
@@ -20,7 +21,7 @@ export default function QuotaCard({
   onNotice: (message: string) => void;
   onError: (message: string) => void;
 }) {
-  const { can, roleName } = useSession();
+  const { can, roleKey, roleName } = useSession();
   const { t } = useI18n();
   const canQuota = can("manage_quota");
 
@@ -91,7 +92,9 @@ export default function QuotaCard({
           {t("quotas.title")}
         </h2>
         {quota ? <span className="chip-muted">{t("quotas.period", { period: quota.period })}</span> : null}
-        <span className="chip-muted">{roleName || t("common.readOnly")}</span>
+        <span className="chip-muted">
+          {roleLabel(t, roleKey, roleName) || t("common.readOnly")}
+        </span>
       </div>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-3">

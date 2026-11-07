@@ -124,7 +124,7 @@ class SimpleVectorStore(VectorStore):
         lsh_bits: int = 12,
         fusion: str = "rrf",
         rrf_k: int = 60,
-        max_per_source: int = 3,
+        max_per_source: int = 0,
     ) -> None:
         self.root = Path(path)
         self.db_path = self.root / db_name

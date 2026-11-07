@@ -11,22 +11,26 @@ import {
 } from "lucide-react";
 import type { Blueprint, OutlineNode } from "@/lib/api";
 import StatusBadge, { statusDotClass } from "@/components/series/StatusBadge";
+import { useI18n } from "@/i18n/I18nProvider";
+
+type Translate = (path: string, vars?: Record<string, string | number>) => string;
 
 type LearningPathTimelineProps = {
   blueprint: Blueprint;
   onOpenUnit: (unitId: string) => void;
 };
 
-function nodeMinutes(node: OutlineNode): string {
+function nodeMinutes(t: Translate, node: OutlineNode): string {
   return node.estimated_minutes > 0
-    ? `${node.estimated_minutes} min`
-    : "Duration TBD";
+    ? t("blueprint.minutes", { count: node.estimated_minutes })
+    : t("blueprint.durationTbd");
 }
 
 export default function LearningPathTimeline({
   blueprint,
   onOpenUnit,
 }: LearningPathTimelineProps) {
+  const { t } = useI18n();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const stageNodes = useMemo(() => {
@@ -91,18 +95,18 @@ export default function LearningPathTimeline({
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <span className="chip-muted">
               <Clock3 size={10} />
-              {nodeMinutes(node)}
+              {nodeMinutes(t, node)}
             </span>
             {node.objectives.length > 0 ? (
               <span className="chip-muted">
                 <ListChecks size={10} />
-                Objectives {node.objectives.length}
+                {t("blueprint.objectives", { count: node.objectives.length })}
               </span>
             ) : null}
             {node.prerequisites.length > 0 ? (
               <span className="chip-muted">
                 <Lock size={10} />
-                Prerequisites {node.prerequisites.length}
+                {t("blueprint.prerequisites", { count: node.prerequisites.length })}
               </span>
             ) : null}
             {node.unit_id ? (
@@ -112,11 +116,11 @@ export default function LearningPathTimeline({
                 className="btn-quiet !px-2 !py-1 text-[10px]"
               >
                 <CornerDownRight size={10} />
-                Open reader
+                {t("blueprint.openReader")}
               </button>
             ) : (
               <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                Not linked to a unit
+                {t("blueprint.notLinked")}
               </span>
             )}
           </div>
@@ -133,7 +137,7 @@ export default function LearningPathTimeline({
           className="mx-auto text-slate-400 dark:text-slate-500"
         />
         <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-          This blueprint has no learning path or nodes yet.
+          {t("blueprint.noPath")}
         </p>
       </div>
     );
@@ -172,12 +176,16 @@ export default function LearningPathTimeline({
                           </p>
                         ) : null}
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                          <span className="chip">{nodes.length} nodes</span>
+                          <span className="chip">
+                            {t("blueprint.nodeCount", { count: nodes.length })}
+                          </span>
                           <span className="chip-muted">
                             <Clock3 size={10} />
                             {stage.estimated_minutes > 0
-                              ? `${stage.estimated_minutes} min`
-                              : "Duration TBD"}
+                              ? t("blueprint.minutes", {
+                                  count: stage.estimated_minutes,
+                                })
+                              : t("blueprint.durationTbd")}
                           </span>
                         </div>
                       </div>
@@ -214,7 +222,7 @@ export default function LearningPathTimeline({
       {orphanNodes.length > 0 ? (
         <div className="rounded-2xl border border-slate-200/70 bg-white/40 p-3 dark:border-white/10 dark:bg-white/[0.03]">
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
-            Unassigned to a stage
+            {t("blueprint.unassigned")}
           </p>
           <ul className="relative mt-2 space-y-1.5">{orphanNodes.map(renderNode)}</ul>
         </div>

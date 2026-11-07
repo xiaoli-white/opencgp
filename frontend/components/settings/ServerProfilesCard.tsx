@@ -12,6 +12,7 @@ import { ApiError, api, type ProfileScope, type WorkProfile } from "@/lib/api";
 import { ConfirmDialog } from "@/components/common/Dialogs";
 import ProfileEditor from "@/components/profiles/ProfileEditor";
 import { useI18n } from "@/i18n/I18nProvider";
+import { profileDescriptionLabel, profileNameLabel } from "@/i18n/labels";
 
 function scopeKey(scope: string | undefined): string {
   if (scope === "global") return "profiles.scopeGlobal";
@@ -146,7 +147,7 @@ export default function ServerProfilesCard({
             >
               <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                 <p className="min-w-0 break-words text-[12.5px] font-semibold text-slate-800 dark:text-slate-100">
-                  {profile.name}
+                  {profileNameLabel(t, profile)}
                 </p>
                 <span className="chip-muted shrink-0" data-scope-badge="true">
                   {t(scopeKey(profile.scope))}
@@ -158,7 +159,7 @@ export default function ServerProfilesCard({
               </p>
               {profile.description ? (
                 <p className="mt-1 line-clamp-2 break-words text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
-                  {profile.description}
+                  {profileDescriptionLabel(t, profile)}
                 </p>
               ) : null}
               {profile.can_edit ? (

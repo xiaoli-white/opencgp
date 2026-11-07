@@ -35,6 +35,12 @@ from app.services.errors import (
 STAGE_START = 0.05
 STAGE_DONE = 0.95
 
+# A queued/running unit generation older than this may be taken over even if
+# its job row still claims to be active.  This is a last-resort guard against
+# a worker that died without releasing its claim; normal completion releases
+# the claim immediately.
+GENERATION_CLAIM_STALE_SECONDS = 6 * 60 * 60
+
 
 @dataclass
 class JobContext:
@@ -130,6 +136,129 @@ class JobService:
                 raise QueueUnavailableError(f"job queue is unavailable: {exc}") from exc
         return job
 
+    def submit_idempotent(
+        self, kind: str, payload: dict[str, Any], ctx: JobContext
+    ) -> tuple[Job, bool]:
+        """Submit a job, deduplicating unit generation per unit.
+
+        Returns ``(job, created)``.  When a unit already has an active
+        ``unit_generate`` job, the existing job is returned and ``created`` is
+        false.  The claim is stored in the database, so the check is safe for
+        both a single process and multiple API/worker processes.
+        """
+        resolved = (kind or "").strip().lower()
+        body = dict(payload or {})
+        unit_id = str(body.get("unit_id") or "").strip()
+        claimer = getattr(self.repository, "try_claim_generation", None)
+        if resolved != KIND_UNIT_GENERATE or not unit_id or not callable(claimer):
+            return self.submit(resolved, body, ctx), True
+
+        job = Job.create(
+            kind=resolved,
+            payload=body,
+            tenant_id=ctx.tenant_id,
+            user_id=ctx.user_id,
+        )
+        # Create the row first: a concurrent duplicate can then always find
+        # and return a real job instead of a claim pointing at nothing.
+        self.repository.create(job)
+        stale_before = time.time() - GENERATION_CLAIM_STALE_SECONDS
+        try:
+            claimed, existing_job_id = claimer(
+                unit_id, ctx.tenant_id, job.id, stale_before
+            )
+        except Exception:
+            self.repository.delete(job.id)
+            raise
+        if not claimed:
+            self.repository.delete(job.id)
+            existing = (
+                self.repository.get(existing_job_id) if existing_job_id else None
+            )
+            if existing is None and existing_job_id:
+                # The claim row may reference a job that was deleted; retry
+                # once after clearing the orphaned claim.
+                clear = getattr(self.repository, "clear_generation_claim", None)
+                if callable(clear):
+                    try:
+                        current = self.repository.get_generation_claim(unit_id)
+                        if current is not None and str(
+                            current.get("job_id") or ""
+                        ) == existing_job_id:
+                            clear(unit_id)
+                    except Exception:
+                        pass
+                claimed, existing_job_id = claimer(
+                    unit_id, ctx.tenant_id, job.id, stale_before
+                )
+                if not claimed:
+                    existing = (
+                        self.repository.get(existing_job_id)
+                        if existing_job_id
+                        else None
+                    )
+                    if existing is not None:
+                        return existing, False
+                    raise QueueUnavailableError(
+                        "another generation job owns this unit but cannot be loaded"
+                    )
+                # The second attempt won; restore the job row we deleted.
+                self.repository.create(job)
+            else:
+                if existing is not None:
+                    return existing, False
+                raise QueueUnavailableError(
+                    "another generation job owns this unit but cannot be loaded"
+                )
+
+        quota_kind = QUOTA_KIND_BY_JOB_KIND.get(resolved, "generate")
+        if self.quota is not None:
+            try:
+                self.quota.check_and_record(
+                    ctx.tenant_id, ctx.user_id, quota_kind, 1, resolved
+                )
+            except Exception:
+                self.repository.delete(job.id)
+                finisher = getattr(self.repository, "finish_generation", None)
+                if callable(finisher):
+                    finisher(unit_id, job.id, "failed")
+                raise
+        if self.queue is not None:
+            try:
+                self.queue.enqueue(job.id)
+            except Exception as exc:
+                self.repository.update_status(
+                    job.id, "failed", error=f"queue unavailable: {exc}"
+                )
+                finisher = getattr(self.repository, "finish_generation", None)
+                if callable(finisher):
+                    finisher(unit_id, job.id, "failed")
+                raise QueueUnavailableError(
+                    f"job queue is unavailable: {exc}"
+                ) from exc
+        return job, True
+
+    def unit_generation_status(self, unit_id: str) -> dict[str, Any]:
+        """Return the current generation state of one unit."""
+        claimer = getattr(self.repository, "get_generation_claim", None)
+        claim = claimer(unit_id) if callable(claimer) else None
+        job = self.repository.get(str(claim.get("job_id") or "")) if claim else None
+        return {
+            "unit_id": unit_id,
+            "state": str(claim.get("state") or "") if claim else "idle",
+            "job_id": str(claim.get("job_id") or "") if claim else "",
+            "job_status": job.status if job is not None else "",
+            "progress": round(float(job.progress or 0.0), 4) if job is not None else 0.0,
+            "error": job.error if job is not None else "",
+            "started_at": float(job.started_at or 0.0) if job is not None else 0.0,
+            "finished_at": float(job.finished_at or 0.0) if job is not None else 0.0,
+        }
+
+    def forget_unit(self, unit_id: str) -> None:
+        clear = getattr(self.repository, "clear_generation_claim", None)
+        if callable(clear):
+            clear(unit_id)
+
     def get(self, job_id: str, tenant_id: str | None = None) -> Job | None:
         job = self.repository.get(job_id)
         if job is None:
@@ -158,6 +287,8 @@ class JobService:
         if is_terminal(job.status):
             return job
         updated = self.repository.request_cancel(job.id)
+        if updated is not None and updated.status == STATUS_CANCELED:
+            self._finish_generation_claim(updated)
         self._publish(job.id)
         return updated or job
 
@@ -169,6 +300,14 @@ class JobService:
         if not is_terminal(job.status):
             raise JobNotTerminalError("the job has not finished yet and cannot be deleted")
         self.repository.delete(job.id)
+        if job.kind == KIND_UNIT_GENERATE:
+            unit_id = str((job.payload or {}).get("unit_id") or "").strip()
+            getter = getattr(self.repository, "get_generation_claim", None)
+            clearer = getattr(self.repository, "clear_generation_claim", None)
+            if unit_id and callable(getter) and callable(clearer):
+                claim = getter(unit_id)
+                if claim is not None and str(claim.get("job_id") or "") == job.id:
+                    clearer(unit_id)
         return job
 
     def recover_stale(self) -> int:
@@ -234,10 +373,61 @@ class JobService:
         job = self.repository.get(job_id)
         if job is None:
             return
+        try:
+            await self._handle_job(job)
+        finally:
+            self._finish_generation_claim(job)
+
+    def _finish_generation_claim(self, job: Job) -> None:
+        if job.kind != KIND_UNIT_GENERATE:
+            return
+        unit_id = str((job.payload or {}).get("unit_id") or "").strip()
+        finisher = getattr(self.repository, "finish_generation", None)
+        if not unit_id or not callable(finisher):
+            return
+        current = self.repository.get(job.id)
+        state = current.status if current is not None else STATUS_FAILED
+        try:
+            finisher(unit_id, job.id, state)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[jobs] failed to release the generation claim for {unit_id}: {exc!r}")
+
+    def _ensure_unit_generation_claim(self, job: Job) -> bool:
+        """Make sure this job still owns the unit before running it."""
+        if job.kind != KIND_UNIT_GENERATE:
+            return True
+        unit_id = str((job.payload or {}).get("unit_id") or "").strip()
+        if not unit_id:
+            return True
+        getter = getattr(self.repository, "get_generation_claim", None)
+        marker = getattr(self.repository, "mark_generation_state", None)
+        if not callable(getter) or not callable(marker):
+            return True
+        claim = getter(unit_id)
+        if claim is not None:
+            owner = str(claim.get("job_id") or "")
+            if owner and owner != job.id:
+                state = str(claim.get("state") or "")
+                message = (
+                    "another generation job is already active for this unit"
+                    if state in ("queued", "generating")
+                    else "a newer generation job already ran for this unit"
+                )
+                self._set_status(job.id, STATUS_FAILED, None, message)
+                return False
+            return bool(marker(unit_id, job.id, "generating"))
+        # Legacy job enqueued before generation claims existed: let it run.
+        marker(unit_id, job.id, "generating")
+        return True
+
+    async def _handle_job(self, job: Job) -> None:
+        job_id = job.id
         if job.status in (STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED):
             return
         if self.repository.has_cancel_request(job_id):
             self._set_status(job_id, STATUS_CANCELED, None, "Canceled")
+            return
+        if not self._ensure_unit_generation_claim(job):
             return
         self._set_status(job_id, STATUS_RUNNING)
         retrieval = None
@@ -395,6 +585,7 @@ class JobService:
             user_id=ctx.user_id,
             llm=ctx.llm,
             retrieval=ctx.retrieval,
+            brief=str(payload.get("brief") or ""),
         )
         ctx.report(0.9)
         return {
@@ -536,16 +727,38 @@ class JobService:
         unit_id = str(payload.get("unit_id") or "").strip()
         if not unit_id:
             raise ValueError("missing unit_id")
-        result = await self.generation.generate_unit(
-            unit_id,
-            topic=payload.get("topic"),
-            top_k=payload.get("top_k"),
-            mode=payload.get("mode"),
-            expected_version=payload.get("expected_version"),
-            tenant_id=ctx.tenant_id,
-            llm=ctx.llm,
-            retrieval=ctx.retrieval,
-        )
+        series_repository = getattr(self.generation, "repository", None)
+        previous_status = ""
+        if series_repository is not None:
+            unit_before = series_repository.get_unit(unit_id)
+            if unit_before is not None:
+                previous_status = unit_before.status
+                if unit_before.status != "generating":
+                    series_repository.update_unit(unit_id, status="generating")
+        try:
+            result = await self.generation.generate_unit(
+                unit_id,
+                topic=payload.get("topic"),
+                top_k=payload.get("top_k"),
+                mode=payload.get("mode"),
+                expected_version=payload.get("expected_version"),
+                tenant_id=ctx.tenant_id,
+                llm=ctx.llm,
+                retrieval=ctx.retrieval,
+            )
+        except Exception:
+            if series_repository is not None and previous_status:
+                current = series_repository.get_unit(unit_id)
+                if current is not None and current.status == "generating":
+                    series_repository.update_unit(unit_id, status=previous_status)
+            raise
+        if series_repository is not None:
+            current = series_repository.get_unit(unit_id)
+            if current is not None and current.status == "generating":
+                final_status = "generated" if getattr(result, "version", 0) else (
+                    previous_status or "draft"
+                )
+                series_repository.update_unit(unit_id, status=final_status)
         ctx.report(0.9)
         return {
             "unit_id": result.unit_id,

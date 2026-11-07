@@ -8,13 +8,13 @@ const OPTIONS: { value: Locale; label: string }[] = [
 ];
 
 export default function LocaleToggle() {
-  const { locale, setLocale } = useI18n();
+  const { locale, setLocale, t } = useI18n();
 
   return (
     <div
       className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-white/60 bg-white/60 p-0.5 text-[11px] font-medium backdrop-blur-xl dark:border-white/10 dark:bg-white/5"
       role="group"
-      aria-label="Language"
+      aria-label={t("common.language")}
     >
       <Languages size={13} className="ml-1.5 shrink-0 text-slate-400 dark:text-slate-500" />
       {OPTIONS.map((option) => {

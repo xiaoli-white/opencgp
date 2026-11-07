@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, Sequence, runtime_checkable
 
 from app.models.validation import (
+    CITATION_GAP_ACTIONS,
+    CITATION_GAP_ATTACH,
+    CITATION_GAP_OFF,
+    CITATION_GAP_REPORT,
     LEVEL_ERROR,
     LEVEL_WARNING,
     ValidationIssue,
@@ -14,13 +18,18 @@ from app.models.validation import (
     ValidationSummary,
 )
 from app.models.work_profile import ProfileSpec
+from app.services.citation_audit import (
+    CITATION_MIN_PARAGRAPH_CHARS,
+    MAX_REPORTED_GAPS,
+    analyze_citation_coverage,
+    attach_citation_markers,
+    normalize_evidence,
+)
 
-CITATION_PARAGRAPH_MIN = 30
 CITATION_WARN_RATIO = 0.6
 CITATION_ERROR_RATIO = 0.3
 LENGTH_LOW_FACTOR = 0.5
 LENGTH_HIGH_FACTOR = 2.0
-MARKER_PATTERN = re.compile(r"\[E\d+\]")
 HEADING2_PATTERN = re.compile(r"^##\s+(.+)$", re.MULTILINE)
 CJK_RUN = re.compile(r"[\u4e00-\u9fa5]{2,4}")
 BOOK_TITLE = re.compile(r"《([^》]{1,24})》")
@@ -72,38 +81,82 @@ def paragraphs(content: str) -> list[str]:
 class CitationValidator:
     name = "citation"
 
+    def __init__(
+        self,
+        gap_action: str = CITATION_GAP_REPORT,
+        min_paragraph_chars: int = CITATION_MIN_PARAGRAPH_CHARS,
+    ) -> None:
+        action = (gap_action or CITATION_GAP_REPORT).strip().lower()
+        self.gap_action = action if action in CITATION_GAP_ACTIONS else CITATION_GAP_REPORT
+        self.min_paragraph_chars = max(1, int(min_paragraph_chars or 1))
+
     async def validate(self, ctx: ValidationContext) -> ValidationResult:
         policy = (ctx.spec.grounding.citation_policy or "").strip()
-        if policy != "required":
+        if policy not in ("required", "optional"):
             return ValidationResult(name=self.name, passed=True, score=1.0, issues=[])
-        blocks = paragraphs(ctx.content)
-        considered = [item for item in blocks if text_length(item) >= CITATION_PARAGRAPH_MIN]
-        if not considered:
-            return ValidationResult(name=self.name, passed=True, score=1.0, issues=[])
-        cited = sum(1 for item in considered if MARKER_PATTERN.search(item))
-        ratio = cited / len(considered)
-        issues: list[ValidationIssue] = []
-        level = ""
-        if ratio < CITATION_ERROR_RATIO:
-            level = LEVEL_ERROR
-        elif ratio < CITATION_WARN_RATIO:
-            level = LEVEL_WARNING
-        if level:
-            issues.append(
-                ValidationIssue(
-                    level=level,
-                    message=(
-                        f"Share of paragraphs with evidence markers: {ratio:.0%} "
-                        f"({cited}/{len(considered)}), below the recommended threshold of {CITATION_WARN_RATIO:.0%}"
-                    ),
-                    where="content",
-                )
+        evidence = normalize_evidence(ctx.extra.get("evidence"))
+        coverage = analyze_citation_coverage(
+            ctx.content,
+            policy,
+            evidence,
+            min_chars=self.min_paragraph_chars,
+        )
+        revised: str | None = None
+        if (
+            self.gap_action == CITATION_GAP_ATTACH
+            and policy == "required"
+            and coverage.missing
+        ):
+            revised, coverage = attach_citation_markers(
+                ctx.content,
+                coverage,
+                evidence,
+                policy=policy,
+                min_chars=self.min_paragraph_chars,
             )
+        issues: list[ValidationIssue] = []
+        if policy == "required" and self.gap_action != CITATION_GAP_OFF:
+            coverage_value = coverage.coverage
+            level = ""
+            if coverage_value < CITATION_ERROR_RATIO:
+                level = LEVEL_ERROR
+            elif coverage_value < CITATION_WARN_RATIO:
+                level = LEVEL_WARNING
+            if level:
+                issues.append(
+                    ValidationIssue(
+                        level=level,
+                        message=(
+                            "Citation coverage is "
+                            f"{coverage.cited_paragraphs}/{coverage.required_paragraphs} "
+                            f"({coverage_value:.0%}) of factual paragraphs; "
+                            f"thresholds are {CITATION_ERROR_RATIO:.0%} error / "
+                            f"{CITATION_WARN_RATIO:.0%} warning"
+                        ),
+                        where="content",
+                    )
+                )
+            for gap in coverage.missing[:MAX_REPORTED_GAPS]:
+                excerpt = " ".join(gap.paragraph.split())[:180]
+                issues.append(
+                    ValidationIssue(
+                        level=LEVEL_WARNING,
+                        message=(
+                            "Uncited factual paragraph "
+                            f"(signals: {', '.join(gap.signals) or 'unspecified'}): "
+                            f"{excerpt}"
+                        ),
+                        where=f"paragraph@{gap.start}",
+                    )
+                )
+        passed = not any(issue.level == LEVEL_ERROR for issue in issues)
         return ValidationResult(
             name=self.name,
-            passed=level != LEVEL_ERROR,
-            score=round(ratio, 4),
+            passed=passed,
+            score=round(float(coverage.coverage), 4),
             issues=issues,
+            coverage=coverage,
+            revised_content=revised,
         )
 
 
@@ -241,8 +294,24 @@ DEFAULT_VALIDATORS: tuple[Validator, ...] = (
 
 
 class ValidatorRunner:
-    def __init__(self, validators: Sequence[Validator] | None = None) -> None:
-        source = list(validators or DEFAULT_VALIDATORS)
+    def __init__(
+        self,
+        validators: Sequence[Validator] | None = None,
+        citation_gap_action: str = CITATION_GAP_REPORT,
+        citation_min_paragraph_chars: int = CITATION_MIN_PARAGRAPH_CHARS,
+    ) -> None:
+        if validators is None:
+            source: list[Validator] = [
+                CitationValidator(
+                    gap_action=citation_gap_action,
+                    min_paragraph_chars=citation_min_paragraph_chars,
+                ),
+                LengthValidator(),
+                StructureValidator(),
+                ContinuityValidator(),
+            ]
+        else:
+            source = list(validators)
         self.registry: dict[str, Validator] = {
             str(item.name).strip().lower(): item for item in source
         }
@@ -304,7 +373,25 @@ class ValidatorRunner:
             1 for item in results for issue in item.issues if issue.level == LEVEL_ERROR
         )
         passed = sum(1 for item in results if item.passed and not item.issues)
+        citation_coverage = next(
+            (
+                item.coverage
+                for item in results
+                if item.name == "citation" and item.coverage is not None
+            ),
+            None,
+        )
+        revised_content = next(
+            (
+                item.revised_content
+                for item in results
+                if item.name == "citation" and item.revised_content is not None
+            ),
+            None,
+        )
         return ValidationReport(
             results=results,
             summary=ValidationSummary(passed=passed, warnings=warnings, errors=errors),
+            citation_coverage=citation_coverage,
+            revised_content=revised_content,
         )

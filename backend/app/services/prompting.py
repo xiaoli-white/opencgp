@@ -145,3 +145,45 @@ def extra_requirement(spec: ProfileSpec | None, kind: str, values: Mapping[str, 
         "revise": "Additional revision requirements",
     }.get(kind, "Additional requirements")
     return f"## {label}\n" + text
+
+
+def citation_taxonomy_lines(mandatory: bool = True) -> list[str]:
+    duty = (
+        "Every item in the NEEDS list must carry a marker that points to the evidence passage supporting it."
+        if mandatory
+        else "In this free-writing mode markers are optional, but when you use retrieved evidence for an item in the NEEDS list, cite it."
+    )
+    return [
+        "",
+        "## Semantic citation policy (not a blanket per-paragraph rule)",
+        duty,
+        "",
+        "NEEDS a citation:",
+        "- statistics, numbers, or metrics with units, percentages, or ranges;",
+        "- theorems, formulas, or complexity claims;",
+        "- claims attributed to other people, papers, standards, or organisations;",
+        "- historical facts, dates, people, or organisations;",
+        "- concrete product behaviour, versions, or default values, including a "
+        "sentence such as \"the default value of this API is X\" inside a tutorial;",
+        "- comparative claims such as \"3x faster than B\";",
+        "- any other externally checkable factual assertion.",
+        "",
+        "DOES NOT need a citation:",
+        "- walkthroughs of example code and line-by-line code commentary, because "
+        "the code is its own evidence;",
+        "- procedural how-to steps;",
+        "- analogies, metaphors, transitions, section summaries, reading guides, "
+        "or exercises;",
+        "- explicitly labelled subjective advice or personal experience;",
+        "- fiction or creative content;",
+        "- restatements of earlier paragraphs in the same article.",
+        "",
+        "Edge rules:",
+        "- In a sentence that mixes fact and explanation, cite only the factual "
+        "clause, not the explanatory clause.",
+        "- Never insert a marker inside a code block or inside inline code; put "
+        "the citation in the surrounding prose.",
+        "- When genuinely unsure, fall back to the profile citation policy: "
+        "required means cite, optional means do not cite but record the gap for "
+        "the missing-evidence list, forbidden means never cite.",
+    ]

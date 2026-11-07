@@ -35,6 +35,7 @@ class SeriesRepository(Protocol):
         language: str = "zh",
         tenant_id: str = "",
         user_id: str = "",
+        brief: str = "",
     ) -> Series:
         ...
 
@@ -53,6 +54,7 @@ class SeriesRepository(Protocol):
         difficulty: str | None = None,
         language: str | None = None,
         profile_id: str | None = None,
+        brief: str | None = None,
     ) -> Series | None:
         ...
 

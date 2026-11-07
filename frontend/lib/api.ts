@@ -6,9 +6,10 @@ import {
   type RoleAction,
 } from "@/lib/session";
 
-export const API_BASE = (
-  import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000"
-).replace(/\/+$/, "");
+export const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(
+  /\/+$/,
+  "",
+);
 
 export type AuthUser = {
   id: string;
@@ -563,6 +564,7 @@ export type Series = {
   id: string;
   title: string;
   subtitle: string;
+  brief: string;
   audience: string;
   difficulty: string;
   language: string;
@@ -866,6 +868,7 @@ export type Piece = {
   tenant_id?: string;
   user_id?: string;
   title: string;
+  brief?: string;
   profile: PieceProfile;
   outline: PieceSection[];
   content: string;
@@ -1324,6 +1327,7 @@ export const api = {
   createSeries: (payload: {
     title: string;
     subtitle?: string;
+    brief?: string;
     audience?: string;
     difficulty?: string;
     language?: string;
@@ -1572,6 +1576,17 @@ export const api = {
 
   getProgress: (seriesId: string) =>
     request<SeriesProgress>(`/api/v1/series/${seriesId}/progress`),
+
+  generateAllSeries: (seriesId: string, payload: { regenerate?: boolean } = {}) =>
+    request<{
+      job_ids?: string[];
+      jobIds?: string[];
+      jobs?: { id?: string; job_id?: string; unit_id?: string; unitId?: string }[];
+      unit_jobs?: Record<string, string | { id?: string }>;
+    }>(`/api/v1/series/${seriesId}/generate-all`, {
+      method: "POST",
+      body: JSON.stringify({ regenerate: payload.regenerate ?? false }),
+    }),
 
   listUnitReviews: (unitId: string) =>
     request<{
@@ -1882,6 +1897,7 @@ export const api = {
 
   createPiece: (payload: {
     title: string;
+    brief?: string;
     genre?: PieceGenre | string;
     tone?: string;
     audience?: string;
@@ -2013,6 +2029,7 @@ export const api = {
     payload: {
       title?: string;
       subtitle?: string;
+      brief?: string;
       audience?: string;
       difficulty?: string;
       language?: string;
@@ -2038,6 +2055,7 @@ export const api = {
       prerequisites?: string[];
       order_index?: number;
       status?: string;
+      content?: string;
     },
   ) =>
     request<Unit>(`/api/v1/units/${unitId}`, {
@@ -2061,6 +2079,7 @@ export const api = {
     pieceId: string,
     payload: {
       title?: string;
+      brief?: string;
       profile?: Record<string, unknown>;
       target_words?: number;
     },

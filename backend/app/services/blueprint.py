@@ -107,7 +107,8 @@ class BlueprintService:
         llm: LLMProvider,
         default_top_k: int = 6,
         default_mode: str = "strict",
-        max_evidence: int = 6,
+        max_evidence: int = 0,
+        top_k_ceiling: int = 0,
         evidence_char_limit: int = 400,
         min_score: float = 0.15,
     ) -> None:
@@ -117,7 +118,8 @@ class BlueprintService:
         self.llm = llm
         self.default_top_k = default_top_k
         self.default_mode = GenerationMode.normalize(default_mode).value
-        self.max_evidence = max_evidence
+        self.max_evidence = max(0, int(max_evidence or 0))
+        self.top_k_ceiling = max(0, int(top_k_ceiling or 0))
         self.evidence_char_limit = evidence_char_limit
         self.min_score = float(min_score)
 
@@ -137,7 +139,9 @@ class BlueprintService:
         if series is None:
             raise BlueprintNotFoundError(f"course not found: {series_id}")
         resolved_mode = GenerationMode.normalize(mode or self.default_mode)
-        resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
+        resolved_top_k = max(1, int(top_k or self.default_top_k))
+        if self.top_k_ceiling > 0:
+            resolved_top_k = min(resolved_top_k, self.top_k_ceiling)
         units = self.series_repository.list_units(series_id)
         min_score = (
             self.min_score if resolved_mode is GenerationMode.strict else None
@@ -159,7 +163,8 @@ class BlueprintService:
                 tenant_id=tenant_id,
                 min_score=min_score,
             )
-        citations = citations[: self.max_evidence]
+        if self.max_evidence > 0:
+            citations = citations[: self.max_evidence]
         evidence = [
             Evidence(marker=f"E{index}", citation=citation)
             for index, citation in enumerate(citations, start=1)
@@ -414,6 +419,7 @@ class BlueprintService:
                 "## Course information",
                 f"- Title: {series.title}",
                 f"- Subtitle: {series.subtitle or '(none)'}",
+                f"- Content requirements: {(series.brief or '').strip() or '(not specified)'}",
                 f"- Target audience: {series.audience or '(not specified)'}",
                 f"- Difficulty: {series.difficulty}",
                 f"- Language: {series.language}",
@@ -441,7 +447,16 @@ class BlueprintService:
                     "3. Mark uncertain or time-sensitive content as \"recommend verifying\"; do not present it as verified fact.",
                 ]
             )
-        lines.extend(["", "## Evidence"])
+        lines.extend(
+            [
+                "",
+                "## Authoring requirements (from the author, not retrieval evidence)",
+                (series.brief or "").strip() or "(none)",
+                "Use these requirements to decide topic selection, emphasis, and coverage. They are not evidence and must never be cited as a source.",
+                "",
+                "## Evidence",
+            ]
+        )
         if evidence:
             for item in evidence:
                 snippet = (item.citation.text or item.citation.snippet).strip()

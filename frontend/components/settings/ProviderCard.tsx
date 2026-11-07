@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { useI18n } from "@/i18n/I18nProvider";
+import { providerKindLabel } from "@/i18n/labels";
 import { api, type ProviderOption, type ProviderSettings } from "@/lib/api";
 
 type Props = {
@@ -68,7 +69,7 @@ function optionLabel(item: ProviderOption, t: TFn): string {
     item.scope === "shared"
       ? t("providers.sharedFrom", { name: item.owner_name || t("providers.other") })
       : "";
-  return `${prefix}${item.name}（${item.kind}）${star}${off}${shared}`;
+  return `${prefix}${item.name}（${providerKindLabel(t, item.kind)}）${star}${off}${shared}`;
 }
 
 type PickerProps = {

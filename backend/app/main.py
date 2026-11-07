@@ -65,6 +65,7 @@ from app.models.job import (
     JOB_STATUSES,
     KIND_KB_EMBED_BACKFILL,
     KIND_PIECE_VIDEO,
+    KIND_UNIT_GENERATE,
     Job,
 )
 from app.models.factcheck import FactCheckReport
@@ -376,6 +377,47 @@ def _guard_lock(unit_id: str, ctx: AuthContext) -> None:
             status_code=409,
             detail=f"this unit is being edited by {exc.name}, coordinate or take over first",
         ) from exc
+
+
+def _edit_lock_state(resource_type: str, resource_id: str, ctx: AuthContext) -> dict[str, Any]:
+    return container.lock_service().state_for(resource_type, resource_id, ctx.user.id)
+
+
+def _attach_lock_state(
+    payload: dict[str, Any], resource_type: str, resource_id: str, ctx: AuthContext
+) -> dict[str, Any]:
+    state = _edit_lock_state(resource_type, resource_id, ctx)
+    payload["lock"] = state["lock"]
+    payload["lock_state"] = state["state"]
+    payload["locked_by_me"] = bool(state.get("is_mine"))
+    payload["locked_by_other"] = state["state"] == "other"
+    return payload
+
+
+def _lock_dump(lock: Any, ctx: AuthContext) -> dict[str, Any] | None:
+    if lock is None:
+        return None
+    if hasattr(lock, "model_dump"):
+        try:
+            return lock.model_dump(ctx.user.id)  # type: ignore[call-arg]
+        except TypeError:
+            return lock.model_dump()
+    if isinstance(lock, dict):
+        return dict(lock)
+    return None
+
+
+def _require_lock_resource(
+    resource_type: str, resource_id: str, ctx: AuthContext, level: str = "write"
+) -> Any:
+    if resource_type == "unit":
+        return _require_unit(resource_id, ctx, level)
+    if resource_type == "piece":
+        return _require_piece(resource_id, ctx, level)
+    raise HTTPException(
+        status_code=404,
+        detail=f"unknown lock resource type: {resource_type}",
+    )
 
 
 def _conflict(exc: VersionConflictError) -> JSONResponse:
@@ -1281,6 +1323,7 @@ async def kb_delete_source(
 class SeriesCreateRequest(BaseModel):
     title: str = Field(min_length=1)
     subtitle: str = ""
+    brief: str = ""
     audience: str = ""
     difficulty: str = "intermediate"
     language: str = "zh"
@@ -1303,6 +1346,21 @@ class UnitGenerateRequest(BaseModel):
     source_ids: list[str] | None = None
     mode: GenerationMode = GenerationMode.strict
     expected_version: int | None = None
+
+
+class SeriesUnitGenerateRequest(BaseModel):
+    """Options shared by the batch generation endpoints."""
+
+    mode: GenerationMode | None = None
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    source_ids: list[str] | None = None
+    expected_version: int | None = None
+
+
+class SeriesGenerateAllRequest(SeriesUnitGenerateRequest):
+    """Body used by the shorthand ``/series/{id}/generate-all`` endpoint."""
+
+    regenerate: bool = False
 
 
 class UnitRevertRequest(BaseModel):
@@ -1425,6 +1483,7 @@ def create_series(
     series = container.series_repository().create_series(
         title=req.title,
         subtitle=req.subtitle,
+        brief=req.brief,
         audience=req.audience,
         difficulty=req.difficulty,
         language=req.language,
@@ -1511,7 +1570,8 @@ def get_unit(
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
     unit = _require_unit(unit_id, ctx)
-    return unit.model_dump()
+    # Reading never acquires a lock; it only reports the current state.
+    return _attach_lock_state(unit.model_dump(), "unit", unit_id, ctx)
 
 
 def _asset_materializer(spec: Any = None, *, auto_images: bool | None = None,
@@ -1592,6 +1652,294 @@ async def generate_unit(
     except VersionConflictError as exc:
         return _conflict(exc)
     return result.model_dump()
+
+
+def _unit_generation_payload(
+    unit_id: str, req: UnitGenerateRequest | SeriesUnitGenerateRequest
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"unit_id": unit_id}
+    topic = getattr(req, "topic", None)
+    if topic:
+        payload["topic"] = topic
+    if req.top_k is not None:
+        payload["top_k"] = req.top_k
+    note = getattr(req, "note", "")
+    if note:
+        payload["note"] = note
+    if req.source_ids is not None:
+        payload["source_ids"] = list(req.source_ids)
+    if req.mode is not None:
+        payload["mode"] = req.mode.value
+    if req.expected_version is not None:
+        payload["expected_version"] = req.expected_version
+    return payload
+
+
+def _enqueue_unit_generation_job(
+    unit: Unit, req: UnitGenerateRequest | SeriesUnitGenerateRequest, ctx: AuthContext
+) -> tuple[Job, bool]:
+    payload = _unit_generation_payload(unit.id, req)
+    return container.job_service().submit_idempotent(
+        KIND_UNIT_GENERATE, payload, _job_ctx(ctx)
+    )
+
+
+@app.post("/api/v1/units/{unit_id}/generate-job")
+@app.post("/api/v1/units/{unit_id}/generate/async")
+def enqueue_unit_generation(
+    unit_id: str,
+    req: UnitGenerateRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Any:
+    """Enqueue one unit generation and return its job.
+
+    This is the asynchronous counterpart of ``POST /units/{id}/generate``.
+    That synchronous endpoint is unchanged.  Calling this endpoint twice while
+    the same unit is queued or generating returns the existing job.
+    """
+    _enforce(ctx, "write")
+    unit = _require_unit(unit_id, ctx, "write")
+    payload = req or UnitGenerateRequest()
+    if (
+        payload.expected_version is not None
+        and int(payload.expected_version) != unit.current_version
+    ):
+        return _conflict(
+            VersionConflictError(int(payload.expected_version), unit.current_version)
+        )
+    try:
+        job, created = _enqueue_unit_generation_job(unit, payload, ctx)
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except QueueUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except UnsupportedJobKindError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse(
+        status_code=202 if created else 200,
+        content={
+            "job": _job_payload(job),
+            "job_id": job.id,
+            "created": created,
+            "duplicate": not created,
+            "events": f"/api/v1/jobs/{job.id}/events",
+        },
+    )
+
+
+def _unit_needs_generation(unit: Unit) -> bool:
+    return unit.current_version <= 0 or not (unit.content or "").strip()
+
+
+def _enqueue_series_generation(
+    series_id: str, scope: str, req: SeriesUnitGenerateRequest, ctx: AuthContext
+) -> dict[str, Any]:
+    repository = container.series_repository()
+    units = repository.list_units(series_id)
+    job_service = container.job_service()
+    created_ids: list[str] = []
+    entries: list[dict[str, Any]] = []
+    created = skipped = failed = 0
+    for unit in units:
+        if scope == "pending" and not _unit_needs_generation(unit):
+            skipped += 1
+            entries.append(
+                {
+                    "unit_id": unit.id,
+                    "title": unit.title,
+                    "status": "skipped",
+                    "reason": "already_generated",
+                    "job_id": "",
+                    "error": "",
+                }
+            )
+            continue
+        if (
+            req.expected_version is not None
+            and int(req.expected_version) != unit.current_version
+        ):
+            failed += 1
+            entries.append(
+                {
+                    "unit_id": unit.id,
+                    "title": unit.title,
+                    "status": "failed",
+                    "reason": "version_conflict",
+                    "job_id": "",
+                    "error": (
+                        f"expected version {int(req.expected_version)} but the unit"
+                        f" is at version {unit.current_version}"
+                    ),
+                }
+            )
+            continue
+        try:
+            job, was_created = _enqueue_unit_generation_job(unit, req, ctx)
+        except Exception as exc:  # noqa: BLE001 - one unit must not abort the batch
+            failed += 1
+            entries.append(
+                {
+                    "unit_id": unit.id,
+                    "title": unit.title,
+                    "status": "failed",
+                    "reason": "enqueue_failed",
+                    "job_id": "",
+                    "error": f"{type(exc).__name__}: {exc}"[:300],
+                }
+            )
+            continue
+        if was_created:
+            created += 1
+            created_ids.append(job.id)
+            entries.append(
+                {
+                    "unit_id": unit.id,
+                    "title": unit.title,
+                    "status": "created",
+                    "reason": "",
+                    "job_id": job.id,
+                    "error": "",
+                }
+            )
+        else:
+            skipped += 1
+            entries.append(
+                {
+                    "unit_id": unit.id,
+                    "title": unit.title,
+                    "status": "skipped",
+                    "reason": "already_queued_or_generating",
+                    "job_id": job.id,
+                    "error": "",
+                }
+            )
+    unit_jobs = {
+        item["unit_id"]: item["job_id"]
+        for item in entries
+        if item.get("job_id")
+    }
+    jobs = [
+        {
+            "id": item["job_id"],
+            "job_id": item["job_id"],
+            "unit_id": item["unit_id"],
+            "status": item["status"],
+        }
+        for item in entries
+        if item.get("job_id")
+    ]
+    return {
+        "series_id": series_id,
+        "scope": scope,
+        "unit_count": len(units),
+        "created_count": created,
+        "skipped_count": skipped,
+        "failed_count": failed,
+        "job_ids": created_ids,
+        "jobIds": created_ids,
+        "unit_jobs": unit_jobs,
+        "jobs": jobs,
+        "units": entries,
+    }
+
+
+@app.post("/api/v1/series/{series_id}/units/generate-pending")
+def enqueue_pending_units(
+    series_id: str,
+    req: SeriesUnitGenerateRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    """Enqueue every unit of a series that has no generated content yet."""
+    _enforce(ctx, "write")
+    _require_series(series_id, ctx, "write")
+    return _enqueue_series_generation(
+        series_id, "pending", req or SeriesUnitGenerateRequest(), ctx
+    )
+
+
+@app.post("/api/v1/series/{series_id}/units/regenerate")
+def enqueue_series_regeneration(
+    series_id: str,
+    req: SeriesUnitGenerateRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    """Enqueue every unit of a series for regeneration."""
+    _enforce(ctx, "write")
+    _require_series(series_id, ctx, "write")
+    return _enqueue_series_generation(
+        series_id, "all", req or SeriesUnitGenerateRequest(), ctx
+    )
+
+
+@app.post("/api/v1/series/{series_id}/units/generate-all")
+def enqueue_all_units(
+    series_id: str,
+    req: SeriesUnitGenerateRequest | None = None,
+    regenerate: bool = Query(default=False),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    """Alias for the batch endpoints.
+
+    ``regenerate=false`` is the pending-only batch; ``regenerate=true``
+    enqueues every unit.
+    """
+    _enforce(ctx, "write")
+    _require_series(series_id, ctx, "write")
+    scope = "all" if regenerate else "pending"
+    return _enqueue_series_generation(
+        series_id, scope, req or SeriesUnitGenerateRequest(), ctx
+    )
+
+
+@app.post("/api/v1/series/{series_id}/generate-all")
+def generate_all_series(
+    series_id: str,
+    req: SeriesGenerateAllRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    """Shorthand used by the series workspace batch panel.
+
+    The body is ``{"regenerate": false}`` for pending units only and
+    ``{"regenerate": true}`` for every unit.
+    """
+    _enforce(ctx, "write")
+    _require_series(series_id, ctx, "write")
+    payload = req or SeriesGenerateAllRequest()
+    scope = "all" if payload.regenerate else "pending"
+    return _enqueue_series_generation(series_id, scope, payload, ctx)
+
+
+@app.get("/api/v1/units/{unit_id}/generation-status")
+def single_unit_generation_status(
+    unit_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    unit = _require_unit(unit_id, ctx)
+    return {
+        **_unit_generation_status_payload(unit),
+    }
+
+
+def _unit_generation_status_payload(unit: Unit) -> dict[str, Any]:
+    status = container.job_service().unit_generation_status(unit.id)
+    return {
+        "unit_id": unit.id,
+        "title": unit.title,
+        "unit_status": unit.status,
+        "needs_generation": _unit_needs_generation(unit),
+        **status,
+    }
+
+
+@app.get("/api/v1/series/{series_id}/units/generation-status")
+def unit_generation_status(
+    series_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_series(series_id, ctx)
+    units = container.series_repository().list_units(series_id)
+    entries = [_unit_generation_status_payload(unit) for unit in units]
+    return {"series_id": series_id, "count": len(entries), "units": entries}
 
 
 class UnitValidateRequest(BaseModel):
@@ -2771,8 +3119,14 @@ def get_unit_lock(
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
     _require_unit(unit_id, ctx)
-    lock = container.lock_service().get(unit_id)
-    return {"lock": lock.model_dump() if lock else None}
+    state = _edit_lock_state("unit", unit_id, ctx)
+    return {
+        "lock": state["lock"],
+        "state": state["state"],
+        "is_mine": state["is_mine"],
+        "locked_by_me": state["is_mine"],
+        "locked_by_other": state["state"] == "other",
+    }
 
 
 @app.post("/api/v1/units/{unit_id}/lock")
@@ -2795,15 +3149,20 @@ def acquire_unit_lock(
             force=payload.force,
         )
     except UnitLockedError as exc:
-        current = exc.lock
         return JSONResponse(
             status_code=409,
             content={
                 "detail": f"this unit is being edited by {exc.name}",
-                "lock": current.model_dump() if hasattr(current, "model_dump") else None,
+                "state": "other",
+                "lock": _lock_dump(exc.lock, ctx),
             },
         )
-    return {"acquired": True, "lock": lock.model_dump()}
+    return {
+        "acquired": True,
+        "state": "mine",
+        "is_mine": True,
+        "lock": _lock_dump(lock, ctx),
+    }
 
 
 @app.post("/api/v1/units/{unit_id}/lock/heartbeat")
@@ -2818,7 +3177,11 @@ def heartbeat_unit_lock(
         lock = container.lock_service().heartbeat(unit_id, req.token)
     except UnitLockLostError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"lock": lock.model_dump()}
+    return {
+        "state": "mine",
+        "is_mine": True,
+        "lock": _lock_dump(lock, ctx),
+    }
 
 
 @app.delete("/api/v1/units/{unit_id}/lock")
@@ -2833,7 +3196,200 @@ def release_unit_lock(
         container.lock_service().release(unit_id, token)
     except LockTokenMismatchError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    return {"ok": True}
+    return {"ok": True, "state": "free"}
+
+
+# ---------------------------------------------------------------------------
+# Piece edit locks (same explicit acquire/heartbeat/release contract as units)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/v1/pieces/{piece_id}/lock")
+def get_piece_lock(
+    piece_id: str, ctx: AuthContext = Depends(get_auth_context)
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_piece(piece_id, ctx)
+    state = _edit_lock_state("piece", piece_id, ctx)
+    return {
+        "lock": state["lock"],
+        "state": state["state"],
+        "is_mine": state["is_mine"],
+        "locked_by_me": state["is_mine"],
+        "locked_by_other": state["state"] == "other",
+    }
+
+
+@app.post("/api/v1/pieces/{piece_id}/lock")
+def acquire_piece_lock(
+    piece_id: str,
+    req: UnitLockRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Any:
+    _enforce(ctx, "write")
+    _require_piece(piece_id, ctx, "write")
+    payload = req or UnitLockRequest()
+    if payload.force and not _is_privileged(ctx):
+        raise HTTPException(status_code=403, detail="only an admin or the owner can force-take the edit lock")
+    try:
+        lock = container.lock_service().acquire_edit(
+            "piece",
+            piece_id,
+            _tenant_of(ctx),
+            ctx.user.id,
+            ctx.user.display_name or ctx.user.email,
+            force=payload.force,
+        )
+    except UnitLockedError as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": f"this piece is being edited by {exc.name}",
+                "state": "other",
+                "lock": _lock_dump(exc.lock, ctx),
+            },
+        )
+    return {
+        "acquired": True,
+        "state": "mine",
+        "is_mine": True,
+        "lock": _lock_dump(lock, ctx),
+    }
+
+
+@app.post("/api/v1/pieces/{piece_id}/lock/heartbeat")
+def heartbeat_piece_lock(
+    piece_id: str,
+    req: UnitHeartbeatRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_piece(piece_id, ctx, "write")
+    try:
+        lock = container.lock_service().heartbeat_edit("piece", piece_id, req.token)
+    except UnitLockLostError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "state": "mine",
+        "is_mine": True,
+        "lock": _lock_dump(lock, ctx),
+    }
+
+
+@app.delete("/api/v1/pieces/{piece_id}/lock")
+def release_piece_lock(
+    piece_id: str,
+    token: str = Query(default=""),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_piece(piece_id, ctx, "write")
+    try:
+        container.lock_service().release_edit("piece", piece_id, token)
+    except LockTokenMismatchError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {"ok": True, "state": "free"}
+
+
+# Generic aliases used by the web client: /locks/{kind}/{id}.
+# ``kind`` is "unit" or "piece"; the payload shape is identical to the
+# resource-specific endpoints above.
+
+
+@app.get("/api/v1/locks/{resource_type}/{resource_id}")
+def get_generic_lock(
+    resource_type: str,
+    resource_id: str,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "read")
+    _require_lock_resource(resource_type, resource_id, ctx, "read")
+    state = _edit_lock_state(resource_type, resource_id, ctx)
+    return {
+        "lock": state["lock"],
+        "state": state["state"],
+        "is_mine": state["is_mine"],
+        "locked_by_me": state["is_mine"],
+        "locked_by_other": state["state"] == "other",
+    }
+
+
+@app.post("/api/v1/locks/{resource_type}/{resource_id}")
+def acquire_generic_lock(
+    resource_type: str,
+    resource_id: str,
+    req: UnitLockRequest | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Any:
+    _enforce(ctx, "write")
+    _require_lock_resource(resource_type, resource_id, ctx, "write")
+    payload = req or UnitLockRequest()
+    if payload.force and not _is_privileged(ctx):
+        raise HTTPException(status_code=403, detail="only an admin or the owner can force-take the edit lock")
+    try:
+        lock = container.lock_service().acquire_edit(
+            resource_type,
+            resource_id,
+            _tenant_of(ctx),
+            ctx.user.id,
+            ctx.user.display_name or ctx.user.email,
+            force=payload.force,
+        )
+    except UnitLockedError as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": f"this {resource_type} is being edited by {exc.name}",
+                "state": "other",
+                "lock": _lock_dump(exc.lock, ctx),
+            },
+        )
+    return {
+        "acquired": True,
+        "state": "mine",
+        "is_mine": True,
+        "lock": _lock_dump(lock, ctx),
+    }
+
+
+@app.post("/api/v1/locks/{resource_type}/{resource_id}/renew")
+def renew_generic_lock(
+    resource_type: str,
+    resource_id: str,
+    req: UnitHeartbeatRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_lock_resource(resource_type, resource_id, ctx, "write")
+    try:
+        lock = container.lock_service().heartbeat_edit(
+            resource_type, resource_id, req.token
+        )
+    except UnitLockLostError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "state": "mine",
+        "is_mine": True,
+        "lock": _lock_dump(lock, ctx),
+    }
+
+
+@app.delete("/api/v1/locks/{resource_type}/{resource_id}")
+def release_generic_lock(
+    resource_type: str,
+    resource_id: str,
+    token: str = Query(default=""),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    _enforce(ctx, "write")
+    _require_lock_resource(resource_type, resource_id, ctx, "write")
+    try:
+        container.lock_service().release_edit(
+            resource_type, resource_id, token
+        )
+    except LockTokenMismatchError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {"ok": True, "state": "free"}
 
 
 class RoleCreateRequest(BaseModel):
@@ -3371,6 +3927,7 @@ class ResearchBlueprintRequest(BaseModel):
 
 class PieceCreateRequest(BaseModel):
     title: str = Field(min_length=1)
+    brief: str = ""
     genre: str | None = None
     tone: str | None = None
     audience: str | None = None
@@ -3619,6 +4176,7 @@ async def create_piece(
         profile_id=req.profile_id,
         spec=work_spec,
         retrieval=container.retrieval_context(_tenant_of(ctx), ctx.user.id),
+        brief=req.brief,
     )
     return piece.model_dump()
 
@@ -3641,7 +4199,9 @@ def get_piece(
     piece_id: str, ctx: AuthContext = Depends(get_auth_context)
 ) -> dict[str, Any]:
     _enforce(ctx, "read")
-    return _require_piece(piece_id, ctx).model_dump()
+    piece = _require_piece(piece_id, ctx)
+    # Reading never acquires a lock; it only reports the current state.
+    return _attach_lock_state(piece.model_dump(), "piece", piece_id, ctx)
 
 
 @app.post("/api/v1/pieces/{piece_id}/sections/{section_id}/generate")
@@ -3998,14 +4558,16 @@ def submit_job(
     req: JobSubmitRequest, ctx: AuthContext = Depends(require_write)
 ) -> dict[str, Any]:
     try:
-        job = container.job_service().submit(req.kind, req.payload, _job_ctx(ctx))
+        job, created = container.job_service().submit_idempotent(
+            req.kind, req.payload, _job_ctx(ctx)
+        )
     except UnsupportedJobKindError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except QuotaExceededError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except QueueUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return _job_payload(job)
+    return {**_job_payload(job), "created": created, "duplicate": not created}
 
 
 @app.get("/api/v1/jobs")
@@ -4195,6 +4757,7 @@ def storage_info(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]
 class SeriesUpdateRequest(BaseModel):
     title: str | None = None
     subtitle: str | None = None
+    brief: str | None = None
     audience: str | None = None
     difficulty: str | None = None
     language: str | None = None
@@ -4213,6 +4776,7 @@ def update_series(
         series_id,
         title=req.title,
         subtitle=req.subtitle,
+        brief=req.brief,
         audience=req.audience,
         difficulty=req.difficulty,
         language=req.language,
@@ -4263,7 +4827,9 @@ def update_unit(
     )
     if unit is None:
         raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}")
-    return unit.model_dump()
+    # Saving releases the editor lock; closing the editor calls DELETE /lock.
+    container.lock_service().release_for_user("unit", unit_id, ctx.user.id)
+    return _attach_lock_state(unit.model_dump(), "unit", unit_id, ctx)
 
 
 @app.delete("/api/v1/units/{unit_id}")
@@ -4275,6 +4841,7 @@ def delete_unit(
     deleted = container.series_repository().delete_unit(unit_id)
     if deleted is None:
         raise HTTPException(status_code=404, detail=f"unit not found: {unit_id}")
+    container.job_service().forget_unit(unit_id)
     return {
         "unit_id": unit_id,
         "deleted_versions": deleted["deleted_versions"],
@@ -4311,6 +4878,7 @@ def reorder_units(
 
 class PieceUpdateRequest(BaseModel):
     title: str | None = None
+    brief: str | None = None
     profile: dict[str, Any] | None = None
     target_words: int | None = Field(default=None, ge=200, le=50000)
     profile_id: str | None = None
@@ -4331,6 +4899,7 @@ def update_piece(
             profile=req.profile,
             target_words=req.target_words,
             profile_id=req.profile_id,
+            brief=req.brief,
         )
     except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -4362,8 +4931,11 @@ def save_piece_content(
         return _conflict(exc)
     except PieceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # Saving releases the editor lock; closing the editor calls DELETE /lock.
+    container.lock_service().release_for_user("piece", piece_id, ctx.user.id)
+    piece_payload = _attach_lock_state(piece.model_dump(), "piece", piece_id, ctx)
     return {
-        "piece": piece.model_dump(),
+        "piece": piece_payload,
         "version": version.version,
         "note": version.note,
         "mode": version.mode,
@@ -4968,34 +5540,6 @@ class MediaGenerateRequest(BaseModel):
 MEDIA_CACHE_CONTROL = "private, max-age=600"
 
 
-def _media_ctx(
-    authorization: str | None,
-    x_tenant_id: str | None,
-    token: str | None,
-) -> AuthContext:
-    service = container.auth_service()
-    if service.mode != "required":
-        return service.local_context()
-    raw = ""
-    if authorization:
-        scheme, _, value = authorization.partition(" ")
-        raw = value.strip() if scheme.lower() == "bearer" else authorization.strip()
-    if not raw and token:
-        raw = token.strip()
-    if not raw:
-        raise HTTPException(status_code=401, detail="missing access token")
-    try:
-        return service.resolve(raw, x_tenant_id)
-    except AuthRequiredError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-    except AccountNotActiveError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except MembershipNotFoundError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except TenantNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
 @app.get("/api/v1/media")
 def list_media(
     kind: str | None = Query(default=None),
@@ -5008,17 +5552,10 @@ def list_media(
 
 
 @app.get("/api/v1/media/{asset_id}")
-def get_media(
-    asset_id: str,
-    token: str | None = Query(default=None),
-    authorization: str | None = Header(default=None),
-    x_tenant_id: str | None = Header(default=None),
-) -> StreamingResponse:
-    ctx = _media_ctx(authorization, x_tenant_id, token)
-    _enforce(ctx, "read")
+def get_media(asset_id: str) -> StreamingResponse:
     service = container.media_service()
     try:
-        asset = service.get_asset(ctx, asset_id)
+        asset = service.get_readable_asset(asset_id)
         data = service.read_bytes(asset)
     except MediaAssetNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

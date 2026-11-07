@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, Lock } from "lucide-react";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type NoAccessCardProps = {
   title?: string;
@@ -10,11 +11,12 @@ type NoAccessCardProps = {
 };
 
 export default function NoAccessCard({
-  title = "Access required",
-  message = "Your role does not have access to this page. Contact a workspace admin to request access.",
+  title,
+  message,
   backTo = "/",
-  backLabel = "Back to the workspace",
+  backLabel,
 }: NoAccessCardProps) {
+  const { t } = useI18n();
   return (
     <div className="mx-auto w-full max-w-2xl">
       <motion.section
@@ -26,14 +28,14 @@ export default function NoAccessCard({
           <Lock size={20} />
         </span>
         <h2 className="mt-4 text-base font-semibold tracking-tight text-slate-900 dark:text-white">
-          {title}
+          {title ?? t("noAccess.title")}
         </h2>
         <p className="mx-auto mt-2 max-w-md text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
-          {message}
+          {message ?? t("noAccess.message")}
         </p>
         <Link to={backTo} className="btn btn-primary mt-5">
           <ArrowLeft size={14} />
-          {backLabel}
+          {backLabel ?? t("noAccess.back")}
         </Link>
       </motion.section>
     </div>

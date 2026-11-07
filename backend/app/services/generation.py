@@ -38,12 +38,18 @@ from app.ports.llm import LLMProvider
 from app.ports.vectorstore import VectorStore
 from app.models.auth import AuthContext
 from app.services.assets import PLACEHOLDER, AssetMaterializer
+from app.services.citation_audit import (
+    analyze_citation_coverage,
+    attach_citation_markers,
+    normalize_evidence,
+)
 from app.services.errors import UnitNotFoundError, VersionConflictError
 from app.services.factcheck import FactCheckService
 from app.services.retrieval_providers import RetrievalContext
 from app.services.prompting import (
     DEFAULT_LOOSE_WORDS,
     DEFAULT_STRICT_WORDS,
+    citation_taxonomy_lines,
     extra_requirement,
     glossary_lines,
     policy_of,
@@ -62,16 +68,18 @@ NO_EVIDENCE_NOTICE = (
 )
 
 
-def _diversify(citations: Sequence[Citation], limit: int, per_source: int = 3) -> list[Citation]:
+def _diversify(
+    citations: Sequence[Citation], limit: int, per_source: int = 0
+) -> list[Citation]:
     kept: list[Citation] = []
     counts: dict[str, int] = {}
     for citation in citations:
         key = citation.source_id or citation.source_name
-        if counts.get(key, 0) >= per_source:
+        if per_source > 0 and counts.get(key, 0) >= per_source:
             continue
         counts[key] = counts.get(key, 0) + 1
         kept.append(citation)
-        if len(kept) >= limit:
+        if limit > 0 and len(kept) >= limit:
             break
     return kept
 
@@ -84,7 +92,10 @@ class GenerationService:
         llm: LLMProvider,
         default_top_k: int = 5,
         evidence_char_limit: int = 600,
-        max_evidence: int = 8,
+        max_evidence: int = 0,
+        max_per_source: int = 0,
+        top_k_ceiling: int = 0,
+        citation_gap_action: str = "report",
         default_mode: str = "strict",
         min_score: float = 0.15,
         factcheck: FactCheckService | None = None,
@@ -96,7 +107,10 @@ class GenerationService:
         self.llm = llm
         self.default_top_k = default_top_k
         self.evidence_char_limit = evidence_char_limit
-        self.max_evidence = max_evidence
+        self.max_evidence = max(0, int(max_evidence or 0))
+        self.max_per_source = max(0, int(max_per_source or 0))
+        self.top_k_ceiling = max(0, int(top_k_ceiling or 0))
+        self.citation_gap_action = (citation_gap_action or "report").strip().lower()
         self.default_mode = GenerationMode.normalize(default_mode).value
         self.min_score = float(min_score)
         self.factcheck = factcheck
@@ -129,7 +143,10 @@ class GenerationService:
         policy = policy_of(spec, resolved_mode.value)
 
         resolved_topic = (topic or unit.title).strip()
-        resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
+        requested_top_k = max(1, int(top_k or self.default_top_k))
+        if self.top_k_ceiling > 0:
+            requested_top_k = min(requested_top_k, self.top_k_ceiling)
+        resolved_top_k = requested_top_k
         min_score = (
             self.min_score
             if (policy == "required" and resolved_mode is GenerationMode.strict)
@@ -146,7 +163,9 @@ class GenerationService:
                 tenant_id=tenant_id,
                 min_score=min_score,
             )
-            citations = _diversify(citations, self.max_evidence, per_source=3)
+            citations = _diversify(
+                citations, self.max_evidence, per_source=self.max_per_source
+            )
         else:
             citations = await self.vectorstore.search(
                 self._build_query(resolved_topic, unit),
@@ -155,11 +174,13 @@ class GenerationService:
                 tenant_id=tenant_id,
                 min_score=min_score,
             )
-            citations = _diversify(citations, self.max_evidence, per_source=3)
-        evidence = [
-            Evidence(marker=f"E{index}", citation=citation)
-            for index, citation in enumerate(citations, start=1)
-        ]
+            citations = _diversify(
+                citations, self.max_evidence, per_source=self.max_per_source
+            )
+        evidence = []
+        for index, citation in enumerate(citations, start=1):
+            citation.marker = f"E{index}"
+            evidence.append(Evidence(marker=citation.marker, citation=citation))
 
         provider = llm or self.llm
         if resolved_mode is GenerationMode.loose and policy != "forbidden":
@@ -179,6 +200,7 @@ class GenerationService:
                 series, unit, resolved_topic, evidence, provider, spec, resolved_mode
             )
 
+        evidence_refs = normalize_evidence(evidence)
         checks = await self._run_factcheck(
             content,
             tenant_id,
@@ -186,12 +208,31 @@ class GenerationService:
             resolved_mode is GenerationMode.strict and policy != "forbidden",
             retrieval,
         )
-        report = await self._run_validators(spec, content, unit)
+        report = await self._run_validators(spec, content, unit, evidence_refs)
+        if report is not None and report.revised_content is not None:
+            content = report.revised_content
+        coverage = report.citation_coverage if report is not None else None
+        if coverage is None or (
+            self.citation_gap_action == "attach" and coverage.missing
+        ):
+            coverage = analyze_citation_coverage(content, policy, evidence_refs)
+            if (
+                self.citation_gap_action == "attach"
+                and policy == "required"
+                and coverage.missing
+            ):
+                content, coverage = attach_citation_markers(
+                    content, coverage, evidence_refs, policy=policy
+                )
+            if report is not None:
+                report.citation_coverage = coverage
         note_value = note or self._default_note(resolved_mode, evidence)
         if checks:
             note_value = f"{note_value};factcheck:{self.factcheck.summarize(checks)}"
         if report is not None and report.results:
             note_value = f"{note_value};validators:{report.note_fragment()}"
+        if coverage is not None:
+            note_value = f"{note_value};coverage:{coverage.coverage:.2f}"
 
         usable = (
             resolved_mode is GenerationMode.loose
@@ -238,12 +279,18 @@ class GenerationService:
             prompt=prompt,
             factcheck=checks,
             validation=report,
+            citation_coverage=coverage,
+            missing_evidence=list(coverage.missing) if coverage is not None else [],
             warnings=list(retrieval.warnings) if retrieval is not None else [],
             retrieval=retrieval.summary() if retrieval is not None else {},
         )
 
     async def _run_validators(
-        self, spec: ProfileSpec | None, content: str, unit: Unit
+        self,
+        spec: ProfileSpec | None,
+        content: str,
+        unit: Unit,
+        evidence: Sequence[dict[str, object]] | None = None,
     ) -> ValidationReport | None:
         if self.validators is None or spec is None or not content:
             return None
@@ -256,6 +303,7 @@ class GenerationService:
                     "series_id": unit.series_id,
                     "title": unit.title,
                     "setting_book": (spec.assets.setting_book),
+                    "evidence": list(evidence or []),
                 },
             )
         except Exception:
@@ -387,24 +435,27 @@ class GenerationService:
                 "",
                 "## Series information",
                 f"- Series: {series.title if series else 'Untitled series'}",
+                f"- Content requirements: {((series.brief if series else '') or '').strip() or '(not specified)'}",
                 f"- {unit_label} #{unit.order_index} · {unit.title}",
                 f"- Topic of this {unit_label}: {topic}",
             ]
         )
         lines.extend(self._unit_context(unit, spec))
+        lines.extend(self._brief_lines(series))
 
         lines.extend(
             [
                 "",
                 "## Hard writing constraints",
                 "1. Only use content explicitly stated in the \"Evidence\" section; do not introduce facts, data, cases, people, or conclusions beyond the evidence.",
-                "2. Every paragraph must carry at least one source marker in the form [E1]; when one paragraph cites multiple items, write [E1][E3].",
+                "2. A citation marker is required only for the factual material listed in the semantic citation policy below; it is not required for code walkthroughs, procedural steps, analogies, summaries, exercises, or subjective advice. When one paragraph cites multiple items, write [E1][E3].",
                 "3. For subsections the evidence cannot support, explicitly write \"Insufficient material: <gap description>\"; never fill gaps with common knowledge or speculation.",
                 f"4. Output Markdown: organize subsections with level-2 headings, keep the body between {low} and {high} characters, and briefly explain terms on first use.",
-                "4.1 Tone: address the reader directly, like a teacher explaining. Do not repeatedly use reporting phrases such as \"evidence shows\", \"this indicates\", or \"it can be seen\"; state facts directly and keep the source marker at the end of the sentence.",
+                "4.1 Tone: address the reader directly, like a teacher explaining. Do not repeatedly use reporting phrases such as \"evidence shows\", \"this indicates\", or \"it can be seen\"; state facts directly and keep the source marker at the end of the factual clause.",
                 f"5. End with a \"## Further questions\" section listing 2-3 questions that need additional material to answer.",
             ]
         )
+        lines.extend(self._citation_taxonomy_lines(mandatory=True))
         lines.extend(voice_lines(spec))
         lines.extend(glossary_lines(spec, unit))
         extra = extra_requirement(spec, "unit", values)
@@ -440,11 +491,13 @@ class GenerationService:
                 "",
                 "## Series information",
                 f"- Series: {series.title if series else 'Untitled series'}",
+                f"- Content requirements: {((series.brief if series else '') or '').strip() or '(not specified)'}",
                 f"- {unit_label} #{unit.order_index} · {unit.title}",
                 f"- Topic of this {unit_label}: {topic}",
             ]
         )
         lines.extend(self._unit_context(unit, spec))
+        lines.extend(self._brief_lines(series))
 
         lines.extend(
             [
@@ -452,12 +505,13 @@ class GenerationService:
                 "## Writing requirements",
                 "1. You may freely organize content from your own general knowledge, common practice, and teaching experience; you are not limited to the \"reference evidence\".",
                 "2. The first line of the body must contain the notice: \"> ⚠️ This article was written by an LLM and has not been verified against knowledge-base evidence\".",
-                "3. Per-paragraph source markers are not required; if you cite a specific claim from the reference evidence, you may optionally mark it [E1].",
+                "3. Per-paragraph source markers are not mandatory in this mode; if you cite a specific claim from the reference evidence, use the semantic citation policy below and mark it [E1].",
                 f"4. Output Markdown: organize subsections with level-2 headings, keep the body between {low} and {high} characters, and briefly explain terms on first use.",
                 "5. For uncertain or time-sensitive conclusions, advise readers to verify them (e.g. \"recommend verifying\"); do not present them as verified facts.",
                 "6. End with a \"## Further reading\" section listing 2-3 directions for further verification.",
             ]
         )
+        lines.extend(self._citation_taxonomy_lines(mandatory=False))
         lines.extend(voice_lines(spec))
         lines.extend(glossary_lines(spec, unit))
         extra = extra_requirement(spec, "unit", values)
@@ -495,17 +549,19 @@ class GenerationService:
                 "",
                 "## Series information",
                 f"- Series: {series.title if series else 'Untitled series'}",
+                f"- Content requirements: {((series.brief if series else '') or '').strip() or '(not specified)'}",
                 f"- {unit_label} #{unit.order_index} · {unit.title}",
                 f"- Topic of this {unit_label}: {topic}",
             ]
         )
         lines.extend(self._unit_context(unit, spec))
+        lines.extend(self._brief_lines(series))
         lines.extend(
             [
                 "",
                 "## Writing requirements",
                 "1. Organize the content from your own knowledge, common practice, and teaching experience; no knowledge-base citations are needed.",
-                "2. Never output source markers such as [E1], and do not fabricate source names.",
+                "2. Never output source markers such as [E1], and do not fabricate source names. Apply the same semantic distinction between externally checkable facts and code/procedural/subjective text; flag checkable facts that need verification in the prose instead of inventing a citation.",
                 f"3. Output Markdown: organize subsections with level-2 headings, keep the body between {low} and {high} characters, and briefly explain terms on first use.",
                 "4. For uncertain or time-sensitive conclusions, advise readers to verify them (e.g. \"recommend verifying\"); do not present them as verified facts.",
             ]
@@ -529,6 +585,10 @@ class GenerationService:
         return "\n".join(lines)
 
 
+    @staticmethod
+    def _citation_taxonomy_lines(mandatory: bool) -> list[str]:
+        return citation_taxonomy_lines(mandatory)
+
     def _asset_lines(self) -> list[str]:
         """Ask the model to mark spots where an illustration would help.
 
@@ -544,6 +604,16 @@ class GenerationService:
             "A marker is a line that contains exactly: [[image: a short, concrete scene description]]",
             "Put it directly below the paragraph it illustrates, and only where an image genuinely helps understanding.",
             "Do not mention the marker in the prose, do not number them, and do not output anything when no image is needed.",
+        ]
+
+    @staticmethod
+    def _brief_lines(series: Series | None) -> list[str]:
+        brief = ((series.brief if series else "") or "").strip()
+        return [
+            "",
+            "## Authoring requirements (from the author, not retrieval evidence)",
+            brief or "(none)",
+            "Use these requirements to decide topic selection, emphasis, and coverage. They are not evidence and must never be cited as a source.",
         ]
 
     @staticmethod

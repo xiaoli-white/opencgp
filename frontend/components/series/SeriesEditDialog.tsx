@@ -4,13 +4,10 @@ import { api, type Series } from "@/lib/api";
 import { Modal } from "@/components/common/Dialogs";
 import ProfileSelect, { useWorkProfiles } from "@/components/profiles/ProfileSelect";
 import { useI18n } from "@/i18n/I18nProvider";
+import { difficultyLabel, languageLabel } from "@/i18n/labels";
 
 const DIFFICULTIES = ["beginner", "intermediate", "advanced"];
-
-const LANGUAGES: { value: string; label: { zh: string; en: string } }[] = [
-  { value: "zh", label: { zh: "Chinese", en: "Chinese" } },
-  { value: "en", label: { zh: "English", en: "English" } },
-];
+const LANGUAGES = ["zh", "en"];
 
 export default function SeriesEditDialog({
   open,
@@ -23,10 +20,11 @@ export default function SeriesEditDialog({
   onClose: () => void;
   onSaved: (series: Series) => void;
 }) {
-  const { t, tm } = useI18n();
+  const { t } = useI18n();
   const { profiles } = useWorkProfiles();
   const [title, setTitle] = useState("");
   const [subtitle, setSubtitle] = useState("");
+  const [brief, setBrief] = useState("");
   const [audience, setAudience] = useState("");
   const [difficulty, setDifficulty] = useState("beginner");
   const [language, setLanguage] = useState("zh");
@@ -38,6 +36,7 @@ export default function SeriesEditDialog({
     if (!open || !series) return;
     setTitle(series.title);
     setSubtitle(series.subtitle ?? "");
+    setBrief(series.brief ?? "");
     setAudience(series.audience ?? "");
     setDifficulty(series.difficulty || "beginner");
     setLanguage(series.language || "zh");
@@ -53,6 +52,7 @@ export default function SeriesEditDialog({
       const updated = await api.updateSeries(series.id, {
         title: title.trim(),
         subtitle: subtitle.trim(),
+        brief: brief.trim(),
         audience: audience.trim(),
         difficulty,
         language,
@@ -94,6 +94,19 @@ export default function SeriesEditDialog({
           />
         </label>
         <label className="block text-[11px] text-slate-500 dark:text-slate-400">
+          {t("series.briefLabel")}
+          <textarea
+            value={brief}
+            onChange={(event) => setBrief(event.target.value)}
+            className="input mt-1 min-h-[7.5rem] resize-y"
+            rows={5}
+            placeholder={t("series.briefPlaceholder")}
+          />
+          <span className="mt-1 block text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
+            {t("series.briefHint")}
+          </span>
+        </label>
+        <label className="block text-[11px] text-slate-500 dark:text-slate-400">
           {t("series.edit.audienceLabel")}
           <input
             value={audience}
@@ -112,7 +125,7 @@ export default function SeriesEditDialog({
             >
               {DIFFICULTIES.map((item) => (
                 <option key={item} value={item}>
-                  {t(`labels.difficulty.${item}`)}
+                  {difficultyLabel(t, item)}
                 </option>
               ))}
             </select>
@@ -125,8 +138,8 @@ export default function SeriesEditDialog({
               className="select mt-1"
             >
               {LANGUAGES.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {tm(item.label)}
+                <option key={item} value={item}>
+                  {languageLabel(t, item)}
                 </option>
               ))}
             </select>

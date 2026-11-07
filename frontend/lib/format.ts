@@ -28,19 +28,20 @@ export function setFormatLocale(locale: "zh" | "en") {
 
 export function formatRelative(timestamp: number): string {
   if (!timestamp) return "—";
+  const t = getActiveTranslate();
   const diff = Date.now() / 1000 - timestamp;
-  if (diff < 60) return "just now";
+  if (diff < 60) return t("common.justNow");
   if (diff < 3600) {
     const n = Math.floor(diff / 60);
-    return `${n} min ago`;
+    return t("common.minutesAgo", { count: n });
   }
   if (diff < 86400) {
     const n = Math.floor(diff / 3600);
-    return `${n} h ago`;
+    return t("common.hoursAgo", { count: n });
   }
   if (diff < 86400 * 30) {
     const n = Math.floor(diff / 86400);
-    return `${n} d ago`;
+    return t("common.daysAgo", { count: n });
   }
   if (formatLocale === "en") {
     return new Intl.DateTimeFormat("en-US", {
@@ -90,9 +91,10 @@ export function statusTone(value: string): StatusTone {
 }
 
 export function formatChars(count: number): string {
-  if (count >= 10000) return `${Math.round(count / 1000)}k chars`;
-  if (count >= 1000) return `${(count / 1000).toFixed(1)}k chars`;
-  return `${count} chars`;
+  const t = getActiveTranslate();
+  if (count >= 10000) return t("reader.chars", { count: `${Math.round(count / 1000)}k` });
+  if (count >= 1000) return t("reader.chars", { count: `${(count / 1000).toFixed(1)}k` });
+  return t("reader.chars", { count });
 }
 
 export function contentLength(content: string): number {
@@ -100,7 +102,7 @@ export function contentLength(content: string): number {
 }
 
 export function sourceLabel(name: string): string {
-  if (!name) return "Unknown source";
+  if (!name) return getActiveTranslate()("common.unknownSource");
   return name.length > 28 ? `${name.slice(0, 26)}…` : name;
 }
 

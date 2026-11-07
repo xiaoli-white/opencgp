@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { AlertTriangle } from "lucide-react";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type MermaidDiagramProps = {
   code: string;
@@ -14,6 +15,7 @@ export default function MermaidDiagram({ code, className }: MermaidDiagramProps)
   const [error, setError] = useState("");
   const [dark, setDark] = useState(false);
   const aliveRef = useRef(true);
+  const { t } = useI18n();
 
   useEffect(() => {
     const root = document.documentElement;
@@ -55,7 +57,7 @@ export default function MermaidDiagram({ code, className }: MermaidDiagramProps)
       } catch (err) {
         if (!aliveRef.current) return;
         setSvg("");
-        setError(err instanceof Error ? err.message : "Mermaid render failed");
+        setError(err instanceof Error ? err.message : t("reader.mermaidFailed"));
       }
     };
     void run();
@@ -69,7 +71,7 @@ export default function MermaidDiagram({ code, className }: MermaidDiagramProps)
       <div className={clsx("not-prose my-4 space-y-2", className)}>
         <div className="flex items-start gap-2 rounded-2xl border border-amber-400/40 bg-amber-400/10 px-3 py-2 font-sans text-[11px] text-amber-800 dark:border-amber-300/25 dark:text-amber-200">
           <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-          <span>Diagram failed to render; showing the source instead: {error}</span>
+          <span>{t("reader.mermaidError", { error })}</span>
         </div>
         <pre className="overflow-x-auto rounded-2xl border border-white/50 bg-slate-900/90 p-3 font-mono text-[11px] leading-relaxed text-slate-100 dark:border-white/10">
           <code>{code}</code>
@@ -86,7 +88,7 @@ export default function MermaidDiagram({ code, className }: MermaidDiagramProps)
           className,
         )}
       >
-        Rendering diagram…
+        {t("reader.mermaidRendering")}
       </div>
     );
   }

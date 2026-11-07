@@ -1,28 +1,30 @@
 import clsx from "clsx";
 import { Check, PenLine, ShieldCheck } from "lucide-react";
 import type { GenerationMode } from "@/lib/api";
+import { useI18n } from "@/i18n/I18nProvider";
+import { modeLabel } from "@/i18n/labels";
 
 type ModeOption = {
   value: GenerationMode;
-  label: string;
-  short: string;
-  desc: string;
+  labelKey: string;
+  shortKey: string;
+  descKey: string;
   icon: typeof ShieldCheck;
 };
 
 const OPTIONS: ModeOption[] = [
   {
     value: "strict",
-    label: "Strict mode",
-    short: "Strict",
-    desc: "Every section needs an [En] source; never write without evidence",
+    labelKey: "mode.strictTitle",
+    shortKey: "mode.strict",
+    descKey: "mode.strictDesc",
     icon: ShieldCheck,
   },
   {
     value: "loose",
-    label: "Loose mode",
-    short: "Loose",
-    desc: "Let the model write freely; the body is marked as written by AI",
+    labelKey: "mode.looseTitle",
+    shortKey: "mode.loose",
+    descKey: "mode.looseDesc",
     icon: PenLine,
   },
 ];
@@ -42,6 +44,7 @@ export default function ModePicker({
   disabled = false,
   className,
 }: ModePickerProps) {
+  const { t } = useI18n();
   if (variant === "compact") {
     return (
       <div
@@ -68,7 +71,7 @@ export default function ModePicker({
               )}
             >
               <Icon size={10} />
-              {option.short}
+              {modeLabel(t, option.shortKey)}
             </button>
           );
         })}
@@ -114,16 +117,16 @@ export default function ModePicker({
                     : "text-slate-600 dark:text-slate-300",
                 )}
               >
-                {option.label}
+                {t(option.labelKey)}
               </span>
               {option.value === "strict" ? (
                 <span className="text-[9px] text-slate-400 dark:text-slate-500">
-                  Default
+                  {t("common.default")}
                 </span>
               ) : null}
             </span>
             <span className="text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
-              {option.desc}
+              {t(option.descKey)}
             </span>
             {active ? (
               <Check

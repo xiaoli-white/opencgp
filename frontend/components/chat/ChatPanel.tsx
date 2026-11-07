@@ -13,6 +13,7 @@ import {
 import clsx from "clsx";
 import { api, ApiError, type AmendResult, type GenerationMode, type Message } from "@/lib/api";
 import { contentLength, formatRelative, modeLabel, sourceLabel } from "@/lib/format";
+import { useI18n } from "@/i18n/I18nProvider";
 import MarkdownReader from "@/components/reader/MarkdownReader";
 import ModePicker from "@/components/series/ModePicker";
 import type { VersionConflict } from "@/components/series/ConflictDialog";
@@ -35,16 +36,16 @@ type Tab = "ask" | "amend";
 type ChatMessage = Message & { quoted?: string };
 
 const AMEND_PRESETS = [
-  "Trim this section and remove repetition",
-  "Add a real-world example",
-  "Rewrite it in a more hands-on style",
-  "Split it into clearer subsections",
+  "chat.presets.amendTrim",
+  "chat.presets.amendExample",
+  "chat.presets.amendHandsOn",
+  "chat.presets.amendSplit",
 ];
 
 const ASK_PRESETS = [
-  "What is the key takeaway of this unit?",
-  "Why is this part covered first?",
-  "How does this map to scenarios in my project?",
+  "chat.presets.askTakeaway",
+  "chat.presets.askOrder",
+  "chat.presets.askProject",
 ];
 
 export default function ChatPanel({
@@ -59,6 +60,7 @@ export default function ChatPanel({
   onNotice,
   onVersionConflict,
 }: ChatPanelProps) {
+  const { t } = useI18n();
   const [tab, setTab] = useState<Tab>("ask");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -98,7 +100,7 @@ export default function ChatPanel({
       .catch((err: unknown) => {
         if (!cancelled) {
           setMessages([]);
-          setError(err instanceof Error ? err.message : "Failed to load the thread");
+          setError(err instanceof Error ? err.message : t("chat.loadFailed"));
         }
       })
       .finally(() => {
@@ -107,7 +109,7 @@ export default function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [open, unitId]);
+  }, [open, unitId, t]);
 
   useEffect(() => {
     if (!open) return;
@@ -160,12 +162,10 @@ export default function ChatPanel({
           onSelectionConsumed?.();
         }
         if (!result.grounded) {
-          setError(
-            "This answer found no knowledge-base evidence and was produced from the model's own knowledge. Please verify it.",
-          );
+          setError(t("chat.noEvidence"));
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to ask a follow-up");
+        setError(err instanceof Error ? err.message : t("chat.askFailed"));
         setInput(text);
       } finally {
         setBusy(false);
@@ -191,7 +191,11 @@ export default function ChatPanel({
       setAmendInfo(result);
       setInput("");
       onNotice(
-        `Change applied. Generated v${result.version} (from v${result.previous_version} · ${modeLabel(result.mode)} mode)`,
+        t("chat.applied", {
+          version: result.version,
+          previous: result.previous_version,
+          mode: modeLabel(result.mode),
+        }),
       );
       await onApplied();
     } catch (err) {
@@ -201,11 +205,11 @@ export default function ChatPanel({
         onVersionConflict({
           expectedVersion,
           currentVersion: current,
-          label: "This change",
+          label: t("chat.conflictLabel"),
           retry: () => runAmend(text, current),
         });
       } else {
-        setError(err instanceof Error ? err.message : "Failed to apply the change");
+        setError(err instanceof Error ? err.message : t("chat.amendFailed"));
       }
     } finally {
       setBusy(false);
@@ -213,42 +217,32 @@ export default function ChatPanel({
   };
 
   return (
-    <AnimatePresence>
+    <AnimatePresence initial={false}>
       {open && (
-        <motion.div
-          className="fixed inset-0 z-50"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+        <motion.section
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.22, ease: "easeOut" }}
+          className="glass relative flex max-h-[72vh] min-h-0 flex-col overflow-hidden rounded-2xl border border-white/60 shadow-glass max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:top-0 max-lg:z-50 max-lg:h-[100dvh] max-lg:max-h-[100dvh] max-lg:!mt-0 max-lg:rounded-none max-lg:border-x-0 max-lg:border-t-0 max-lg:!bg-white/95 max-lg:pt-[env(safe-area-inset-top)] dark:border-white/10 dark:max-lg:!bg-slate-950/95 lg:max-h-[calc(100vh-15rem)]"
         >
-          <div
-            className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
-            onClick={onClose}
-          />
-          <motion.aside
-            initial={{ x: 480 }}
-            animate={{ x: 0 }}
-            exit={{ x: 480 }}
-            transition={{ type: "spring", stiffness: 300, damping: 32 }}
-            className="glass absolute inset-0 flex w-full flex-col rounded-t-[1.5rem] border-t border-white/50 shadow-glass sm:inset-y-0 sm:right-0 sm:left-auto sm:w-[470px] sm:rounded-none sm:rounded-l-3xl sm:border-l sm:border-t-0 dark:border-white/10"
-          >
-            <header className="sticky top-0 z-10 flex items-start gap-3 border-b border-slate-200/70 bg-white/70 px-4 py-3 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/60 sm:bg-transparent sm:px-5 sm:py-4 sm:backdrop-blur-none dark:sm:bg-transparent">
+            <header className="flex shrink-0 items-start gap-3 border-b border-slate-200/70 bg-white/60 px-4 py-3 dark:border-white/10 dark:bg-white/[0.03] sm:px-5 sm:py-3.5">
               <div className="brand-gradient mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-2xl text-white">
                 <MessageSquare size={16} />
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
-                  Ask & Amend
+                  {t("chat.title")}
                 </p>
                 <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">
-                  {unitTitle || "Select a unit"} · v{currentVersion}
+                  {unitTitle || t("chat.selectUnit")} · v{currentVersion}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={onClose}
                 className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
-                aria-label="Close the chat panel"
+                aria-label={t("chat.closePanel")}
               >
                 <X size={16} />
               </button>
@@ -261,13 +255,13 @@ export default function ChatPanel({
                   animate={{ opacity: 1, y: 0, height: "auto" }}
                   exit={{ opacity: 0, y: -6, height: 0 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}
-                  className="overflow-hidden"
+                  className="overflow-hidden shrink-0"
                 >
                   <div className="mx-5 mt-4 flex items-start gap-2 rounded-2xl border border-indigo-300/45 bg-indigo-500/10 px-3 py-2 dark:border-indigo-400/25 dark:bg-indigo-400/10">
                     <Quote size={13} className="mt-0.5 shrink-0 text-indigo-500 dark:text-indigo-300" />
                     <div className="min-w-0 flex-1">
                       <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-indigo-500 dark:text-indigo-300">
-                        Quoted selection
+                        {t("chat.quotedSelection")}
                       </p>
                       <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
                         {selection}
@@ -280,7 +274,7 @@ export default function ChatPanel({
                         onSelectionConsumed?.();
                       }}
                       className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-white/70 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
-                      aria-label="Clear the quoted selection"
+                      aria-label={t("chat.clearSelection")}
                     >
                       <X size={12} />
                     </button>
@@ -289,7 +283,7 @@ export default function ChatPanel({
               ) : null}
             </AnimatePresence>
 
-            <div className="flex gap-1 px-5 pt-4">
+            <div className="flex shrink-0 gap-1 px-5 pt-4">
               <div className="flex w-full rounded-2xl border border-slate-200/70 bg-white/45 p-1 dark:border-white/10 dark:bg-white/[0.04]">
                 <button
                   type="button"
@@ -305,7 +299,7 @@ export default function ChatPanel({
                   )}
                 >
                   <MessageSquare size={13} />
-                  Ask
+                  {t("chat.tab.ask")}
                 </button>
                 <button
                   type="button"
@@ -321,21 +315,21 @@ export default function ChatPanel({
                   )}
                 >
                   <PenLine size={13} />
-                  Amend
+                  {t("chat.tab.amend")}
                 </button>
               </div>
             </div>
 
-            <div className="no-scrollbar flex-1 space-y-4 overflow-y-auto px-5 py-4">
+            <div className="no-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
               {tab === "ask" ? (
                 loadingThread ? (
                   <div className="flex items-center gap-2 text-xs text-slate-400">
                     <Loader2 size={13} className="animate-spin" />
-                    Loading the thread…
+                    {t("chat.loadingThread")}
                   </div>
                 ) : messages.length === 0 ? (
                   <div className="glass-soft rounded-2xl p-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                    Ask about this unit and the AI answers with knowledge-base evidence; answers can also be folded back into the body text.
+                    {t("chat.askHint")}
                   </div>
                 ) : (
                   messages.map((message) => {
@@ -358,7 +352,8 @@ export default function ChatPanel({
                               <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
                               {message.quoted ? (
                                 <p className="rounded-xl border border-white/25 bg-white/15 px-2 py-1 text-[11px] leading-relaxed text-white/85 line-clamp-3">
-                                  Quoted: {message.quoted}
+                                  {t("chat.quotedPrefix")}
+                                  {message.quoted}
                                 </p>
                               ) : null}
                             </div>
@@ -398,11 +393,11 @@ export default function ChatPanel({
               ) : (
                 <div className="space-y-3">
                   <div className="glass-soft rounded-2xl p-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                    Describe the change in plain language. The AI rewrites this unit as a new version, and the previous version can still be rolled back.
+                    {t("chat.amendHint")}
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
-                      Writing mode
+                      {t("chat.writingMode")}
                     </span>
                     <ModePicker
                       value={amendMode}
@@ -413,39 +408,44 @@ export default function ChatPanel({
                   </div>
                   {amendMode === "loose" ? (
                     <p className="text-[10px] leading-relaxed text-amber-700 dark:text-amber-300">
-                      Loose mode: the model may rewrite from its own knowledge; the body keeps a “Written by AI” notice at the top.
+                      {t("chat.looseHint")}
                     </p>
                   ) : null}
                   <div className="flex flex-wrap gap-1.5">
-                    {AMEND_PRESETS.map((preset) => (
+                    {AMEND_PRESETS.map((presetKey) => (
                       <button
-                        key={preset}
+                        key={presetKey}
                         type="button"
-                        onClick={() => setInput(preset)}
+                        onClick={() => setInput(t(presetKey))}
                         className="chip transition hover:bg-indigo-500/20"
                       >
                         <Sparkles size={11} />
-                        {preset}
+                        {t(presetKey)}
                       </button>
                     ))}
                   </div>
                   {amendInfo && (
                     <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-300">
                       <p className="font-medium">
-                        Generated v{amendInfo.version} (from v{amendInfo.previous_version} ·{" "}
-                        {modeLabel(amendInfo.mode)} mode)
+                        {t("chat.generatedVersion", {
+                          version: amendInfo.version,
+                          previous: amendInfo.previous_version,
+                          mode: modeLabel(amendInfo.mode),
+                        })}
                       </p>
                       <p className="mt-1 text-[11px] leading-relaxed opacity-80">
-                        {amendInfo.note || amendInfo.instruction} ·{" "}
-                        {contentLength(amendInfo.content)} chars ·{" "}
-                        {amendInfo.citations.length} citations
+                        {t("chat.amendMeta", {
+                          note: amendInfo.note || amendInfo.instruction,
+                          chars: contentLength(amendInfo.content),
+                          citations: amendInfo.citations.length,
+                        })}
                       </p>
                     </div>
                   )}
                   {messages.length > 0 && (
                     <div className="space-y-2 border-t border-slate-200/70 pt-3 dark:border-white/10">
                       <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                        Unit thread
+                        {t("chat.unitThread")}
                       </p>
                       {messages.slice(-4).map((message) => (
                         <p
@@ -457,7 +457,7 @@ export default function ChatPanel({
                               : "text-slate-500 dark:text-slate-400",
                           )}
                         >
-                          {message.role === "user" ? "Q · " : "A · "}
+                          {message.role === "user" ? t("chat.qPrefix") : t("chat.aPrefix")}
                           {message.content.slice(0, 80)}
                         </p>
                       ))}
@@ -469,13 +469,13 @@ export default function ChatPanel({
               {busy && tab === "ask" && (
                 <div className="flex items-center gap-2 text-xs text-slate-400">
                   <Loader2 size={13} className="animate-spin" />
-                  Retrieving evidence and drafting an answer…
+                  {t("chat.asking")}
                 </div>
               )}
               {busy && tab === "amend" && (
                 <div className="flex items-center gap-2 text-xs text-slate-400">
                   <Loader2 size={13} className="animate-spin" />
-                  Rewriting the body and creating a new version…
+                  {t("chat.amending")}
                 </div>
               )}
               {error && (
@@ -487,17 +487,17 @@ export default function ChatPanel({
               <div ref={bottomRef} />
             </div>
 
-            <footer className="safe-bottom sticky bottom-0 z-10 border-t border-slate-200/70 bg-white/70 px-4 py-3 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/60 sm:bg-transparent sm:px-5 sm:py-4 sm:backdrop-blur-none dark:sm:bg-transparent">
+            <footer className="safe-bottom shrink-0 border-t border-slate-200/70 bg-white/60 px-4 py-3 dark:border-white/10 dark:bg-white/[0.03] sm:px-5 sm:py-3.5 max-lg:!pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
               {tab === "ask" && (
                 <div className="mb-2 flex flex-wrap gap-1.5">
-                  {ASK_PRESETS.map((preset) => (
+                  {ASK_PRESETS.map((presetKey) => (
                     <button
-                      key={preset}
+                      key={presetKey}
                       type="button"
-                      onClick={() => setInput(preset)}
+                      onClick={() => setInput(t(presetKey))}
                       className="rounded-full border border-slate-200/80 px-2 py-0.5 text-[10px] text-slate-500 transition hover:border-indigo-300 hover:text-indigo-600 dark:border-white/10 dark:text-slate-400 dark:hover:border-indigo-400/40 dark:hover:text-indigo-200"
                     >
-                      {preset}
+                      {t(presetKey)}
                     </button>
                   ))}
                 </div>
@@ -513,9 +513,7 @@ export default function ChatPanel({
                     }
                   }}
                   placeholder={
-                    tab === "ask"
-                      ? "Ask about this unit… (Ctrl/⌘ + Enter to send)"
-                      : "Describe the change, e.g. make paragraph 2 more hands-on… (Ctrl/⌘ + Enter)"
+                    tab === "ask" ? t("chat.askPlaceholder") : t("chat.amendPlaceholder")
                   }
                   className="input max-h-32 min-h-[3.2rem]"
                   rows={2}
@@ -525,14 +523,13 @@ export default function ChatPanel({
                   onClick={send}
                   disabled={busy || !input.trim()}
                   className="btn btn-primary h-[3.2rem] w-12 shrink-0 px-0"
-                  aria-label="Send"
+                  aria-label={t("chat.send")}
                 >
                   {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                 </button>
               </div>
             </footer>
-          </motion.aside>
-        </motion.div>
+        </motion.section>
       )}
     </AnimatePresence>
   );

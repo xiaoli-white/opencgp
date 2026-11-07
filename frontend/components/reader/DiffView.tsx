@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import clsx from "clsx";
 import { diffLines, diffStats } from "@/lib/diff";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type DiffViewProps = {
   before: string;
@@ -12,18 +13,19 @@ type DiffViewProps = {
 export default function DiffView({
   before,
   after,
-  beforeLabel = "Previous version",
-  afterLabel = "New version",
+  beforeLabel,
+  afterLabel,
 }: DiffViewProps) {
+  const { t } = useI18n();
   const lines = useMemo(() => diffLines(before, after), [before, after]);
   const stats = useMemo(() => diffStats(lines), [lines]);
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-[11px]">
-        <span className="chip-muted">{beforeLabel}</span>
+        <span className="chip-muted">{beforeLabel ?? t("diff.previous")}</span>
         <span className="text-slate-400">→</span>
-        <span className="chip">{afterLabel}</span>
+        <span className="chip">{afterLabel ?? t("diff.next")}</span>
         <span className="ml-auto inline-flex items-center gap-2">
           <span className="rounded-full bg-emerald-500/12 px-2 py-0.5 font-medium text-emerald-600 dark:text-emerald-300">
             +{stats.added}
@@ -36,7 +38,7 @@ export default function DiffView({
       <div className="no-scrollbar max-h-[52vh] overflow-auto rounded-2xl border border-slate-200/70 bg-white/60 py-2 dark:border-white/10 dark:bg-slate-950/40">
         {lines.length === 0 ? (
           <p className="px-4 py-6 text-center text-xs text-slate-400">
-            No differences between the two versions.
+            {t("diff.empty")}
           </p>
         ) : (
           lines.map((line, index) => (

@@ -21,30 +21,25 @@ import ProfileSelect, {
   useWorkProfiles,
 } from "@/components/profiles/ProfileSelect";
 import { useI18n } from "@/i18n/I18nProvider";
+import { genreLabel, policyLabel, roleLabel } from "@/i18n/labels";
 
 const GENRE_VALUES = ["article", "report", "essay", "tutorial", "custom"] as const;
 const CITATION_VALUES = ["required", "optional", "forbidden"] as const;
 const MODE_VALUES = ["strict", "loose"] as const;
 
-function isKnownGenre(value: string): boolean {
-  return (GENRE_VALUES as readonly string[]).includes(value);
-}
-
 export default function PiecesPage() {
   const navigate = useNavigate();
-  const { can, roleName } = useSession();
+  const { can, roleKey, roleName } = useSession();
   const { t } = useI18n();
   const writable = can("write");
 
-  const genreLabel = (value: string) =>
-    isKnownGenre(value) ? t(`piece.genre.${value}`) : value || t("piece.genre.article");
   const genreOptions = GENRE_VALUES.map((value) => ({
     value,
-    label: t(`piece.genre.${value}`),
+    label: genreLabel(t, value),
   }));
   const citationOptions = CITATION_VALUES.map((value) => ({
     value,
-    label: t(`piece.citation.${value}`),
+    label: policyLabel(t, value),
   }));
   const modeOptions = MODE_VALUES.map((value) => ({
     value,
@@ -61,6 +56,7 @@ export default function PiecesPage() {
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");
+  const [brief, setBrief] = useState("");
   const [genre, setGenre] = useState("article");
   const [tone, setTone] = useState("");
   const [audience, setAudience] = useState("");
@@ -98,6 +94,7 @@ export default function PiecesPage() {
     try {
       const created = await api.createPiece({
         title: name,
+        brief: brief.trim(),
         genre,
         tone: tone.trim(),
         audience: audience.trim(),
@@ -121,6 +118,7 @@ export default function PiecesPage() {
   };
 
   function setToneless() {
+    setBrief("");
     setTone("");
     setAudience("");
     setPov("");
@@ -151,7 +149,9 @@ export default function PiecesPage() {
     <div className="space-y-5">
       {!writable ? (
         <div className="rounded-2xl border border-amber-300/50 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-300">
-          {t("piece.readOnlyView", { role: roleName || t("common.readOnly") })}
+          {t("piece.readOnlyView", {
+            role: roleLabel(t, roleKey, roleName) || t("common.readOnly"),
+          })}
         </div>
       ) : null}
 
@@ -234,7 +234,7 @@ export default function PiecesPage() {
               className="glass group flex flex-col rounded-3xl p-5 shadow-glass transition hover:-translate-y-0.5 hover:shadow-xl"
             >
               <div className="flex items-start gap-2">
-                <span className="chip">{genreLabel(item.profile?.genre ?? "article")}</span>
+                <span className="chip">{genreLabel(t, item.profile?.genre ?? "article")}</span>
                 {item.last_mode ? (
                   <span
                     className={clsx(
@@ -342,6 +342,22 @@ export default function PiecesPage() {
                     className="input"
                     placeholder={t("piece.titlePlaceholder")}
                   />
+                </label>
+
+                <label className="block">
+                  <span className="mb-1.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    {t("piece.briefLabel")}
+                  </span>
+                  <textarea
+                    value={brief}
+                    onChange={(event) => setBrief(event.target.value)}
+                    className="input min-h-[7.5rem] resize-y"
+                    rows={5}
+                    placeholder={t("piece.briefPlaceholder")}
+                  />
+                  <span className="mt-1 block text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
+                    {t("piece.briefHint")}
+                  </span>
                 </label>
 
                 <label className="block">

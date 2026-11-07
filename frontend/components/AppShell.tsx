@@ -125,7 +125,7 @@ function SidebarBody({ series, pathname, status, onNavigate }: SidebarProps) {
           : "bg-rose-500";
 
   return (
-    <div className="glass flex h-full min-h-0 flex-col rounded-3xl p-4 shadow-glass">
+    <div className="glass flex h-full min-h-0 flex-col overflow-hidden rounded-3xl p-4 shadow-glass">
       <Link
         to="/"
         onClick={onNavigate}
@@ -144,7 +144,8 @@ function SidebarBody({ series, pathname, status, onNavigate }: SidebarProps) {
         </span>
       </Link>
 
-      <nav className="mt-4 space-y-1">
+      <div className="no-scrollbar mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto pr-1">
+        <nav className="space-y-1 shrink-0">
         {NAV_ITEMS.filter(
           (item) =>
             (!item.requireServer || can("manage_server")) &&
@@ -171,7 +172,7 @@ function SidebarBody({ series, pathname, status, onNavigate }: SidebarProps) {
         })}
       </nav>
 
-      <div className="mt-6 flex items-center justify-between px-2">
+      <div className="mt-5 flex shrink-0 items-center justify-between px-2">
         <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
           {t("nav.mySeries")}
         </span>
@@ -180,7 +181,7 @@ function SidebarBody({ series, pathname, status, onNavigate }: SidebarProps) {
         </span>
       </div>
 
-      <div className="no-scrollbar mt-2 flex-1 space-y-1 overflow-y-auto pr-1">
+      <div className="mt-2 space-y-1">
         {series.length === 0 ? (
           <p className="px-2 py-3 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
             {t("nav.noSeries")}
@@ -227,7 +228,9 @@ function SidebarBody({ series, pathname, status, onNavigate }: SidebarProps) {
         )}
       </div>
 
-      <div className="mt-3 rounded-2xl border border-white/50 bg-white/40 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+      </div>
+
+      <div className="mt-3 shrink-0 rounded-2xl border border-white/50 bg-white/40 p-3 dark:border-white/10 dark:bg-white/[0.04]">
         <div className="flex items-center gap-2.5">
           {avatarUrl ? (
             <img

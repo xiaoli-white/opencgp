@@ -31,7 +31,12 @@ from app.services.errors import (
     PieceSectionNotFoundError,
     VersionConflictError,
 )
-from app.services.prompting import extra_requirement, prompt_values, unit_name
+from app.services.prompting import (
+    citation_taxonomy_lines,
+    extra_requirement,
+    prompt_values,
+    unit_name,
+)
 from app.services.retrieval_providers import RetrievalContext
 
 DEFAULT_SECTIONS = (
@@ -63,7 +68,8 @@ class PieceService:
         vectorstore: VectorStore,
         llm: LLMProvider,
         default_top_k: int = 6,
-        max_evidence: int = 8,
+        max_evidence: int = 0,
+        top_k_ceiling: int = 0,
         evidence_char_limit: int = 400,
         default_mode: str = "loose",
         asset_max_images: int = 0,
@@ -73,7 +79,8 @@ class PieceService:
         self.llm = llm
         self.asset_max_images = max(0, int(asset_max_images or 0))
         self.default_top_k = default_top_k
-        self.max_evidence = max_evidence
+        self.max_evidence = max(0, int(max_evidence or 0))
+        self.top_k_ceiling = max(0, int(top_k_ceiling or 0))
         self.evidence_char_limit = evidence_char_limit
         self.default_mode = GenerationMode.normalize(default_mode).value
 
@@ -89,21 +96,24 @@ class PieceService:
         profile_id: str = "",
         spec: ProfileSpec | None = None,
         retrieval: RetrievalContext | None = None,
+        brief: str = "",
     ) -> Piece:
         resolved_title = (title or "").strip()
         if not resolved_title:
             raise ValueError("title must not be empty")
         resolved_profile = profile or PieceProfile()
         resolved_words = max(200, min(int(target_words or 3000), 50000))
+        resolved_brief = (brief or "").strip()
         provider = llm or self.llm
         outline = await self._build_outline(
-            provider, resolved_title, resolved_profile, resolved_words, spec
+            provider, resolved_title, resolved_profile, resolved_words, spec, resolved_brief
         )
         piece = Piece(
             id=f"piece_{uuid.uuid4().hex[:16]}",
             tenant_id=tenant_id or "",
             user_id=user_id or "",
             title=resolved_title,
+            brief=resolved_brief,
             profile=resolved_profile,
             outline=outline,
             status=STATUS_DRAFT,
@@ -140,6 +150,7 @@ class PieceService:
         profile: Mapping[str, Any] | None = None,
         target_words: int | None = None,
         profile_id: str | None = None,
+        brief: str | None = None,
     ) -> Piece:
         piece = self._require(piece_id)
         merged_profile: PieceProfile | None = None
@@ -153,12 +164,14 @@ class PieceService:
         resolved_words = (
             max(200, min(int(target_words), 50000)) if target_words is not None else None
         )
+        resolved_brief = brief if brief is not None else None
         updated = self.repository.update(
             piece_id,
             title=resolved_title,
             profile=merged_profile.model_dump() if merged_profile else None,
             target_words=resolved_words,
             profile_id=profile_id,
+            brief=resolved_brief,
         )
         if updated is None:
             raise PieceNotFoundError(piece_id)
@@ -549,12 +562,13 @@ class PieceService:
         profile: PieceProfile,
         target_words: int,
         spec: ProfileSpec | None = None,
+        brief: str = "",
     ) -> list[OutlineSection]:
         if getattr(provider, "is_placeholder", False):
             return self._template_outline(target_words, spec)
         try:
             text = await provider.complete(
-                self._outline_prompt(title, profile, target_words, spec)
+                self._outline_prompt(title, profile, target_words, spec, brief)
             )
         except Exception:
             return self._template_outline(target_words, spec)
@@ -617,11 +631,13 @@ class PieceService:
         profile: PieceProfile,
         target_words: int,
         spec: ProfileSpec | None = None,
+        brief: str = "",
     ) -> str:
         unit = unit_name(spec, profile.unit_name or "Section")
         lines = [
             "You are a long-form writing planner and need to produce a section outline for a single-page long-form piece.",
             f"- Title: {title}",
+            f"- Content requirements: {(brief or '').strip() or '(not specified)'}",
             f"- Genre: {profile.genre}; tone: {profile.tone or 'neutral'}; reader: {profile.audience or 'general'}; person: {profile.pov or 'third person'}",
             f"- Target total word count: {target_words}",
         ]
@@ -631,6 +647,14 @@ class PieceService:
                 f"- Number of sections: {bounds[0]}-{bounds[-1]} {unit}s; each {unit} is about "
                 f"{spec.unit.default_words} words"
             )
+        lines.extend(
+            [
+                "",
+                "## Authoring requirements (from the author, not retrieval evidence)",
+                (brief or "").strip() or "(none)",
+                "Use these requirements to decide section topics, emphasis, and coverage. They are not evidence and must never be cited as a source.",
+            ]
+        )
         lines.extend(
             [
                 f"Requirements: 4-7 {unit}s; the first and last must be an introduction and a conclusion.",
@@ -666,7 +690,9 @@ class PieceService:
             for part in (piece.title, section.title, section.summary)
             if part
         ).strip()
-        resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
+        resolved_top_k = max(1, int(top_k or self.default_top_k))
+        if self.top_k_ceiling > 0:
+            resolved_top_k = min(resolved_top_k, self.top_k_ceiling)
         if retrieval is not None:
             citations, _ = await retrieval.search(
                 self.vectorstore,
@@ -680,11 +706,14 @@ class PieceService:
                 top_k=resolved_top_k,
                 tenant_id=tenant_id,
             )
-        citations = citations[: self.max_evidence]
-        evidence = [
-            Evidence(marker=f"E{index}", citation=citation)
-            for index, citation in enumerate(citations, start=1)
-        ]
+        if self.max_evidence > 0:
+            citations = citations[: self.max_evidence]
+        evidence = []
+        for index, citation in enumerate(citations, start=1):
+            citation.marker = f"E{index}"
+            citation.meta["section_id"] = section.id
+            citation.meta["section_title"] = section.title
+            evidence.append(Evidence(marker=citation.marker, citation=citation))
         return citations, evidence
 
     async def _write_section(
@@ -752,14 +781,19 @@ class PieceService:
             f"- Section key points: {section.summary}",
             f"- Reader: {piece.profile.audience or 'general'}; tone: {piece.profile.tone or 'neutral'}",
             f"- Word limit: {min(MAX_SECTION_WORDS, section.target_words or MAX_SECTION_WORDS)} words",
+            f"- Content requirements: {(piece.brief or '').strip() or '(not specified)'}",
+            "",
+            "## Authoring requirements (from the author, not retrieval evidence)",
+            (piece.brief or "").strip() or "(none)",
+            "Use these requirements to decide topic selection, emphasis, and coverage. They are not evidence and must never be cited as a source.",
             "",
             "Hard constraints:",
             "1. Only use content explicitly stated in the evidence below; do not introduce facts or data beyond the evidence.",
-            "2. Every paragraph must carry at least one source marker in the form [E1].",
+            "2. A citation marker is required only for the factual material listed in the semantic citation policy below; it is not required for code walkthroughs, procedural steps, analogies, summaries, exercises, or subjective advice.",
             "3. When the evidence is insufficient, write \"Insufficient material: <gap description>\"; do not fabricate.",
-            "",
-            "Evidence:",
         ]
+        lines.extend(citation_taxonomy_lines(mandatory=True))
+        lines.extend(["", "Evidence:"])
         for item in evidence:
             snippet = (item.citation.snippet or item.citation.text or "")[
                 : self.evidence_char_limit
@@ -805,7 +839,13 @@ class PieceService:
             f"- Section key points: {section.summary}",
             f"- Genre: {piece.profile.genre}; reader: {piece.profile.audience or 'general'}; tone: {piece.profile.tone or 'neutral'}",
             f"- Word limit: {min(MAX_SECTION_WORDS, section.target_words or MAX_SECTION_WORDS)} words",
+            f"- Content requirements: {(piece.brief or '').strip() or '(not specified)'}",
+            "",
+            "## Authoring requirements (from the author, not retrieval evidence)",
+            (piece.brief or "").strip() or "(none)",
+            "Follow these requirements for topic selection, emphasis, and coverage; evidence remains reference material only.",
         ]
+        lines.extend(citation_taxonomy_lines(mandatory=False))
         if evidence:
             lines.append("")
             lines.append("Reference evidence:")
@@ -824,6 +864,7 @@ class PieceService:
         lines = [
             "You are a senior editor. Rewrite the single-page long-form piece below as instructed, preserving the existing facts and structure, and output the complete body.",
             f"- Title: {piece.title}",
+            f"- Content requirements: {(piece.brief or '').strip() or '(not specified)'}",
             f"- Rewrite requirements: {instruction}",
         ]
         extra = extra_requirement(

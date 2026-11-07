@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 from app.models.share_link import RESOURCE_TYPES, ShareLink
+from app.models.citation import CitationReference
 from app.ports.series_repository import SeriesRepository
 from app.ports.piece_repository import PieceRepository
 from app.ports.share_repository import ShareRepository
@@ -111,6 +112,26 @@ class ShareService:
             for unit in units
             if (unit.content or "").strip()
         ]
+        citations: list[dict[str, Any]] = []
+        for unit in units:
+            if int(unit.current_version or 0) <= 0:
+                continue
+            version = self.series_repository.get_version(
+                unit.id, int(unit.current_version)
+            )
+            if version is None:
+                continue
+            for index, item in enumerate(version.citations, start=1):
+                citations.append(
+                    CitationReference.from_citation(
+                        item,
+                        marker=item.marker or f"E{index}",
+                        unit_id=unit.id,
+                        unit_title=unit.title,
+                        section_id=str(item.meta.get("section_id") or ""),
+                        section_title=str(item.meta.get("section_title") or ""),
+                    ).model_dump()
+                )
         return {
             "resource_type": "series",
             "title": series.title,
@@ -118,7 +139,7 @@ class ShareService:
             "author": "",
             "created_at": series.created_at,
             "chapters": chapters,
-            "citations": [],
+            "citations": citations,
         }
 
     def _piece_content(self, link: ShareLink) -> dict[str, Any]:
@@ -131,8 +152,15 @@ class ShareService:
             if (section.content or "").strip()
         ]
         citations = [
-            {"source_name": item.source_name, "chunk_index": item.chunk_index}
-            for item in piece.citations
+            CitationReference.from_citation(
+                item,
+                marker=item.marker or f"E{index}",
+                unit_id=piece.id,
+                unit_title=piece.title,
+                section_id=str(item.meta.get("section_id") or ""),
+                section_title=str(item.meta.get("section_title") or ""),
+            ).model_dump()
+            for index, item in enumerate(piece.citations, start=1)
         ]
         return {
             "resource_type": "piece",

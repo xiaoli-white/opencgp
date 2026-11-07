@@ -4,10 +4,18 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import clsx from "clsx";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, FileText, MessageSquareQuote } from "lucide-react";
+import { AlertTriangle, ChevronRight, FileText, MessageSquareQuote } from "lucide-react";
 import type { Citation, Evidence, GenerationMode } from "@/lib/api";
 import { splitLooseNotice } from "@/lib/format";
+import { mediaSrc } from "@/lib/media";
 import MermaidDiagram from "@/components/reader/MermaidDiagram";
+import {
+  CitationEvidencePanel,
+  CitationNavProvider,
+  useCitationNav,
+  useCitationText,
+  type CitationEntry,
+} from "@/components/reader/CitationPanel";
 import { useI18n } from "@/i18n/I18nProvider";
 
 type MarkdownReaderProps = {
@@ -30,30 +38,50 @@ type SelectionAnchor = {
 
 const MARKER_PATTERN = /^\[E(\d+)\]$/;
 
-function CiteMark({ marker, source }: { marker: string; source?: Citation }) {
-  const { t } = useI18n();
+function CiteMark({
+  marker,
+  source,
+  anchorId,
+}: {
+  marker: string;
+  source?: Citation;
+  anchorId: string;
+}) {
+  const tr = useCitationText();
+  const nav = useCitationNav();
   if (!source) {
     return <span className="text-slate-400">[{marker}]</span>;
   }
+  const active = nav?.activeMarker === marker;
   return (
-    <span className="group relative inline-block align-super">
-      <span className="cite-mark">{marker.replace("E", "")}</span>
-      <span className="pointer-events-none absolute bottom-full left-1/2 z-40 mb-2 hidden w-72 -translate-x-1/2 rounded-2xl border border-white/60 bg-white/95 p-3 text-left font-sans text-[11px] font-normal not-italic leading-relaxed text-slate-600 shadow-xl backdrop-blur-xl group-hover:block dark:border-white/15 dark:bg-slate-900/95 dark:text-slate-300">
-        <span className="mb-1 flex items-center gap-1 font-semibold text-indigo-600 dark:text-indigo-300">
-          <FileText size={11} />
-          {source.source_name || t("reader.citeSource")}
-        </span>
-        <span className="block max-h-32 overflow-hidden">
-          {source.snippet || source.text}
-        </span>
-        <span className="mt-1.5 block text-[10px] text-slate-400 dark:text-slate-500">
-          {t("reader.citeScore", {
-            score: source.score.toFixed(2),
-            index: source.chunk_index,
-          })}
-        </span>
+    <button
+      id={anchorId}
+      type="button"
+      data-citation-marker={marker}
+      data-reader-ask-ignore
+      aria-haspopup="dialog"
+      aria-expanded={active}
+      aria-label={`${tr("citation.panelTitle")} [${marker}]`}
+      title={source.source_name || undefined}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        window.getSelection()?.removeAllRanges();
+        nav?.openAt(marker, event.currentTarget);
+      }}
+      className="group relative inline-block border-0 bg-transparent p-0 align-super font-sans leading-none focus:outline-none"
+    >
+      <span
+        className={clsx(
+          "cite-mark !cursor-pointer transition-[background-color,color,box-shadow] group-focus-visible:ring-2 group-focus-visible:ring-indigo-500 group-focus-visible:ring-offset-2 dark:group-focus-visible:ring-offset-slate-950",
+          active &&
+            "!border-indigo-600 !bg-indigo-600 !text-white shadow-[0_0_0_3px_rgba(99,102,241,0.24)]",
+        )}
+      >
+        {marker.replace("E", "")}
       </span>
-    </span>
+    </button>
   );
 }
 
@@ -61,6 +89,7 @@ function decorate(
   node: React.ReactNode,
   lookup: Map<string, Citation>,
   showCitations: boolean,
+  occurrences: Map<string, number>,
 ): React.ReactNode {
   if (typeof node === "string") {
     const parts = node.split(/(\[E\d+\])/g);
@@ -70,13 +99,87 @@ function decorate(
       if (!match) return part;
       if (!showCitations) return null;
       const marker = `E${match[1]}`;
-      return <CiteMark key={`${marker}-${index}`} marker={marker} source={lookup.get(marker)} />;
+      const occurrence = (occurrences.get(marker) ?? 0) + 1;
+      occurrences.set(marker, occurrence);
+      const anchorId =
+        occurrence === 1 ? `cite-${marker}` : `cite-${marker}-${occurrence}`;
+      return (
+        <CiteMark
+          key={`${marker}-${index}`}
+          marker={marker}
+          source={lookup.get(marker)}
+          anchorId={anchorId}
+        />
+      );
     });
   }
   if (Array.isArray(node)) {
-    return node.map((child) => decorate(child, lookup, showCitations));
+    return node.map((child) => decorate(child, lookup, showCitations, occurrences));
   }
   return node;
+}
+
+function CitationSources({
+  entries,
+  activeMarker,
+  onJump,
+}: {
+  entries: CitationEntry[];
+  activeMarker: string | null;
+  onJump: (marker: string) => void;
+}) {
+  const tr = useCitationText();
+  return (
+    <details className="group mt-10 rounded-2xl border border-slate-200/70 bg-white/40 font-sans shadow-[0_18px_40px_-36px_rgba(15,23,42,0.45)] dark:border-white/10 dark:bg-white/[0.03]">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 text-[11.5px] font-medium text-slate-600 transition hover:text-indigo-600 dark:text-slate-300 dark:hover:text-indigo-200 [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          size={13}
+          className="shrink-0 text-slate-400 transition-transform group-open:rotate-90"
+        />
+        <FileText size={12} className="shrink-0 text-indigo-500 dark:text-indigo-300" />
+        <span>{tr("citation.sourcesTitle")}</span>
+        <span className="chip-muted ml-auto tabular-nums">{entries.length}</span>
+      </summary>
+      <ol className="space-y-1 border-t border-slate-200/70 px-2.5 py-2.5 dark:border-white/10">
+        {entries.map(({ marker, citation }) => {
+          const active = marker === activeMarker;
+          return (
+            <li key={marker}>
+              <a
+                href={`#cite-${marker}`}
+                aria-current={active ? "true" : undefined}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onJump(marker);
+                }}
+                className={clsx(
+                  "flex items-center gap-2 rounded-xl px-2 py-1.5 text-[11px] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500",
+                  active
+                    ? "bg-indigo-500/10 text-indigo-700 dark:bg-indigo-400/10 dark:text-indigo-200"
+                    : "text-slate-600 hover:bg-indigo-500/[0.07] hover:text-indigo-600 dark:text-slate-300 dark:hover:bg-indigo-400/10 dark:hover:text-indigo-200",
+                )}
+              >
+                <span
+                  className={clsx(
+                    "cite-mark shrink-0",
+                    active && "!border-indigo-600 !bg-indigo-600 !text-white",
+                  )}
+                >
+                  {marker.replace(/^E/, "")}
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                  {citation.source_name || "—"}
+                </span>
+                <span className="shrink-0 font-mono text-[10px] tabular-nums text-slate-400 dark:text-slate-500">
+                  #{citation.chunk_index}
+                </span>
+              </a>
+            </li>
+          );
+        })}
+      </ol>
+    </details>
+  );
 }
 
 export default function MarkdownReader({
@@ -91,8 +194,14 @@ export default function MarkdownReader({
   showCitations = true,
 }: MarkdownReaderProps) {
   const { t } = useI18n();
+  const tr = useCitationText();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [anchor, setAnchor] = useState<SelectionAnchor | null>(null);
+  const [activeMarker, setActiveMarker] = useState<string | null>(null);
+  const originRef = useRef<{ anchorId: string; scrollY: number } | null>(null);
+  const restoreRef = useRef<{ anchorId: string; scrollY: number } | null>(null);
+  const occurrencesRef = useRef(new Map<string, number>());
+  occurrencesRef.current = new Map();
   const askEnabled = enableAsk && Boolean(onAskSelection);
 
   const dismiss = useCallback(() => setAnchor(null), []);
@@ -100,6 +209,108 @@ export default function MarkdownReader({
   useEffect(() => {
     dismiss();
   }, [content, dismiss]);
+
+  const entries = useMemo<CitationEntry[]>(() => {
+    const map = new Map<string, Citation>();
+    citations.forEach((citation, index) => {
+      map.set(`E${index + 1}`, citation);
+    });
+    evidence?.forEach((item) => {
+      map.set(item.marker, item.citation);
+    });
+    return Array.from(map, ([marker, citation]) => ({ marker, citation })).sort(
+      (a, b) => Number(a.marker.slice(1)) - Number(b.marker.slice(1)),
+    );
+  }, [citations, evidence]);
+
+  const lookup = useMemo(
+    () => new Map(entries.map((entry) => [entry.marker, entry.citation])),
+    [entries],
+  );
+
+  const openAt = useCallback(
+    (marker: string, element: HTMLElement | null) => {
+      if (!activeMarker) {
+        originRef.current = {
+          anchorId: element?.id || `cite-${marker}`,
+          scrollY: window.scrollY,
+        };
+      }
+      dismiss();
+      setActiveMarker(marker);
+    },
+    [activeMarker, dismiss],
+  );
+
+  const closePanel = useCallback(() => {
+    if (originRef.current) restoreRef.current = originRef.current;
+    originRef.current = null;
+    setActiveMarker(null);
+  }, []);
+
+  useEffect(() => {
+    if (activeMarker !== null) return;
+    const origin = restoreRef.current;
+    if (!origin) return;
+    restoreRef.current = null;
+    // Wait one beat so ReactMarkdown has committed the re-rendered markers
+    // after the panel unmounts; focusing an about-to-be-replaced node would
+    // otherwise leave focus on <body>.
+    const timer = window.setTimeout(() => {
+      const target = document.getElementById(origin.anchorId);
+      target?.focus({ preventScroll: true });
+      window.scrollTo(0, origin.scrollY);
+    }, 160);
+    return () => window.clearTimeout(timer);
+  }, [activeMarker]);
+
+  useEffect(() => {
+    if (!activeMarker) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [activeMarker]);
+
+  useEffect(() => {
+    if (!activeMarker) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        // Reader mode binds Escape to "leave reader" on window; stop it here
+        // before the page-level shortcut can navigate away from the article.
+        event.stopImmediatePropagation();
+        closePanel();
+        return;
+      }
+      const index = entries.findIndex((entry) => entry.marker === activeMarker);
+      if (event.key === "ArrowLeft" && index > 0) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setActiveMarker(entries[index - 1].marker);
+      } else if (
+        event.key === "ArrowRight" &&
+        index >= 0 &&
+        index < entries.length - 1
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setActiveMarker(entries[index + 1].marker);
+      } else if (event.key === "f" || event.key === "t") {
+        event.stopImmediatePropagation();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [activeMarker, entries, closePanel]);
+
+  const jumpToMarker = useCallback((marker: string) => {
+    const target = document.getElementById(`cite-${marker}`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => target.focus({ preventScroll: true }), 280);
+  }, []);
 
   useEffect(() => {
     if (!askEnabled) return;
@@ -174,18 +385,6 @@ export default function MarkdownReader({
     };
   }, [askEnabled, onAskSelection, dismiss]);
 
-  const lookup = useMemo(() => {
-    const map = new Map<string, Citation>();
-    evidence?.forEach((item) => {
-      map.set(item.marker, item.citation);
-    });
-    citations.forEach((citation, index) => {
-      const marker = `E${index + 1}`;
-      if (!map.has(marker)) map.set(marker, citation);
-    });
-    return map;
-  }, [citations, evidence]);
-
   const { body, notice } = useMemo(
     () =>
       variant === "reader"
@@ -199,19 +398,56 @@ export default function MarkdownReader({
   const components = useMemo<Components>(
     () => ({
       p({ children }) {
-        return <p>{decorate(children, lookup, showCitations)}</p>;
+        return (
+          <p>{decorate(children, lookup, showCitations, occurrencesRef.current)}</p>
+        );
+      },
+      h1({ children }) {
+        return (
+          <h1>{decorate(children, lookup, showCitations, occurrencesRef.current)}</h1>
+        );
+      },
+      h2({ children }) {
+        return (
+          <h2>{decorate(children, lookup, showCitations, occurrencesRef.current)}</h2>
+        );
+      },
+      h3({ children }) {
+        return (
+          <h3>{decorate(children, lookup, showCitations, occurrencesRef.current)}</h3>
+        );
+      },
+      h4({ children }) {
+        return (
+          <h4>{decorate(children, lookup, showCitations, occurrencesRef.current)}</h4>
+        );
       },
       li({ children }) {
-        return <li>{decorate(children, lookup, showCitations)}</li>;
+        return (
+          <li>{decorate(children, lookup, showCitations, occurrencesRef.current)}</li>
+        );
       },
       td({ children }) {
-        return <td>{decorate(children, lookup, showCitations)}</td>;
+        return (
+          <td>{decorate(children, lookup, showCitations, occurrencesRef.current)}</td>
+        );
       },
       a({ href, children }) {
         return (
           <a href={href} target="_blank" rel="noreferrer">
             {children}
           </a>
+        );
+      },
+      img({ src, alt, title }) {
+        return (
+          <img
+            src={mediaSrc(src ?? "")}
+            alt={alt ?? ""}
+            title={title}
+            loading="lazy"
+            className="mx-auto my-4 h-auto max-w-full rounded-2xl border border-slate-200/70 shadow-sm dark:border-white/10"
+          />
         );
       },
       pre({ children }) {
@@ -276,13 +512,34 @@ export default function MarkdownReader({
           </span>
         </motion.div>
       ) : null}
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
-        components={components}
-      >
-        {body}
-      </ReactMarkdown>
+      <CitationNavProvider activeMarker={activeMarker} openAt={openAt}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
+          components={components}
+        >
+          {body}
+        </ReactMarkdown>
+      </CitationNavProvider>
+      {variant === "reader" && showCitations ? (
+        entries.length > 0 ? (
+          <CitationSources
+            entries={entries}
+            activeMarker={activeMarker}
+            onJump={jumpToMarker}
+          />
+        ) : (
+          <p className="mt-8 font-sans text-[11px] text-slate-400 dark:text-slate-500">
+            {tr("citation.noCitations")}
+          </p>
+        )
+      ) : null}
+      <CitationEvidencePanel
+        entries={entries}
+        activeMarker={activeMarker}
+        onSelect={setActiveMarker}
+        onClose={closePanel}
+      />
       {askEnabled ? (
         <AnimatePresence>
           {anchor ? (

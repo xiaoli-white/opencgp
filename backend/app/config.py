@@ -158,7 +158,7 @@ class VectorStoreConfig:
     vector_weight: float = 0.55
     fusion: str = "rrf"
     rrf_k: int = 60
-    max_per_source: int = 3
+    max_per_source: int = 0
     max_vector_rows: int = 200000
     lsh_bits: int = 12
 
@@ -173,7 +173,7 @@ class VectorStoreConfig:
             vector_weight=float(_env("HYBRID_VECTOR_WEIGHT", "0.55") or 0.55),
             fusion=_env("HYBRID_FUSION", "rrf"),
             rrf_k=int(_env("HYBRID_RRF_K", "60") or 60),
-            max_per_source=int(_env("HYBRID_MAX_PER_SOURCE", "3") or 3),
+            max_per_source=max(0, int(_env("HYBRID_MAX_PER_SOURCE", "0") or 0)),
             max_vector_rows=int(_env("HYBRID_MAX_VECTOR_ROWS", "200000") or 200000),
             lsh_bits=max(1, min(32, int(_env("HYBRID_LSH_BITS", "12") or 12))),
         )
@@ -242,11 +242,11 @@ class EmbeddingConfig:
 @dataclass
 class RerankConfig:
     backend: str = "none"
-    top_n: int = 12
+    top_n: int = 0
     weight: float = 0.5
     timeout: float = 20.0
     retries: int = 2
-    batch: int = 100
+    batch: int = 512
     chars: int = 2000
     normalize: str = "auto"
     raw_scores: bool = False
@@ -258,11 +258,11 @@ class RerankConfig:
     def from_env(cls) -> "RerankConfig":
         return cls(
             backend=(_env("RERANK_BACKEND", "none") or "none").strip().lower(),
-            top_n=max(1, int(_env("RERANK_TOP_N", "12") or 12)),
+            top_n=max(0, int(_env("RERANK_TOP_N", "0") or 0)),
             weight=float(_env("RERANK_WEIGHT", "0.5") or 0.5),
             timeout=float(_env("RERANK_TIMEOUT", "20") or 20),
             retries=max(0, int(_env("RERANK_RETRIES", "2") or 2)),
-            batch=max(1, int(_env("RERANK_BATCH", "100") or 100)),
+            batch=max(1, int(_env("RERANK_BATCH", "512") or 512)),
             chars=max(80, int(_env("RERANK_CHARS", "2000") or 2000)),
             normalize=(_env("RERANK_NORMALIZE", "auto") or "auto").strip().lower(),
             raw_scores=(_env("RERANK_RAW_SCORES", "false") or "false").strip().lower()
@@ -291,18 +291,31 @@ class IngestConfig:
 @dataclass
 class GenerationConfig:
     top_k: int = 8
+    top_k_ceiling: int = 0
     evidence_char_limit: int = 600
-    max_evidence: int = 8
+    max_evidence: int = 0
+    citation_gap_action: str = "report"
     default_mode: str = "strict"
     assets_auto_images: bool = True
     assets_max_images: int = 3
 
     @classmethod
     def from_env(cls) -> "GenerationConfig":
+        gap_action = (
+            _env("GENERATION_CITATION_GAP_ACTION", "report") or "report"
+        ).strip().lower()
+        if gap_action not in ("report", "attach", "off"):
+            gap_action = "report"
         return cls(
             top_k=int(_env("GENERATION_TOP_K", "8") or 8),
+            top_k_ceiling=max(
+                0, int(_env("GENERATION_TOP_K_CEILING", "0") or 0)
+            ),
             evidence_char_limit=int(_env("GENERATION_EVIDENCE_CHAR_LIMIT", "600") or 600),
-            max_evidence=int(_env("GENERATION_MAX_EVIDENCE", "8") or 8),
+            max_evidence=max(
+                0, int(_env("GENERATION_MAX_EVIDENCE", "0") or 0)
+            ),
+            citation_gap_action=gap_action,
             default_mode=_env("GENERATION_DEFAULT_MODE", "strict"),
             assets_auto_images=(_env("ASSETS_AUTO_IMAGES", "true") or "true").strip().lower()
             in ("1", "true", "yes", "on"),

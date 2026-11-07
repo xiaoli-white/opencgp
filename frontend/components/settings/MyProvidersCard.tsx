@@ -20,6 +20,7 @@ import clsx from "clsx";
 import { api, type ServerProviderPayload, type UserProvider } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
+import { providerKindLabel } from "@/i18n/labels";
 import SharePanel, { type ShareMember } from "@/components/sharing/SharePanel";
 
 type Props = {
@@ -362,14 +363,14 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
               >
                 {KINDS.map((item) => (
                   <option key={item.value} value={item.value}>
-                    {item.label}
+                    {providerKindLabel(t, item.value)}
                   </option>
                 ))}
               </select>
             </label>
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-[10.5px] text-slate-500 dark:text-slate-400">
-                base_url
+                {t("myProviders.baseUrl")}
               </span>
               <input
                 value={form.base_url}
@@ -481,7 +482,7 @@ export default function MyProvidersCard({ canWrite, onNotice, onError }: Props) 
                     {item.name}
                   </span>
                   <span className="rounded-full bg-slate-500/10 px-1.5 py-0.5 text-[9.5px] text-slate-500 dark:text-slate-400">
-                    {item.kind}
+                    {providerKindLabel(t, item.kind)}
                   </span>
                   {item.is_default ? (
                     <span className="flex items-center gap-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-1.5 py-0.5 text-[9.5px] font-medium text-white">

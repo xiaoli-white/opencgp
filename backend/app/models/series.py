@@ -1,14 +1,19 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
-from app.models.citation import Citation
+from app.models.citation import (
+    Citation,
+    CitationReference,
+    build_citation_references,
+)
 
 
 class Series(BaseModel):
     id: str
     title: str
     subtitle: str = ""
+    brief: str = ""
     audience: str = ""
     difficulty: str = "intermediate"
     language: str = "zh"
@@ -42,3 +47,8 @@ class UnitVersion(BaseModel):
     mode: str = ""
     note: str = ""
     created_at: float
+
+    @computed_field
+    @property
+    def citation_references(self) -> list[CitationReference]:
+        return build_citation_references(self.citations, unit_id=self.unit_id)

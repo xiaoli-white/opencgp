@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, ArrowRight, Loader2, RefreshCw, X } from "lucide-react";
+import { useI18n } from "@/i18n/I18nProvider";
 
 export type VersionConflict = {
   expectedVersion: number;
@@ -23,6 +24,7 @@ export default function ConflictDialog({
   onRetry,
   onClose,
 }: ConflictDialogProps) {
+  const { t } = useI18n();
   return (
     <AnimatePresence>
       {conflict ? (
@@ -50,7 +52,7 @@ export default function ConflictDialog({
               onClick={onClose}
               disabled={busy}
               className="absolute right-4 top-4 grid h-7 w-7 place-items-center rounded-full text-slate-400 transition hover:bg-slate-500/10 hover:text-slate-600 disabled:opacity-40 dark:hover:text-slate-200"
-              aria-label="Close"
+              aria-label={t("common.close")}
             >
               <X size={14} />
             </button>
@@ -60,24 +62,24 @@ export default function ConflictDialog({
               </span>
               <div className="min-w-0">
                 <h3 className="text-base font-semibold text-slate-900 dark:text-white">
-                  Content was updated by someone else
+                  {t("conflict.title")}
                 </h3>
                 <p className="mt-1 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
-                  The baseline version of {conflict.label} is out of date. To avoid overwriting someone else's changes, choose how to proceed.
+                  {t("conflict.desc", { label: conflict.label })}
                 </p>
               </div>
             </div>
 
             <div className="mt-4 flex items-center justify-center gap-3 rounded-2xl border border-slate-200/70 bg-white/50 px-4 py-3 text-[12px] dark:border-white/10 dark:bg-white/[0.04]">
               <span className="text-slate-500 dark:text-slate-400">
-                Your baseline{" "}
+                {t("conflict.yourBaseline")}{" "}
                 <span className="font-semibold text-slate-700 tabular-nums dark:text-slate-200">
                   v{conflict.expectedVersion}
                 </span>
               </span>
               <ArrowRight size={13} className="text-slate-300 dark:text-slate-600" />
               <span className="text-slate-500 dark:text-slate-400">
-                Current{" "}
+                {t("conflict.current")}{" "}
                 <span className="font-semibold text-indigo-600 tabular-nums dark:text-indigo-300">
                   v{conflict.currentVersion}
                 </span>
@@ -92,7 +94,7 @@ export default function ConflictDialog({
                 className="btn btn-ghost"
               >
                 <RefreshCw size={13} />
-                Load latest version
+                {t("conflict.loadLatest")}
               </button>
               <button
                 type="button"
@@ -105,7 +107,7 @@ export default function ConflictDialog({
                 ) : (
                   <ArrowRight size={13} />
                 )}
-                Retry on latest version
+                {t("conflict.retryLatest")}
               </button>
             </div>
           </motion.div>

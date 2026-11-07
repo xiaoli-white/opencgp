@@ -4,6 +4,7 @@ import { Loader2, Trash2, UserPlus, Users } from "lucide-react";
 import { api, type Member, type RoleRecord } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
+import { roleLabel } from "@/i18n/labels";
 
 export default function MembersCard({
   onNotice,
@@ -50,8 +51,12 @@ export default function MembersCard({
   }, [load]);
 
   const roleOptions = useMemo(
-    () => roles.map((item) => ({ value: item.key, label: item.name })),
-    [roles],
+    () =>
+      roles.map((item) => ({
+        value: item.key,
+        label: roleLabel(t, item.key, item.name),
+      })),
+    [roles, t],
   );
 
   const addMember = async () => {

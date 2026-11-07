@@ -35,6 +35,18 @@ SCHEMA: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_jobs_tenant ON jobs(tenant_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)",
+    """
+    CREATE TABLE IF NOT EXISTS unit_generation_claims (
+        unit_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT '',
+        job_id TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'queued',
+        created_at REAL NOT NULL DEFAULT 0,
+        updated_at REAL NOT NULL DEFAULT 0
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_unit_generation_claims_job"
+    " ON unit_generation_claims(job_id)",
 )
 
 MIGRATIONS: tuple[tuple[str, str, str], ...] = (
@@ -235,6 +247,103 @@ class DatabaseJobRepository:
             return False
         self.database.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
         return True
+
+    # -- per-unit generation claims ----------------------------------------
+    #
+    # A unit may have at most one active unit_generate job.  The unique
+    # primary key on unit_id is the cross-process lock; the conditional
+    # UPDATE in try_claim_generation is the atomic takeover path for an
+    # expired or orphaned claim.
+
+    def get_generation_claim(self, unit_id: str) -> dict[str, Any] | None:
+        self.ensure_schema()
+        row = self.database.fetchone(
+            "SELECT * FROM unit_generation_claims WHERE unit_id = ?", (unit_id,)
+        )
+        return dict(row) if row is not None else None
+
+    def try_claim_generation(
+        self, unit_id: str, tenant_id: str, job_id: str, stale_before: float
+    ) -> tuple[bool, str]:
+        """Atomically claim a unit for one generation job.
+
+        Returns ``(claimed, job_id)``.  When ``claimed`` is false the returned
+        job id belongs to the job that already owns the unit.
+        """
+        self.ensure_schema()
+        now = time.time()
+        row = self.get_generation_claim(unit_id)
+        if row is None:
+            self.database.execute(
+                "INSERT INTO unit_generation_claims (unit_id, tenant_id, job_id,"
+                " state, created_at, updated_at) VALUES (?, ?, ?, 'queued', ?, ?)"
+                " ON CONFLICT(unit_id) DO NOTHING",
+                (unit_id, tenant_id or "", job_id, now, now),
+            )
+            row = self.get_generation_claim(unit_id)
+            if row is None:
+                return False, ""
+            return str(row["job_id"]) == job_id, str(row["job_id"] or "")
+
+        existing_job_id = str(row["job_id"] or "")
+        if existing_job_id == job_id:
+            return True, job_id
+        existing_job = self.get(existing_job_id) if existing_job_id else None
+        updated_at = float(row["updated_at"] or 0.0)
+        if existing_job is None:
+            # A claim without a job is normally a crash between INSERT and
+            # job creation.  Give that window a short grace period.
+            if now - updated_at < 30.0:
+                return False, existing_job_id
+        elif existing_job.status in (STATUS_QUEUED, STATUS_RUNNING):
+            if updated_at >= stale_before:
+                return False, existing_job_id
+
+        # Row-level conditional takeover: only replace the exact row we read.
+        self.database.execute(
+            "UPDATE unit_generation_claims SET tenant_id = ?, job_id = ?,"
+            " state = 'queued', created_at = ?, updated_at = ?"
+            " WHERE unit_id = ? AND job_id = ? AND updated_at = ?",
+            (
+                tenant_id or "",
+                job_id,
+                now,
+                now,
+                unit_id,
+                existing_job_id,
+                updated_at,
+            ),
+        )
+        row = self.get_generation_claim(unit_id)
+        if row is None:
+            return False, ""
+        return str(row["job_id"]) == job_id, str(row["job_id"] or "")
+
+    def mark_generation_state(
+        self, unit_id: str, job_id: str, state: str
+    ) -> bool:
+        self.ensure_schema()
+        self.database.execute(
+            "UPDATE unit_generation_claims SET state = ?, updated_at = ?"
+            " WHERE unit_id = ? AND job_id = ?",
+            (state, time.time(), unit_id, job_id),
+        )
+        row = self.get_generation_claim(unit_id)
+        return bool(row is not None and str(row["job_id"] or "") == job_id)
+
+    def finish_generation(self, unit_id: str, job_id: str, state: str) -> None:
+        self.ensure_schema()
+        self.database.execute(
+            "UPDATE unit_generation_claims SET state = ?, updated_at = ?"
+            " WHERE unit_id = ? AND job_id = ?",
+            (state or "finished", time.time(), unit_id, job_id),
+        )
+
+    def clear_generation_claim(self, unit_id: str) -> None:
+        self.ensure_schema()
+        self.database.execute(
+            "DELETE FROM unit_generation_claims WHERE unit_id = ?", (unit_id,)
+        )
 
 
 def _job_from_row(row: Mapping[str, Any]) -> Job:

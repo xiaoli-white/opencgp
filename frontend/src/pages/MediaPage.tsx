@@ -24,6 +24,7 @@ import { useSession } from "@/components/auth/SessionProvider";
 import { ConfirmDialog, Modal } from "@/components/common/Dialogs";
 import ImageInsertDialog from "@/components/media/ImageInsertDialog";
 import { useI18n } from "@/i18n/I18nProvider";
+import { mediaKindLabel } from "@/i18n/labels";
 
 const SIZES = ["512x512", "1024x1024", "1024x1536"];
 
@@ -303,9 +304,7 @@ export default function MediaPage() {
                         : "bg-slate-500/10 text-slate-600 dark:text-slate-300",
                     )}
                   >
-                    {asset.kind === "generated" || asset.kind === "generate"
-                      ? t("media.kindGenerated")
-                      : t("media.kindUpload")}
+                    {mediaKindLabel(t, asset.kind)}
                   </span>
                   <span className="text-[10px] text-slate-400 dark:text-slate-500">
                     {asset.width}×{asset.height} · {formatBytes(asset.bytes)}

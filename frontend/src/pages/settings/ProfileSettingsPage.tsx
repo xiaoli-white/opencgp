@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { AlertCircle, ArrowRight, IdCard, Server, X } from "lucide-react";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
+import { roleLabel } from "@/i18n/labels";
 import AccountCard from "@/components/settings/AccountCard";
 import ProviderCard from "@/components/settings/ProviderCard";
 import MyProvidersCard from "@/components/settings/MyProvidersCard";
@@ -17,7 +18,7 @@ import QuotaCard from "@/components/settings/QuotaCard";
 import QuotaTrendCard from "@/components/settings/QuotaTrendCard";
 
 export default function ProfileSettingsPage() {
-  const { can, roleName } = useSession();
+  const { can, roleKey, roleName } = useSession();
   const { t } = useI18n();
   const canServer = can("manage_server");
   const canWrite = can("write");
@@ -45,7 +46,9 @@ export default function ProfileSettingsPage() {
 
       {!canWrite ? (
         <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-2.5 text-[11px] text-amber-700 dark:text-amber-300">
-          {t("settings.readOnlyAs", { role: roleName || t("common.readOnly") })}
+          {t("settings.readOnlyAs", {
+            role: roleLabel(t, roleKey, roleName) || t("common.readOnly"),
+          })}
         </div>
       ) : null}
 

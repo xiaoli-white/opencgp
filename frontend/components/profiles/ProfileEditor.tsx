@@ -26,6 +26,14 @@ import {
 } from "@/lib/api";
 import { Modal } from "@/components/common/Dialogs";
 import { useI18n } from "@/i18n/I18nProvider";
+import {
+  policyLabel,
+  povLabel,
+  profileNameLabel,
+  strictnessLabel,
+  tenseLabel,
+  validatorLabel,
+} from "@/i18n/labels";
 
 const VALIDATORS = ["citation", "length", "structure", "continuity"];
 const PROMPT_FIELDS = ["system", "outline", "unit", "revise"] as const;
@@ -109,6 +117,38 @@ function splitList(value: string): string[] {
 function toInt(value: string, fallback: number): number {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+/**
+ * Number inputs that survive being emptied.
+ *
+ * Parsing on every keystroke with a hard-coded fallback makes a field snap back
+ * to that fallback the moment the user selects everything and deletes it, so the
+ * value can never be retyped. This keeps a draft string while editing, commits
+ * only parseable numbers, and restores the last valid value on blur.
+ */
+function useNumberDraft(value: number, commit: (next: number) => void) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const lastValid = useRef(value);
+  useEffect(() => {
+    lastValid.current = value;
+  }, [value]);
+  return {
+    value: draft ?? String(value),
+    onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
+      const raw = event.target.value;
+      setDraft(raw);
+      const parsed = Number.parseInt(raw, 10);
+      if (raw.trim() !== "" && Number.isFinite(parsed)) {
+        lastValid.current = parsed;
+        commit(parsed);
+      }
+    },
+    onBlur: () => {
+      if (draft !== null && draft.trim() === "") commit(lastValid.current);
+      setDraft(null);
+    },
+  };
 }
 
 function toBool(value: unknown, fallback: boolean): boolean {
@@ -453,7 +493,7 @@ function SamplePanel({
                     data-sample-chip={item.name}
                     data-verdict={verdict}
                   >
-                    <span className="font-mono">{item.name}</span>
+                    <span>{validatorLabel(t, item.name)}</span>
                     <span>{symbol}</span>
                   </button>
                   {active ? (
@@ -567,7 +607,7 @@ export default function ProfileEditor({
     setSampleOpen(false);
     setSample(null);
     setSampleError("");
-    setSampleTopic(profile?.name ?? "");
+    setSampleTopic(profile ? profileNameLabel(t, profile) : "");
   }, [open, profileKey, defaultScope]);
 
   const spec = useMemo(() => buildSpec(form), [form]);
@@ -614,6 +654,22 @@ export default function ProfileEditor({
 
   const errorsFor = (path: string) =>
     errors.filter((item) => item.path === path).map((item) => item.message);
+
+  const minUnitsField = useNumberDraft(form.minUnits, (next) => update("minUnits", next));
+  const maxUnitsField = useNumberDraft(form.maxUnits, (next) => update("maxUnits", next));
+  const defaultWordsField = useNumberDraft(form.defaultWords, (next) =>
+    update("defaultWords", next),
+  );
+  const depthField = useNumberDraft(form.depth, (next) => update("depth", next));
+  const sectionsMinField = useNumberDraft(form.sectionsMin, (next) =>
+    update("sectionsMin", next),
+  );
+  const sectionsMaxField = useNumberDraft(form.sectionsMax, (next) =>
+    update("sectionsMax", next),
+  );
+  const minEvidenceField = useNumberDraft(form.minEvidence, (next) =>
+    update("minEvidence", next),
+  );
 
   const fieldClass = (path: string, base = "input mt-1") =>
     clsx(base, errorsFor(path).length > 0 && "border-rose-400 ring-1 ring-rose-300/60");
@@ -904,8 +960,7 @@ export default function ProfileEditor({
                           type="number"
                           min={1}
                           max={200}
-                          value={form.minUnits}
-                          onChange={(event) => update("minUnits", toInt(event.target.value, 1))}
+                          {...minUnitsField}
                           className={fieldClass("unit.min_units")}
                         />
                         {errorText("unit.min_units")}
@@ -916,8 +971,7 @@ export default function ProfileEditor({
                           type="number"
                           min={1}
                           max={200}
-                          value={form.maxUnits}
-                          onChange={(event) => update("maxUnits", toInt(event.target.value, 60))}
+                          {...maxUnitsField}
                           className={fieldClass("unit.max_units")}
                         />
                         {errorText("unit.max_units")}
@@ -929,10 +983,7 @@ export default function ProfileEditor({
                           min={100}
                           max={20000}
                           step={100}
-                          value={form.defaultWords}
-                          onChange={(event) =>
-                            update("defaultWords", toInt(event.target.value, 900))
-                          }
+                          {...defaultWordsField}
                           className={fieldClass("unit.default_words")}
                           data-field="unit.default_words"
                         />
@@ -949,8 +1000,7 @@ export default function ProfileEditor({
                           type="number"
                           min={1}
                           max={4}
-                          value={form.depth}
-                          onChange={(event) => update("depth", toInt(event.target.value, 2))}
+                          {...depthField}
                           className={fieldClass("structure.depth")}
                         />
                         {errorText("structure.depth")}
@@ -961,10 +1011,7 @@ export default function ProfileEditor({
                           type="number"
                           min={1}
                           max={20}
-                          value={form.sectionsMin}
-                          onChange={(event) =>
-                            update("sectionsMin", toInt(event.target.value, 2))
-                          }
+                          {...sectionsMinField}
                           className={fieldClass("structure.sections_per_unit")}
                         />
                       </label>
@@ -974,10 +1021,7 @@ export default function ProfileEditor({
                           type="number"
                           min={1}
                           max={20}
-                          value={form.sectionsMax}
-                          onChange={(event) =>
-                            update("sectionsMax", toInt(event.target.value, 5))
-                          }
+                          {...sectionsMaxField}
                           className={fieldClass("structure.sections_per_unit")}
                         />
                       </label>
@@ -1009,10 +1053,12 @@ export default function ProfileEditor({
                           onChange={(event) => update("pov", event.target.value)}
                           className={fieldClass("voice.pov", "select mt-1")}
                         >
-                          <option value="first">{t("profiles.povFirst")}</option>
-                          <option value="third_limited">{t("profiles.povThirdLimited")}</option>
+                          <option value="first">{povLabel(t, "first")}</option>
+                          <option value="third_limited">
+                            {povLabel(t, "third_limited")}
+                          </option>
                           <option value="third_omniscient">
-                            {t("profiles.povThirdOmniscient")}
+                            {povLabel(t, "third_omniscient")}
                           </option>
                         </select>
                         {errorText("voice.pov")}
@@ -1024,8 +1070,8 @@ export default function ProfileEditor({
                           onChange={(event) => update("tense", event.target.value)}
                           className={fieldClass("voice.tense", "select mt-1")}
                         >
-                          <option value="present">{t("profiles.tensePresent")}</option>
-                          <option value="past">{t("profiles.tensePast")}</option>
+                          <option value="present">{tenseLabel(t, "present")}</option>
+                          <option value="past">{tenseLabel(t, "past")}</option>
                         </select>
                         {errorText("voice.tense")}
                       </label>
@@ -1052,9 +1098,9 @@ export default function ProfileEditor({
                           className={fieldClass("grounding.citation_policy", "select mt-1")}
                           data-field="grounding.citation_policy"
                         >
-                          <option value="required">{t("profiles.citeRequired")}</option>
-                          <option value="optional">{t("profiles.citeOptional")}</option>
-                          <option value="forbidden">{t("profiles.citeForbidden")}</option>
+                          <option value="required">{policyLabel(t, "required")}</option>
+                          <option value="optional">{policyLabel(t, "optional")}</option>
+                          <option value="forbidden">{policyLabel(t, "forbidden")}</option>
                         </select>
                         {errorText("grounding.citation_policy")}
                       </label>
@@ -1064,10 +1110,7 @@ export default function ProfileEditor({
                           type="number"
                           min={0}
                           max={20}
-                          value={form.minEvidence}
-                          onChange={(event) =>
-                            update("minEvidence", toInt(event.target.value, 0))
-                          }
+                          {...minEvidenceField}
                           className={fieldClass("grounding.min_evidence")}
                         />
                         {errorText("grounding.min_evidence")}
@@ -1169,7 +1212,7 @@ export default function ProfileEditor({
                                   : "border-white/60 bg-white/50 text-slate-500 hover:text-indigo-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-400",
                               )}
                             >
-                              {t(`profiles.validator_${item}`)}
+                              {validatorLabel(t, item)}
                             </button>
                           );
                         })}
@@ -1183,9 +1226,15 @@ export default function ProfileEditor({
                         onChange={(event) => update("strictness", event.target.value)}
                         className={fieldClass("validation.strictness", "select mt-1")}
                       >
-                        <option value="relaxed">{t("profiles.strictnessRelaxed")}</option>
-                        <option value="normal">{t("profiles.strictnessNormal")}</option>
-                        <option value="strict">{t("profiles.strictnessStrict")}</option>
+                        <option value="relaxed">
+                          {strictnessLabel(t, "relaxed")}
+                        </option>
+                        <option value="normal">
+                          {strictnessLabel(t, "normal")}
+                        </option>
+                        <option value="strict">
+                          {strictnessLabel(t, "strict")}
+                        </option>
                       </select>
                       {errorText("validation.strictness")}
                     </label>

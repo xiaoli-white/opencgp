@@ -27,6 +27,7 @@ SCHEMA: tuple[str, ...] = (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
         subtitle TEXT NOT NULL DEFAULT '',
+        brief TEXT NOT NULL DEFAULT '',
         audience TEXT NOT NULL DEFAULT '',
         difficulty TEXT NOT NULL DEFAULT 'intermediate',
         language TEXT NOT NULL DEFAULT 'zh',
@@ -70,6 +71,7 @@ SCHEMA: tuple[str, ...] = (
 )
 
 COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("series", "brief", "TEXT NOT NULL DEFAULT ''"),
     ("series", "tenant_id", "TEXT NOT NULL DEFAULT ''"),
     ("series", "user_id", "TEXT NOT NULL DEFAULT ''"),
     ("series", "profile_id", "TEXT NOT NULL DEFAULT ''"),
@@ -107,6 +109,7 @@ class DatabaseSeriesRepository(SeriesRepository):
         tenant_id: str = "",
         user_id: str = "",
         profile_id: str = "",
+        brief: str = "",
     ) -> Series:
         self.ensure_schema()
         now = time.time()
@@ -114,6 +117,7 @@ class DatabaseSeriesRepository(SeriesRepository):
             id=_new_id(),
             title=title,
             subtitle=subtitle,
+            brief=brief or "",
             audience=audience,
             difficulty=difficulty,
             language=language,
@@ -123,13 +127,14 @@ class DatabaseSeriesRepository(SeriesRepository):
             updated_at=now,
         )
         self.database.execute(
-            "INSERT INTO series (id, title, subtitle, audience, difficulty, language,"
+            "INSERT INTO series (id, title, subtitle, brief, audience, difficulty, language,"
             " tenant_id, user_id, profile_id, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 series.id,
                 series.title,
                 series.subtitle,
+                series.brief,
                 series.audience,
                 series.difficulty,
                 series.language,
@@ -178,6 +183,7 @@ class DatabaseSeriesRepository(SeriesRepository):
         difficulty: str | None = None,
         language: str | None = None,
         profile_id: str | None = None,
+        brief: str | None = None,
     ) -> Series | None:
         self.ensure_schema()
         series = self.get_series(series_id)
@@ -188,6 +194,7 @@ class DatabaseSeriesRepository(SeriesRepository):
         for column, value in (
             ("title", title),
             ("subtitle", subtitle),
+            ("brief", brief),
             ("audience", audience),
             ("difficulty", difficulty),
             ("language", language),
@@ -602,6 +609,7 @@ def _to_series(row: Mapping[str, Any]) -> Series:
         id=str(row["id"]),
         title=str(row["title"]),
         subtitle=str(row["subtitle"] or ""),
+        brief=str(row["brief"] or "") if "brief" in keys else "",
         audience=str(row["audience"] or ""),
         difficulty=str(row["difficulty"] or "intermediate"),
         language=str(row["language"] or "zh"),

@@ -6,9 +6,10 @@ from app.models.blueprint import (
     OutlineNode,
 )
 from app.models.chunk import Chunk
-from app.models.citation import Citation
+from app.models.citation import Citation, CitationReference
 from app.models.series import Series, Unit, UnitVersion
 from app.models.generation import Evidence, GenerationResult
+from app.models.validation import CitationCoverage, CitationGap
 from app.models.ingest import IngestResult
 from app.models.mode import LOOSE_NOTICE, GenerationMode, with_loose_notice
 from app.models.thread import (
@@ -25,6 +26,9 @@ __all__ = [
     "AskResult",
     "Chunk",
     "Citation",
+    "CitationCoverage",
+    "CitationGap",
+    "CitationReference",
     "Series",
     "SeriesBlueprint",
     "DrilldownResult",

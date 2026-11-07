@@ -13,6 +13,7 @@ import clsx from "clsx";
 import { api, type Health } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
+import { serverStatusLabel } from "@/i18n/labels";
 import ProvidersSection from "@/components/settings/ProvidersSection";
 import RetrievalWeightsSection from "@/components/settings/RetrievalWeightsSection";
 import ServerProvidersCard from "@/components/settings/ServerProvidersCard";
@@ -195,7 +196,9 @@ export default function ServerSettingsPage() {
                   : "bg-amber-400/15 text-amber-600 dark:text-amber-300",
               )}
             >
-              {health.status === "ok" ? t("server.running") : health.status}
+              {health.status === "ok"
+                ? t("server.running")
+                : serverStatusLabel(t, health.status)}
             </span>
           ) : null}
         </div>
@@ -233,7 +236,7 @@ export default function ServerSettingsPage() {
                   {t("server.status")}
                 </span>
                 <span className="mt-1 block truncate text-[12.5px] font-medium text-slate-800 dark:text-slate-100">
-                  {health?.status || "—"}
+                  {health?.status ? serverStatusLabel(t, health.status) : "—"}
                 </span>
               </div>
             </div>

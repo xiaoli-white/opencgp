@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type WorkProfile } from "@/lib/api";
 import { useI18n } from "@/i18n/I18nProvider";
+import { profileNameLabel, unitNameLabel } from "@/i18n/labels";
 
 export function useWorkProfiles() {
   const [profiles, setProfiles] = useState<WorkProfile[]>([]);
@@ -79,8 +80,11 @@ export default function ProfileSelect({
         <optgroup label={t("profiles.builtinGroup")}>
           {builtin.map((item) => (
             <option key={item.id} value={item.id}>
-              {item.name} · {item.spec?.unit?.name ?? ""} ·{" "}
-              {t("profiles.words", { count: item.spec?.unit?.default_words ?? 0 })}
+              {profileNameLabel(t, item)} ·{" "}
+              {item.spec?.unit?.name
+                ? unitNameLabel(t, item.spec.unit.name)
+                : ""}{" "}
+              · {t("profiles.words", { count: item.spec?.unit?.default_words ?? 0 })}
             </option>
           ))}
         </optgroup>
@@ -89,8 +93,11 @@ export default function ProfileSelect({
         <optgroup label={t("profiles.mineGroup")}>
           {mine.map((item) => (
             <option key={item.id} value={item.id}>
-              {item.name} · {item.spec?.unit?.name ?? ""} ·{" "}
-              {t("profiles.words", { count: item.spec?.unit?.default_words ?? 0 })}
+              {profileNameLabel(t, item)} ·{" "}
+              {item.spec?.unit?.name
+                ? unitNameLabel(t, item.spec.unit.name)
+                : ""}{" "}
+              · {t("profiles.words", { count: item.spec?.unit?.default_words ?? 0 })}
             </option>
           ))}
         </optgroup>
@@ -99,8 +106,11 @@ export default function ProfileSelect({
         <optgroup label={t("profiles.sharedGroup")}>
           {shared.map((item) => (
             <option key={item.id} value={item.id}>
-              {item.name} · {item.spec?.unit?.name ?? ""} ·{" "}
-              {t("profiles.words", { count: item.spec?.unit?.default_words ?? 0 })}
+              {profileNameLabel(t, item)} ·{" "}
+              {item.spec?.unit?.name
+                ? unitNameLabel(t, item.spec.unit.name)
+                : ""}{" "}
+              · {t("profiles.words", { count: item.spec?.unit?.default_words ?? 0 })}
             </option>
           ))}
         </optgroup>

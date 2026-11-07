@@ -17,6 +17,7 @@ SCHEMA: tuple[str, ...] = (
         tenant_id TEXT NOT NULL DEFAULT '',
         user_id TEXT NOT NULL DEFAULT '',
         title TEXT NOT NULL,
+        brief TEXT NOT NULL DEFAULT '',
         profile_json TEXT NOT NULL DEFAULT '{}',
         outline_json TEXT NOT NULL DEFAULT '[]',
         content TEXT NOT NULL DEFAULT '',
@@ -47,6 +48,7 @@ SCHEMA: tuple[str, ...] = (
 )
 
 COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("pieces", "brief", "TEXT NOT NULL DEFAULT ''"),
     ("pieces", "profile_id", "TEXT NOT NULL DEFAULT ''"),
 )
 
@@ -77,16 +79,17 @@ class DatabasePieceRepository(PieceRepository):
         self.database.execute(
             """
             INSERT INTO pieces
-                (id, tenant_id, user_id, title, profile_json, outline_json, content,
+                (id, tenant_id, user_id, title, brief, profile_json, outline_json, content,
                  status, current_version, target_words, last_mode, citations_json,
                  profile_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 piece.id,
                 piece.tenant_id,
                 piece.user_id,
                 piece.title,
+                piece.brief,
                 json.dumps(piece.profile.model_dump(), ensure_ascii=False),
                 _dump_outline(piece.outline),
                 piece.content,
@@ -140,6 +143,7 @@ class DatabasePieceRepository(PieceRepository):
         profile: dict[str, Any] | None = None,
         target_words: int | None = None,
         profile_id: str | None = None,
+        brief: str | None = None,
     ) -> Piece | None:
         self.ensure_schema()
         current = self.get(piece_id)
@@ -174,6 +178,9 @@ class DatabasePieceRepository(PieceRepository):
         if profile_id is not None:
             sets.append("profile_id = ?")
             params.append(profile_id)
+        if brief is not None:
+            sets.append("brief = ?")
+            params.append(brief)
         params.append(piece_id)
         self.database.execute(
             f"UPDATE pieces SET {', '.join(sets)} WHERE id = ?", tuple(params)
@@ -341,6 +348,7 @@ def _row_to_piece(row: Mapping[str, Any]) -> Piece:
         tenant_id=str(row["tenant_id"] or ""),
         user_id=str(row["user_id"] or ""),
         title=str(row["title"] or ""),
+        brief=str(row["brief"] or "") if "brief" in row.keys() else "",
         profile=profile if isinstance(profile, dict) else {},
         outline=[section for section in outline if isinstance(section, dict)]
         if isinstance(outline, list)

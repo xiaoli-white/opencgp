@@ -30,11 +30,14 @@ const NEEDED: Record<RoleAction, number> = {
   manage_server: 4,
 };
 
+// Chinese fallback labels used by the shell's inline zh/en toggle.
+// English keeps its own map in AppShell; this keeps role names translated
+// without touching the shell component that is being edited elsewhere.
 export const ROLE_LABEL: Record<Role, string> = {
-  owner: "Owner",
-  admin: "Admin",
-  editor: "Editor",
-  viewer: "Viewer",
+  owner: "所有者",
+  admin: "管理员",
+  editor: "编辑",
+  viewer: "只读",
 };
 
 export function isRole(value: unknown): value is Role {

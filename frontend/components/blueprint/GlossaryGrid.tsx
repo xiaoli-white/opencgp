@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import type { GlossaryTerm } from "@/lib/api";
+import { useI18n } from "@/i18n/I18nProvider";
 
 type GlossaryGridProps = {
   glossary: GlossaryTerm[];
@@ -57,6 +58,7 @@ export default function GlossaryGrid({
   onSave,
   onCancel,
 }: GlossaryGridProps) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [drafts, setDrafts] = useState<DraftTerm[]>(() => toDraft(glossary));
 
@@ -88,7 +90,7 @@ export default function GlossaryGrid({
       <div className="space-y-2.5">
         {drafts.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-slate-300/70 px-4 py-6 text-center text-[11.5px] text-slate-500 dark:border-white/15 dark:text-slate-400">
-            The glossary is empty. Use “Add term” below to create one.
+            {t("glossary.emptyEditing")}
           </p>
         ) : null}
         {drafts.map((draft, index) => (
@@ -103,7 +105,7 @@ export default function GlossaryGrid({
                   onChange={(event) =>
                     patchDraft(index, { term: event.target.value })
                   }
-                  placeholder="Term, e.g. HNSW"
+                  placeholder={t("glossary.termPlaceholder")}
                   className="input text-[13px]"
                 />
                 <textarea
@@ -111,7 +113,7 @@ export default function GlossaryGrid({
                   onChange={(event) =>
                     patchDraft(index, { definition: event.target.value })
                   }
-                  placeholder="One-line definition"
+                  placeholder={t("glossary.definitionPlaceholder")}
                   rows={2}
                   className="input resize-none text-[12.5px] leading-relaxed"
                 />
@@ -120,7 +122,7 @@ export default function GlossaryGrid({
                   onChange={(event) =>
                     patchDraft(index, { aliases: event.target.value })
                   }
-                  placeholder="Aliases, separated by commas"
+                  placeholder={t("glossary.aliasesPlaceholder")}
                   className="input text-[12px]"
                 />
               </div>
@@ -130,7 +132,7 @@ export default function GlossaryGrid({
                   setDrafts((prev) => prev.filter((_, pos) => pos !== index))
                 }
                 className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-500"
-                aria-label="Delete term"
+                aria-label={t("glossary.deleteTerm")}
               >
                 <Trash2 size={13} />
               </button>
@@ -150,12 +152,12 @@ export default function GlossaryGrid({
             className="btn btn-ghost"
           >
             <Plus size={13} />
-            Add term
+            {t("glossary.addTerm")}
           </button>
           <div className="flex items-center gap-1.5">
             <button type="button" onClick={onCancel} className="btn-quiet">
               <X size={12} />
-              Cancel
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -168,7 +170,7 @@ export default function GlossaryGrid({
               ) : (
                 <Check size={13} />
               )}
-              Save glossary
+              {t("glossary.saveGlossary")}
             </button>
           </div>
         </div>
@@ -186,7 +188,7 @@ export default function GlossaryGrid({
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search terms, definitions, or aliases"
+          placeholder={t("glossary.searchPlaceholder")}
           className="input pl-8 text-[12.5px]"
         />
       </div>
@@ -199,8 +201,8 @@ export default function GlossaryGrid({
           />
           <p className="mt-2 text-[11.5px] text-slate-500 dark:text-slate-400">
             {glossary.length === 0
-              ? "No terms yet. Generate a blueprint or add terms manually."
-              : "No matching terms."}
+              ? t("glossary.empty")
+              : t("glossary.noMatches")}
           </p>
         </div>
       ) : (
@@ -235,7 +237,7 @@ export default function GlossaryGrid({
               ) : null}
               {term.node_ids.length > 0 ? (
                 <p className="mt-2 text-[10px] text-slate-400 dark:text-slate-500">
-                  Linked to {term.node_ids.length} nodes
+                  {t("glossary.linkedToNodes", { count: term.node_ids.length })}
                 </p>
               ) : null}
             </motion.div>

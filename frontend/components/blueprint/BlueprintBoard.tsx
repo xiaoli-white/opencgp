@@ -25,8 +25,10 @@ import {
   type GlossaryTerm,
   type Unit,
 } from "@/lib/api";
-import { formatRelative, modeLabel } from "@/lib/format";
+import { formatRelative } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
+import { useI18n } from "@/i18n/I18nProvider";
+import { modeLabel } from "@/i18n/labels";
 import ModePicker from "@/components/series/ModePicker";
 import type { VersionConflict } from "@/components/series/ConflictDialog";
 import LearningPathTimeline from "@/components/blueprint/LearningPathTimeline";
@@ -56,6 +58,7 @@ export default function BlueprintBoard({
   onVersionConflict,
 }: BlueprintBoardProps) {
   const { can } = useSession();
+  const { t } = useI18n();
   const readOnly = !can("write");
   const [blueprint, setBlueprint] = useState<Blueprint | null>(null);
   const [loading, setLoading] = useState(true);
@@ -77,7 +80,7 @@ export default function BlueprintBoard({
       const data = await api.getBlueprint(seriesId);
       setBlueprint(data.exists ? data.blueprint : null);
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Failed to load the blueprint");
+      setLoadError(err instanceof Error ? err.message : t("blueprint.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -118,8 +121,8 @@ export default function BlueprintBoard({
         setRegenerateOpen(false);
         onNotice(
           result.mode === "loose"
-            ? "Blueprint generated · Loose mode, planned by the model — please review"
-            : `Blueprint generated v${result.version} · grounded in knowledge-base evidence`,
+            ? t("blueprint.generatedLoose")
+            : t("blueprint.generatedGrounded", { version: result.version }),
         );
         onProgressRefresh();
       } catch (err) {
@@ -129,13 +132,13 @@ export default function BlueprintBoard({
           onVersionConflict({
             expectedVersion: baseline ?? 0,
             currentVersion: current,
-            label: "Blueprint",
+            label: t("blueprint.label"),
             retry: () => runGenerate(useMode, current),
           });
         } else if (err instanceof ApiError && err.status === 409) {
           setConflict(err.message);
         } else {
-          onError(err instanceof Error ? err.message : "Failed to generate the blueprint");
+          onError(err instanceof Error ? err.message : t("blueprint.generateFailed"));
         }
       } finally {
         setGenerating(false);
@@ -162,13 +165,13 @@ export default function BlueprintBoard({
       setBlueprint(result.blueprint);
       onNotice(
         result.created_count > 0
-          ? `Blueprint applied: ${result.created_count} new units created`
-          : "Blueprint applied: every node is already linked to a unit",
+          ? t("blueprint.appliedCreated", { count: result.created_count })
+          : t("blueprint.appliedExisting"),
       );
       await onUnitsChanged();
       onProgressRefresh();
     } catch (err) {
-      onError(err instanceof Error ? err.message : "Failed to apply the blueprint");
+      onError(err instanceof Error ? err.message : t("blueprint.applyFailed"));
     } finally {
       setApplying(false);
     }
@@ -183,9 +186,9 @@ export default function BlueprintBoard({
         prev ? { ...prev, glossary: payload.glossary } : prev,
       );
       setEditingGlossary(false);
-      onNotice(`Glossary saved · ${payload.count} terms`);
+      onNotice(t("blueprint.glossarySaved", { count: payload.count }));
     } catch (err) {
-      onError(err instanceof Error ? err.message : "Failed to save the glossary");
+      onError(err instanceof Error ? err.message : t("blueprint.glossarySaveFailed"));
     } finally {
       setSavingGlossary(false);
     }
@@ -195,11 +198,9 @@ export default function BlueprintBoard({
     <div className="rounded-2xl border border-indigo-200/60 bg-indigo-500/5 p-4 dark:border-indigo-400/20 dark:bg-indigo-400/5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] font-medium text-indigo-600 dark:text-indigo-300">
-          {mode === "loose"
-            ? "Loose mode: the model plans freely and its output is marked as written by AI"
-            : "Strict mode: retrieves knowledge-base evidence first, and refuses to generate when nothing is found"}
+          {mode === "loose" ? t("blueprint.looseHint") : t("blueprint.strictHint")}
         </p>
-        <span className="chip-muted">Planning mode</span>
+        <span className="chip-muted">{t("blueprint.planningMode")}</span>
       </div>
       <div className="mt-3">
         <ModePicker value={mode} onChange={setMode} disabled={generating} />
@@ -208,7 +209,7 @@ export default function BlueprintBoard({
         <input
           value={focus}
           onChange={(event) => setFocus(event.target.value)}
-          placeholder="Focus, e.g. cover only index tuning and quantization"
+          placeholder={t("blueprint.focusPlaceholder")}
           className="input"
         />
         <select
@@ -218,7 +219,7 @@ export default function BlueprintBoard({
         >
           {[3, 5, 8, 12].map((value) => (
             <option key={value} value={value}>
-              {value} evidence items
+              {t("blueprint.evidenceItems", { count: value })}
             </option>
           ))}
         </select>
@@ -226,7 +227,7 @@ export default function BlueprintBoard({
           type="button"
           onClick={() => void runGenerate()}
           disabled={readOnly || generating}
-          title={readOnly ? "Your role has read-only access" : ""}
+          title={readOnly ? t("common.readOnlyRole") : ""}
           className="btn btn-primary"
         >
           {generating ? (
@@ -234,7 +235,7 @@ export default function BlueprintBoard({
           ) : (
             <Sparkles size={14} />
           )}
-          Generate blueprint
+          {t("blueprint.generate")}
         </button>
       </div>
     </div>
@@ -259,13 +260,13 @@ export default function BlueprintBoard({
           ) : (
             <RefreshCw size={11} />
           )}
-          Retry in loose mode
+          {t("blueprint.retryLoose")}
         </button>
         <button
           type="button"
           onClick={() => setConflict("")}
           className="grid h-6 w-6 place-items-center rounded-full text-amber-600/70 transition hover:bg-amber-500/15 hover:text-amber-700 dark:text-amber-300/70"
-          aria-label="Dismiss the notice"
+          aria-label={t("blueprint.dismissNotice")}
         >
           <X size={12} />
         </button>
@@ -289,14 +290,14 @@ export default function BlueprintBoard({
           <AlertTriangle size={18} />
         </div>
         <p className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">
-          Unable to load the blueprint
+          {t("blueprint.loadErrorTitle")}
         </p>
         <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
           {loadError}
         </p>
         <button type="button" onClick={() => void load()} className="btn btn-ghost mt-4">
           <RefreshCw size={13} />
-          Retry
+          {t("common.retry")}
         </button>
       </div>
     );
@@ -314,18 +315,20 @@ export default function BlueprintBoard({
                 </span>
                 <div>
                   <p className="text-[15px] font-semibold tracking-tight text-slate-800 dark:text-slate-100">
-                    No blueprint for this series yet
+                    {t("blueprint.emptyTitle")}
                   </p>
                   <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                    Generate a learning-path blueprint first, then review and read unit by unit
+                    {t("blueprint.emptyDesc")}
                   </p>
                 </div>
               </div>
               <p className="mt-3 max-w-xl text-[12.5px] leading-relaxed text-slate-500 dark:text-slate-400">
-                The blueprint plans learning stages, outline nodes, and a glossary from knowledge-base evidence. Once generated you can review node by node, apply it to the series, then return to the reader to write each unit.
+                {t("blueprint.emptyBody")}
               </p>
             </div>
-            <span className="chip-muted">{units.length} existing units</span>
+            <span className="chip-muted">
+              {t("blueprint.existingUnits", { count: units.length })}
+            </span>
           </div>
 
           <div className="mt-5 space-y-3">
@@ -347,7 +350,7 @@ export default function BlueprintBoard({
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="chip">
                 <Network size={11} />
-                Series blueprint
+                {t("blueprint.title")}
               </span>
               <span
                 className={clsx(
@@ -357,7 +360,7 @@ export default function BlueprintBoard({
                     : "bg-indigo-500/12 text-indigo-600 ring-indigo-400/25 dark:bg-indigo-400/14 dark:text-indigo-300 dark:ring-indigo-300/25",
                 )}
               >
-                {modeLabel(blueprint.mode)} mode
+                {t("blueprint.modeSuffix", { mode: modeLabel(t, blueprint.mode) })}
               </span>
               <span
                 className={clsx(
@@ -367,14 +370,14 @@ export default function BlueprintBoard({
                     : "bg-slate-400/15 text-slate-600 ring-slate-400/25 dark:bg-white/10 dark:text-slate-300 dark:ring-white/15",
                 )}
               >
-                {blueprint.grounded ? "Grounded" : "No evidence"}
+                {blueprint.grounded ? t("blueprint.grounded") : t("blueprint.noEvidence")}
               </span>
               <span className="chip-muted">v{blueprint.version}</span>
               {blueprint.provider ? (
                 <span className="chip-muted">{blueprint.provider}</span>
               ) : null}
               <span className="chip-muted">
-                Updated {formatRelative(blueprint.updated_at)}
+                {t("blueprint.updated", { time: formatRelative(blueprint.updated_at) })}
               </span>
             </div>
             <div className="mt-3 text-[13px] leading-relaxed text-slate-600 dark:text-slate-300 [&_p+p]:mt-2 [&_p]:leading-relaxed [&_strong]:font-semibold [&_strong]:text-slate-800 dark:[&_strong]:text-slate-100 [&_ul]:mt-2 [&_ul]:list-disc [&_ul]:pl-5">
@@ -384,7 +387,7 @@ export default function BlueprintBoard({
                 </ReactMarkdown>
               ) : (
                 <p className="text-slate-400 dark:text-slate-500">
-                  This blueprint has no overview yet.
+                  {t("blueprint.noOverview")}
                 </p>
               )}
             </div>
@@ -395,15 +398,31 @@ export default function BlueprintBoard({
           {[
             {
               icon: Layers,
-              label: "Learning stages",
+              labelKey: "blueprint.learningStages",
+              label: t("blueprint.learningStages"),
               value: blueprint.learning_path.length,
             },
-            { icon: Waypoints, label: "Outline nodes", value: blueprint.outline.length },
-            { icon: ClipboardCheck, label: "Linked units", value: boundCount },
-            { icon: BookMarked, label: "Terms", value: blueprint.glossary.length },
+            {
+              icon: Waypoints,
+              labelKey: "blueprint.outlineNodes",
+              label: t("blueprint.outlineNodes"),
+              value: blueprint.outline.length,
+            },
+            {
+              icon: ClipboardCheck,
+              labelKey: "blueprint.linkedUnits",
+              label: t("blueprint.linkedUnits"),
+              value: boundCount,
+            },
+            {
+              icon: BookMarked,
+              labelKey: "blueprint.terms",
+              label: t("blueprint.terms"),
+              value: blueprint.glossary.length,
+            },
           ].map((item) => (
             <div
-              key={item.label}
+              key={item.labelKey}
               className="rounded-2xl border border-slate-200/70 bg-white/50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]"
             >
               <p className="flex items-center gap-1 text-[10px] uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
@@ -424,8 +443,8 @@ export default function BlueprintBoard({
               {blueprint.warning
                 ? blueprint.warning
                 : loose
-                  ? "This blueprint was planned by the model in loose mode without checking each piece of knowledge-base evidence. Review it manually before applying."
-                  : "This blueprint found no knowledge-base evidence; nodes and stages come from model inference. Add material and regenerate."}
+                  ? t("blueprint.warningLoose")
+                  : t("blueprint.warningNoEvidence")}
             </span>
           </div>
         ) : null}
@@ -435,7 +454,7 @@ export default function BlueprintBoard({
             type="button"
             onClick={() => void handleApply()}
             disabled={readOnly || applying}
-            title={readOnly ? "Your role has read-only access" : ""}
+            title={readOnly ? t("common.readOnlyRole") : ""}
             className="btn btn-primary"
           >
             {applying ? (
@@ -443,13 +462,13 @@ export default function BlueprintBoard({
             ) : (
               <Check size={14} />
             )}
-            Apply to series
+            {t("blueprint.applyToSeries")}
           </button>
           <button
             type="button"
             onClick={() => setRegenerateOpen((value) => !value)}
             disabled={readOnly || generating}
-            title={readOnly ? "Your role has read-only access" : ""}
+            title={readOnly ? t("common.readOnlyRole") : ""}
             className="btn btn-ghost"
           >
             {generating ? (
@@ -457,20 +476,20 @@ export default function BlueprintBoard({
             ) : (
               <RefreshCw size={14} />
             )}
-            Regenerate
+            {t("blueprint.regenerate")}
           </button>
           <button
             type="button"
             onClick={() => setEditingGlossary((value) => !value)}
             disabled={readOnly}
-            title={readOnly ? "Your role has read-only access" : ""}
+            title={readOnly ? t("common.readOnlyRole") : ""}
             className="btn btn-ghost"
           >
             <Pencil size={14} />
-            {editingGlossary ? "Exit editing" : "Edit glossary"}
+            {editingGlossary ? t("blueprint.exitEditing") : t("blueprint.editGlossary")}
           </button>
           <span className="ml-auto text-[10.5px] text-slate-400 dark:text-slate-500">
-            Applying only fills in unlinked nodes and never overwrites existing body text
+            {t("blueprint.applyHint")}
           </span>
         </div>
 
@@ -497,11 +516,13 @@ export default function BlueprintBoard({
           <div className="flex items-center justify-between px-1">
             <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
               <Waypoints size={12} />
-              Learning path
+              {t("blueprint.learningPath")}
             </p>
             <span className="chip-muted">
-              {blueprint.learning_path.length} stages · {blueprint.outline.length}{" "}
-              nodes
+              {t("blueprint.stagesNodes", {
+                stages: blueprint.learning_path.length,
+                nodes: blueprint.outline.length,
+              })}
             </span>
           </div>
           <div className="mt-3">
@@ -516,9 +537,11 @@ export default function BlueprintBoard({
           <div className="flex items-center justify-between px-1">
             <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
               <BookMarked size={12} />
-              Glossary
+              {t("blueprint.glossary")}
             </p>
-            <span className="chip-muted">{blueprint.glossary.length} terms</span>
+            <span className="chip-muted">
+              {t("blueprint.termCount", { count: blueprint.glossary.length })}
+            </span>
           </div>
           <div className="mt-3">
             <GlossaryGrid
@@ -531,7 +554,7 @@ export default function BlueprintBoard({
           </div>
           {!editingGlossary && blueprint.glossary.length > 0 ? (
             <p className="mt-2 px-1 text-[10px] text-slate-400 dark:text-slate-500">
-              Total {blueprint.glossary.length} terms. Related units:
+              {t("blueprint.totalTermsRelated", { count: blueprint.glossary.length })}
               {Array.from(
                 new Set(
                   blueprint.glossary.flatMap((term) =>
@@ -549,7 +572,7 @@ export default function BlueprintBoard({
                 ),
               )
                 .slice(0, 3)
-                .join(", ") || "None"}
+                .join(", ") || t("common.none")}
             </p>
           ) : null}
         </div>
@@ -562,7 +585,7 @@ export default function BlueprintBoard({
           disabled={!units[0]?.id}
           className="btn-quiet"
         >
-          Back to reader
+          {t("blueprint.backToReader")}
         </button>
       </div>
     </div>

@@ -37,6 +37,11 @@ function detectLocale(): Locale {
   return lang.startsWith("zh") ? "zh" : "en";
 }
 
+const ADDITIONS: Record<Locale, Record<string, string>> = {
+  zh: zhAdditions,
+  en: enAdditions,
+};
+
 function resolve(tree: Dict, path: string): string | undefined {
   let cursor: unknown = tree;
   for (const part of path.split(".")) {
@@ -47,6 +52,7 @@ function resolve(tree: Dict, path: string): string | undefined {
 }
 
 import { setFormatLocale } from "@/lib/format";
+import { enAdditions, zhAdditions } from "@/i18n/dict-additions";
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(detectLocale);
@@ -70,7 +76,11 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const t = useCallback(
     (path: string, vars?: I18nVars) => {
-      const raw = resolve(dicts[locale], path) ?? resolve(zh, path);
+      const raw =
+        resolve(dicts[locale], path) ??
+        ADDITIONS[locale]?.[path] ??
+        resolve(zh, path) ??
+        ADDITIONS.zh[path];
       if (raw === undefined) {
         if (import.meta.env.DEV) {
           console.warn(`[i18n] missing key: ${path}`);
@@ -90,9 +100,11 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     [locale],
   );
 
-  useEffect(() => {
-    setActiveTranslate(t);
-  }, [t]);
+  // Keep the module-level fallback translator in sync during render as well.
+  // A few shared formatters (and untouched shell components) call helpers that
+  // do not receive `t`; updating only in an effect leaves them one render
+  // behind after the locale toggle.
+  setActiveTranslate(t);
 
   const value = useMemo<I18nValue>(
     () => ({ locale, setLocale, t, tm }),

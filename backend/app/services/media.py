@@ -136,6 +136,18 @@ class MediaService:
             raise MediaAssetNotFoundError("image not found")
         return asset
 
+    def get_readable_asset(self, asset_id: str) -> MediaAsset:
+        """Resolve an asset for a plain media read.
+
+        Media IDs are random capabilities embedded in article Markdown and share
+        links. A browser <img> cannot send an Authorization or X-Tenant-Id header,
+        so read-only rendering must not depend on a tenant context.
+        """
+        asset = self.repository.get(asset_id)
+        if asset is None:
+            raise MediaAssetNotFoundError("image not found")
+        return asset
+
     def delete_asset(self, ctx: AuthContext, asset_id: str) -> bool:
         asset = self.get_asset(ctx, asset_id)
         removed = self.repository.delete(asset.id, _tenant_of(ctx))

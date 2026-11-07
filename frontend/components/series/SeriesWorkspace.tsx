@@ -35,16 +35,20 @@ import {
   type UnitVersion,
 } from "@/lib/api";
 import {
-  createUnitLockController,
-  releaseUnitLockBeacon,
-  type UnitLockController,
-  type UnitLockState,
-} from "@/lib/lock";
+  createEditLockController,
+  releaseEditLockBeacon,
+  type EditLockController,
+  type EditLockState,
+} from "@/lib/editLock";
 import { contentLength, formatRelative } from "@/lib/format";
 import {
   difficultyLabel,
+  profileNameLabel,
+  roleLabel,
+  unitNameLabel,
   unitStatusLabel,
   modeLabel,
+  languageLabel,
 } from "@/i18n/labels";
 import { useI18n } from "@/i18n/I18nProvider";
 import MarkdownReader from "@/components/reader/MarkdownReader";
@@ -58,7 +62,8 @@ import CodeCheckPanel from "@/components/series/CodeCheckPanel";
 import SeriesGrantsPanel from "@/components/series/SeriesGrantsPanel";
 import ShareLinksDialog from "@/components/share/ShareLinksDialog";
 import StatusBadge from "@/components/series/StatusBadge";
-import UnitLockBanner from "@/components/series/UnitLockBanner";
+import EditLockChip from "@/components/series/EditLockChip";
+import SeriesGenerateAllPanel from "@/components/series/SeriesGenerateAllPanel";
 import ExportMenu from "@/components/export/ExportMenu";
 import SeriesEditDialog from "@/components/series/SeriesEditDialog";
 import ThreadsPanel from "@/components/series/ThreadsPanel";
@@ -82,7 +87,7 @@ const VIEWS: { value: WorkspaceView; key: string; icon: typeof BookOpen }[] = [
 ];
 
 export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
-  const { can, roleName } = useSession();
+  const { can, roleKey, roleName } = useSession();
   const { t } = useI18n();
   const canWrite = can("write");
   const canManage = can("manage_members");
@@ -114,9 +119,12 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
   const [view, setView] = useState<WorkspaceView>("reader");
   const [progress, setProgress] = useState<SeriesProgress | null>(null);
   const [blueprintTick, setBlueprintTick] = useState(0);
-  const [lockState, setLockState] = useState<UnitLockState>({
+  const [lockState, setLockState] = useState<EditLockState>({
     status: "idle",
   });
+  const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
+  const [unitDraft, setUnitDraft] = useState("");
+  const [savingUnit, setSavingUnit] = useState(false);
   const [conflict, setConflict] = useState<VersionConflict | null>(null);
   const [conflictBusy, setConflictBusy] = useState(false);
   const [seriesEditOpen, setSeriesEditOpen] = useState(false);
@@ -133,7 +141,12 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
   const [unitDialogError, setUnitDialogError] = useState("");
   const { profiles } = useWorkProfiles();
   const navigate = useNavigate();
-  const lockController = useRef<UnitLockController | null>(null);
+  const lockController = useRef<EditLockController | null>(null);
+  const editingUnitRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    editingUnitRef.current = editingUnitId;
+  }, [editingUnitId]);
 
   const lockBlocked =
     canWrite && (lockState.status === "blocked" || lockState.status === "lost");
@@ -267,27 +280,33 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
   );
 
   useEffect(() => {
-    if (!activeId || !canWrite) {
-      setLockState({ status: "idle" });
-      return;
-    }
-    const controller = createUnitLockController({
-      unitId: activeId,
-      onState: setLockState,
-    });
-    lockController.current = controller;
-    void controller.start();
     const handleUnload = () => {
-      const token = controller.token();
-      if (token) releaseUnitLockBeacon(activeId, token);
+      const controller = lockController.current;
+      const token = controller?.token();
+      const unitId = editingUnitRef.current;
+      if (controller && token && unitId) {
+        releaseEditLockBeacon("unit", unitId, token);
+      }
     };
     window.addEventListener("beforeunload", handleUnload);
     return () => {
       window.removeEventListener("beforeunload", handleUnload);
-      controller.stop(true);
-      if (lockController.current === controller) lockController.current = null;
+      const controller = lockController.current;
+      lockController.current = null;
+      controller?.stop(true);
     };
-  }, [activeId, canWrite]);
+  }, []);
+
+  useEffect(() => {
+    const controller = lockController.current;
+    if (controller) {
+      lockController.current = null;
+      controller.stop(true);
+    }
+    setEditingUnitId(null);
+    setUnitDraft("");
+    setLockState({ status: "idle" });
+  }, [activeId]);
 
   const handleLoadLatest = useCallback(() => {
     setConflict(null);
@@ -391,6 +410,87 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
       setReverting(null);
     }
   };
+
+  const beginUnitEdit = async () => {
+    if (!activeUnit || !canWrite || generating || savingUnit) return;
+    setError("");
+    setConflict(null);
+    const previous = lockController.current;
+    if (previous) previous.stop(true);
+    const controller = createEditLockController({
+      kind: "unit",
+      id: activeUnit.id,
+      onState: setLockState,
+      onError: setError,
+    });
+    lockController.current = controller;
+    const state = await controller.start();
+    if (lockController.current !== controller) return;
+    if (state.status === "held" || state.status === "unsupported") {
+      setEditingUnitId(activeUnit.id);
+      setUnitDraft(activeUnit.content ?? "");
+    }
+  };
+
+  const cancelUnitEdit = async () => {
+    const controller = lockController.current;
+    lockController.current = null;
+    void controller?.release();
+    setEditingUnitId(null);
+    setUnitDraft("");
+    setLockState({ status: "idle" });
+  };
+
+  const saveUnitEdit = async () => {
+    if (!activeUnit || editingUnitId !== activeUnit.id || savingUnit) return;
+    setSavingUnit(true);
+    setError("");
+    try {
+      await api.updateUnit(activeUnit.id, { content: unitDraft });
+      await loadSeries(activeUnit.id);
+      setVersionTick((tick) => tick + 1);
+      await refreshProgress();
+      const controller = lockController.current;
+      lockController.current = null;
+      await controller?.release();
+      setEditingUnitId(null);
+      setUnitDraft("");
+      setLockState({ status: "idle" });
+      setNotice(t("common.save"));
+      window.dispatchEvent(new Event("series-studio:refresh"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("errors.saveFailed"));
+    } finally {
+      setSavingUnit(false);
+    }
+  };
+
+  const dismissLock = () => {
+    const controller = lockController.current;
+    lockController.current = null;
+    controller?.stop(false);
+    setLockState({ status: "idle" });
+  };
+
+  const retryLock = () => {
+    void lockController.current?.retry();
+  };
+
+  const takeOverLock = () => {
+    void lockController.current?.force();
+  };
+
+  useEffect(() => {
+    if (!editingUnitId) return;
+    if (lockState.status !== "blocked" && lockState.status !== "lost") return;
+    setEditingUnitId(null);
+    setUnitDraft("");
+    if (lockState.status === "blocked") {
+      setError(t("series.lockEditing", { name: lockState.name }));
+    } else {
+      setError(t("series.lockLost"));
+    }
+  }, [editingUnitId, lockState, t]);
 
   const handleCreateUnit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -585,9 +685,7 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
                 </span>
               ) : null}
               <span className="chip-muted">
-                {series.language === "zh"
-                  ? t("series.languageChinese")
-                  : series.language}
+                {languageLabel(t, series.language)}
               </span>
               {series.profile_id ? (
                 <Link
@@ -597,7 +695,8 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
                 >
                   <Wand2 size={11} />
                   {t("profiles.seriesChip", {
-                    name: currentProfile?.name ?? series.profile_id,
+                    name:
+                      profileNameLabel(t, currentProfile) || series.profile_id,
                   })}
                 </Link>
               ) : null}
@@ -626,7 +725,7 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
                 className="btn btn-ghost shrink-0"
               >
                 <Pencil size={13} />
-                {t("series.editSeries")}
+                {t("series.edit")}
               </button>
             ) : null}
             {canWrite ? (
@@ -686,9 +785,20 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
 
       {readOnly ? (
         <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-          {t("series.readOnlyBanner", { role: roleName || t("common.readOnly") })}
+          {t("series.readOnlyBanner", {
+            role: roleLabel(t, roleKey, roleName) || t("common.readOnly"),
+          })}
         </div>
       ) : null}
+
+      <SeriesGenerateAllPanel
+        seriesId={seriesId}
+        units={detail.units}
+        canWrite={canWrite}
+        onRefresh={refreshWorkspace}
+        onNotice={setNotice}
+        onOpenUnit={handleOpenUnit}
+      />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="no-scrollbar inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full border border-slate-200/70 bg-white/50 p-0.5 shadow-[0_10px_26px_-24px_rgba(99,102,241,0.9)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.05]">
@@ -990,6 +1100,29 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
                   </h2>
                 </div>
                 <div className="no-scrollbar -mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-0.5">
+                  {canWrite ? (
+                    <button
+                      type="button"
+                      data-testid="unit-edit"
+                      onClick={() => void beginUnitEdit()}
+                      disabled={
+                        generating ||
+                        savingUnit ||
+                        editingUnitId === activeUnit.id ||
+                        lockState.status === "acquiring"
+                      }
+                      className="btn btn-ghost"
+                    >
+                      {lockState.status === "acquiring" ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <Pencil size={14} />
+                      )}
+                      {editingUnitId === activeUnit.id
+                        ? t("unit.editing")
+                        : t("unit.edit")}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     {...guard}
@@ -1066,15 +1199,16 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
                 </div>
               </div>
 
-              <UnitLockBanner
-                state={lockState}
-                canTakeOver={canManage}
-                readOnly={readOnly}
-                busy={lockState.status === "acquiring"}
-                onRefresh={() => void refreshWorkspace()}
-                onTakeOver={() => void lockController.current?.force()}
-                onReacquire={() => void lockController.current?.retry()}
-              />
+              <div className="mt-3">
+                <EditLockChip
+                  state={lockState}
+                  canTakeOver={canManage}
+                  busy={lockState.status === "acquiring"}
+                  onReadOnly={dismissLock}
+                  onRetry={retryLock}
+                  onTakeOver={takeOverLock}
+                />
+              </div>
 
               <CodeCheckPanel unitId={activeUnit.id} disabled={!canWrite} />
               <ReviewControls
@@ -1194,7 +1328,46 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
               )}
 
               <div className="relative mt-6">
-                {activeUnit.content ? (
+                {editingUnitId === activeUnit.id ? (
+                  <div data-testid="unit-editor-panel" className="space-y-3">
+                    <textarea
+                      data-testid="unit-editor"
+                      value={unitDraft}
+                      onChange={(event) => setUnitDraft(event.target.value)}
+                      rows={18}
+                      className="input min-h-[22rem] w-full font-mono text-[12px] leading-relaxed"
+                      placeholder={t("piece.manualPlaceholder")}
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[10.5px] text-slate-400 dark:text-slate-500">
+                        {t("piece.charCount", { count: unitDraft.length })}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          data-testid="unit-cancel"
+                          onClick={() => void cancelUnitEdit()}
+                          disabled={savingUnit}
+                          className="btn btn-quiet"
+                        >
+                          {t("common.cancel")}
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="unit-save"
+                          onClick={() => void saveUnitEdit()}
+                          disabled={savingUnit}
+                          className="btn btn-primary"
+                        >
+                          {savingUnit ? (
+                            <Loader2 size={13} className="animate-spin" />
+                          ) : null}
+                          {t("common.saveChanges")}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : activeUnit.content ? (
                   <MarkdownReader
                     content={activeUnit.content}
                     citations={currentCitations}
@@ -1229,13 +1402,6 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
                     </div>
                   </div>
                 )}
-                {lockBlocked ? (
-                  <div className="pointer-events-none absolute inset-0 rounded-2xl bg-white/30 dark:bg-slate-950/35">
-                    <div className="sticky top-3 mx-auto mt-3 w-fit rounded-full border border-amber-400/40 bg-amber-50/90 px-3 py-1 text-[11px] font-medium text-amber-800 shadow-sm backdrop-blur-sm dark:border-amber-300/25 dark:bg-amber-400/15 dark:text-amber-200">
-                      {t("series.lockOverlay", { reason: lockReason })}
-                    </div>
-                  </div>
-                ) : null}
               </div>
 
               <div className="mt-8 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70 pt-4 text-[11px] text-slate-400 dark:border-white/10 dark:text-slate-500">

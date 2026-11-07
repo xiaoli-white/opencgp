@@ -26,6 +26,7 @@ import { formatDateTime } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
 import { PromptDialog } from "@/components/common/Dialogs";
 import { useI18n } from "@/i18n/I18nProvider";
+import { roleLabel } from "@/i18n/labels";
 
 const DEPTH_OPTIONS = [1, 2, 3];
 
@@ -131,7 +132,7 @@ function CollapsibleBlock({
 }
 
 export default function ResearchPage() {
-  const { can, roleName } = useSession();
+  const { can, roleKey, roleName } = useSession();
   const { t } = useI18n();
   const writable = can("write");
 
@@ -342,7 +343,9 @@ export default function ResearchPage() {
     <div className="space-y-5">
       {!writable ? (
         <div className="rounded-2xl border border-amber-300/50 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-300">
-          {t("research.readOnlyView", { role: roleName || t("common.readOnly") })}
+          {t("research.readOnlyView", {
+            role: roleLabel(t, roleKey, roleName) || t("common.readOnly"),
+          })}
         </div>
       ) : null}
 

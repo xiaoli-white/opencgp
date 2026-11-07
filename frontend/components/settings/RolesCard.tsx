@@ -5,6 +5,7 @@ import clsx from "clsx";
 import { api, type RoleRecord, type RoleScope } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
+import { roleLabel } from "@/i18n/labels";
 import type { RoleAction } from "@/lib/session";
 
 const ACTIONS: { value: RoleAction; labelKey: string }[] = [
@@ -156,7 +157,7 @@ export default function RolesCard({
             >
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[12.5px] font-semibold text-slate-800 dark:text-slate-100">
-                  {item.name}
+                  {roleLabel(t, item.key, item.name)}
                 </span>
                 <span className="chip-muted">{item.key}</span>
                 {item.builtin ? <span className="chip">{t("roles.builtin")}</span> : null}

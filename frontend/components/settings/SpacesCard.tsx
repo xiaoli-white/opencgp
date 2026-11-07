@@ -17,6 +17,7 @@ import { api, tenantId, type Member, type TenantMembership } from "@/lib/api";
 import { setTenantId } from "@/lib/session";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
+import { roleLabel } from "@/i18n/labels";
 
 const KIND_LABEL_KEY: Record<string, string> = {
   system: "space.system",
@@ -207,7 +208,7 @@ export default function SpacesCard({
                   </span>
                   <span className="flex items-center gap-1 text-[10px] text-slate-400">
                     <Crown size={10} />
-                    {item.role}
+                    {roleLabel(t, item.role)}
                   </span>
                   <span className="flex-1" />
                   {!isCurrent ? (
@@ -298,7 +299,8 @@ export default function SpacesCard({
                         </option>
                         {transferMembers.map((member) => (
                           <option key={member.user_id} value={member.user_id}>
-                            {member.user_display_name || member.user_email} · {member.role}
+                            {member.user_display_name || member.user_email} ·{" "}
+                            {roleLabel(t, member.role)}
                           </option>
                         ))}
                       </select>

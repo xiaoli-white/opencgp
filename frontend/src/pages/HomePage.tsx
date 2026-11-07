@@ -12,9 +12,10 @@ import {
   X,
 } from "lucide-react";
 import { api, type Series } from "@/lib/api";
-import { difficultyLabel, formatRelative } from "@/lib/format";
+import { formatRelative } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
 import ProfileSelect, { useWorkProfiles } from "@/components/profiles/ProfileSelect";
+import { difficultyLabel } from "@/i18n/labels";
 import { useI18n } from "@/i18n/I18nProvider";
 
 const FLOW = [
@@ -39,6 +40,7 @@ export default function HomePage() {
   const [form, setForm] = useState({
     title: "",
     subtitle: "",
+    brief: "",
     audience: "",
     difficulty: "intermediate",
     language: "zh",
@@ -85,6 +87,7 @@ export default function HomePage() {
       const series = await api.createSeries({
         title,
         subtitle: form.subtitle.trim(),
+        brief: form.brief.trim(),
         audience: form.audience.trim(),
         difficulty: form.difficulty,
         language: form.language,
@@ -214,6 +217,23 @@ export default function HomePage() {
                     className="input"
                   />
                 </label>
+                <label className="sm:col-span-2">
+                  <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    {t("series.briefLabel")}
+                  </span>
+                  <textarea
+                    value={form.brief}
+                    onChange={(event) =>
+                      setForm({ ...form, brief: event.target.value })
+                    }
+                    placeholder={t("series.briefPlaceholder")}
+                    rows={5}
+                    className="input min-h-[7.5rem] resize-y"
+                  />
+                  <span className="mt-1 block text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
+                    {t("series.briefHint")}
+                  </span>
+                </label>
                 <label>
                   <span className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
                     {t("home.form.audience")}
@@ -239,11 +259,11 @@ export default function HomePage() {
                       }
                       className="select w-full"
                     >
-                      <option value="beginner">{difficultyLabel("beginner")}</option>
-                      <option value="intermediate">
-                        {difficultyLabel("intermediate")}
-                      </option>
-                      <option value="advanced">{difficultyLabel("advanced")}</option>
+                      {["beginner", "intermediate", "advanced"].map((value) => (
+                        <option key={value} value={value}>
+                          {difficultyLabel(t, value)}
+                        </option>
+                      ))}
                     </select>
                   </label>
                   <label>
@@ -374,7 +394,7 @@ export default function HomePage() {
               >
                 <div className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-gradient-to-br from-indigo-400/25 to-violet-400/15 blur-2xl transition-transform duration-500 group-hover:scale-125" />
                 <div className="relative flex items-center justify-between">
-                  <span className="chip">{difficultyLabel(series.difficulty)}</span>
+                  <span className="chip">{difficultyLabel(t, series.difficulty)}</span>
                   {visibleSeriesIds !== "all" &&
                   visibleSeriesIds.includes(series.id) ? (
                     <span className="chip">{t("home.restricted")}</span>

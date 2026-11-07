@@ -6,6 +6,7 @@ import { contentLength, formatDateTime } from "@/lib/format";
 import VersionDiffDialog from "@/components/reader/VersionDiffDialog";
 import VersionPreviewDialog from "@/components/reader/VersionPreviewDialog";
 import { useI18n } from "@/i18n/I18nProvider";
+import { modeLabel } from "@/i18n/labels";
 
 type VersionPanelProps = {
   versions: UnitVersion[];
@@ -142,7 +143,7 @@ export default function VersionPanel({
                         : t("reader.modeStrictTip")
                     }
                   >
-                    {version.mode || "strict"}
+                    {modeLabel(t, version.mode)}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-[12px] text-slate-600 dark:text-slate-300">
                     {version.note || t("reader.autoArchive")}

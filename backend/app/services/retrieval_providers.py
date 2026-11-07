@@ -117,7 +117,7 @@ class ResolvedRerank:
 class ResolvedWeights:
     vector: float = 0.55
     rerank: float = 0.5
-    top_n: int = 12
+    top_n: int = 0
     source: str = SOURCE_ENV
     sources: dict[str, str] = field(default_factory=dict)
 
@@ -572,7 +572,7 @@ class RetrievalProviderService:
             adapter = LLMReranker(
                 llm=provider,
                 timeout=self.settings.rerank.timeout,
-                batch_size=min(12, max(1, int(self.settings.rerank.top_n or 12))),
+                batch_size=max(1, int(self.settings.rerank.batch or 512)),
                 max_doc_chars=self.settings.rerank.chars,
             )
         else:
@@ -590,7 +590,7 @@ class RetrievalProviderService:
                 api_key=self.api_key(record),
                 timeout=self.settings.rerank.timeout,
                 retries=self.settings.rerank.retries,
-                batch=min(100, max(1, int(self.settings.rerank.batch or 100))),
+                batch=max(1, int(self.settings.rerank.batch or 512)),
                 chars=self.settings.rerank.chars,
                 normalize=self.settings.rerank.normalize,
                 raw_scores=self.settings.rerank.raw_scores,
@@ -784,7 +784,7 @@ class RetrievalProviderService:
             float(pick("rerank_weight", self.settings.rerank.weight))
         )
         top_n_value = max(
-            1, int(pick("rerank_top_n", self.settings.rerank.top_n))
+            0, int(pick("rerank_top_n", self.settings.rerank.top_n))
         )
         overall = SOURCE_ENV
         if SOURCE_USER in sources.values():

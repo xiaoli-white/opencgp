@@ -32,6 +32,7 @@ class PieceRepository(Protocol):
         profile: dict[str, Any] | None = None,
         target_words: int | None = None,
         profile_id: str | None = None,
+        brief: str | None = None,
     ) -> Piece | None:
         ...
 

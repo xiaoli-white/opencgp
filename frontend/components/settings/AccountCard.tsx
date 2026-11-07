@@ -13,6 +13,7 @@ import clsx from "clsx";
 import { API_BASE, api } from "@/lib/api";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
+import { roleLabel } from "@/i18n/labels";
 
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 
@@ -47,7 +48,8 @@ export default function AccountCard({
   }, [me?.user.display_name, me?.user.email]);
 
   const initial = (displayName || email || "?").slice(0, 1).toUpperCase();
-  const roleText = roleName || roleKey || me?.role || t("common.readOnly");
+  const roleText =
+    roleLabel(t, roleKey || me?.role || "", roleName) || t("common.readOnly");
 
   const pickAvatar = () => {
     if (!canWrite) return;

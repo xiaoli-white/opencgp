@@ -251,7 +251,7 @@ class Container:
             return LLMReranker(
                 llm=provider,
                 timeout=cfg.timeout,
-                batch_size=min(12, max(1, int(cfg.top_n or 12))),
+                batch_size=max(1, int(cfg.batch or 512)),
                 max_doc_chars=cfg.chars,
             )
         preset = RERANK_PRESETS.get(backend)
@@ -261,8 +261,6 @@ class Container:
             batch = cfg.batch
             if "OPENCGP_RERANK_BATCH" not in os.environ and "COURSE_STUDIO_RERANK_BATCH" not in os.environ:
                 batch = int(preset.get("batch") or cfg.batch)
-            if preset["format"] == "cohere":
-                batch = min(100, batch)
             return RemoteRerank(
                 format=preset["format"],
                 base_url=cfg.base_url or str(preset.get("base_url") or ""),
@@ -376,10 +374,15 @@ class Container:
                 default_top_k=self.settings.generation.top_k,
                 evidence_char_limit=self.settings.generation.evidence_char_limit,
                 max_evidence=self.settings.generation.max_evidence,
+                max_per_source=self.settings.vectorstore.max_per_source,
+                top_k_ceiling=self.settings.generation.top_k_ceiling,
+                citation_gap_action=self.settings.generation.citation_gap_action,
                 default_mode=self.settings.generation.default_mode,
                 min_score=self.settings.vectorstore.min_score,
                 factcheck=self.factcheck(),
-                validators=ValidatorRunner(),
+                validators=ValidatorRunner(
+                    citation_gap_action=self.settings.generation.citation_gap_action
+                ),
             )
 
         return self._get_or_build("generation", build)
@@ -396,7 +399,9 @@ class Container:
 
     def validators(self) -> ValidatorRunner:
         def build() -> ValidatorRunner:
-            return ValidatorRunner()
+            return ValidatorRunner(
+                citation_gap_action=self.settings.generation.citation_gap_action
+            )
 
         return self._get_or_build("validators", build)
 
@@ -421,6 +426,8 @@ class Container:
                 llm=self.llm(),
                 default_top_k=settings.top_k,
                 default_mode=default_mode,
+                max_evidence=self.settings.generation.max_evidence,
+                top_k_ceiling=self.settings.generation.top_k_ceiling,
                 min_score=self.settings.vectorstore.min_score,
             )
 
@@ -646,6 +653,8 @@ class Container:
                 vectorstore=self.vectorstore(),
                 llm=self.llm(),
                 web_search=self.web_search(),
+                max_evidence=self.settings.generation.max_evidence,
+                top_k_ceiling=self.settings.generation.top_k_ceiling,
                 min_score=self.settings.vectorstore.min_score,
                 reranker_factory=self.reranker,
                 rerank_weight=self.settings.rerank.weight,
@@ -670,6 +679,9 @@ class Container:
                 repository=self.piece_repository(),
                 vectorstore=self.vectorstore(),
                 llm=self.llm(),
+                max_evidence=self.settings.generation.max_evidence,
+                top_k_ceiling=self.settings.generation.top_k_ceiling,
+                evidence_char_limit=self.settings.generation.evidence_char_limit,
                 asset_max_images=getattr(self.settings.generation, "assets_max_images", 3),
             )
 

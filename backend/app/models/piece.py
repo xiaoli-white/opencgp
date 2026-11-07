@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
-from app.models.citation import Citation
+from app.models.citation import (
+    Citation,
+    CitationReference,
+    build_citation_references,
+)
 
 GENRES = ("article", "report", "essay", "tutorial", "custom")
 CITATION_POLICIES = ("required", "optional", "forbidden")
@@ -40,6 +44,7 @@ class Piece(BaseModel):
     tenant_id: str = ""
     user_id: str = ""
     title: str
+    brief: str = ""
     profile: PieceProfile = Field(default_factory=PieceProfile)
     outline: list[OutlineSection] = Field(default_factory=list)
     content: str = ""
@@ -54,6 +59,13 @@ class Piece(BaseModel):
     created_at: float = 0.0
     updated_at: float = 0.0
 
+    @computed_field
+    @property
+    def citation_references(self) -> list[CitationReference]:
+        return build_citation_references(
+            self.citations, unit_id=self.id, unit_title=self.title
+        )
+
 
 class PieceVersion(BaseModel):
     id: str
@@ -65,3 +77,8 @@ class PieceVersion(BaseModel):
     note: str = ""
     mode: str = ""
     created_at: float = 0.0
+
+    @computed_field
+    @property
+    def citation_references(self) -> list[CitationReference]:
+        return build_citation_references(self.citations, unit_id=self.piece_id)

@@ -49,26 +49,28 @@ class ResearchService:
         llm: LLMProvider,
         web_search: WebSearchPort | None = None,
         default_top_k: int = 6,
-        max_evidence: int = 16,
+        max_evidence: int = 0,
+        top_k_ceiling: int = 0,
         web_limit: int = 3,
         evidence_char_limit: int = MAX_SECTION_CHARS,
         min_score: float = 0.15,
         reranker_factory: Callable[[str], Any] | None = None,
         rerank_weight: float = 0.5,
-        rerank_top_n: int = 12,
+        rerank_top_n: int = 0,
     ) -> None:
         self.repository = repository
         self.vectorstore = vectorstore
         self.llm = llm
         self.web_search = web_search
         self.default_top_k = default_top_k
-        self.max_evidence = max_evidence
+        self.max_evidence = max(0, int(max_evidence or 0))
+        self.top_k_ceiling = max(0, int(top_k_ceiling or 0))
         self.web_limit = web_limit
         self.evidence_char_limit = evidence_char_limit
         self.min_score = max(0.05, float(min_score) * 0.5)
         self.reranker_factory = reranker_factory
         self.rerank_weight = min(1.0, max(0.0, float(rerank_weight)))
-        self.rerank_top_n = max(1, int(rerank_top_n or 12))
+        self.rerank_top_n = max(0, int(rerank_top_n or 0))
 
     async def run(
         self,
@@ -94,7 +96,9 @@ class ResearchService:
         if not resolved_topic:
             raise ValueError("research topic must not be empty")
         resolved_depth = max(1, min(int(depth or 1), 3))
-        resolved_top_k = max(1, min(int(top_k or self.default_top_k), 20))
+        resolved_top_k = max(1, int(top_k or self.default_top_k))
+        if self.top_k_ceiling > 0:
+            resolved_top_k = min(resolved_top_k, self.top_k_ceiling)
         provider = llm or self.llm
         run = ResearchRun(
             id=f"research_{uuid.uuid4().hex[:16]}",
@@ -249,7 +253,9 @@ class ResearchService:
                     )
             if on_progress is not None:
                 on_progress("retrieving", 0.10 + 0.45 * position / total)
-        return citations[: self.max_evidence], web_used, web_available
+        if self.max_evidence > 0:
+            citations = citations[: self.max_evidence]
+        return citations, web_used, web_available
 
     async def _apply_rerank(
         self,

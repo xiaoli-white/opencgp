@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
+import { useI18n } from "@/i18n/I18nProvider";
 
 const STORAGE_KEY = "series-studio-theme";
 
 export default function ThemeToggle() {
+  const { t } = useI18n();
   const [dark, setDark] = useState(false);
 
   useEffect(() => {
@@ -25,7 +27,7 @@ export default function ThemeToggle() {
     <button
       type="button"
       onClick={toggle}
-      aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+      aria-label={dark ? t("theme.toLight") : t("theme.toDark")}
       className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/60 bg-white/60 text-slate-500 transition hover:text-indigo-600 hover:shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-slate-300 dark:hover:text-indigo-300"
     >
       {dark ? <Sun size={16} /> : <Moon size={16} />}

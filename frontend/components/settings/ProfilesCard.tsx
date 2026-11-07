@@ -29,12 +29,13 @@ import { ConfirmDialog, PromptDialog } from "@/components/common/Dialogs";
 import ProfileEditor from "@/components/profiles/ProfileEditor";
 import SharePanel, { type ShareMember } from "@/components/sharing/SharePanel";
 import { useI18n } from "@/i18n/I18nProvider";
-
-function policyKey(policy: string | undefined): string {
-  if (policy === "required") return "profiles.citeRequired";
-  if (policy === "forbidden") return "profiles.citeForbidden";
-  return "profiles.citeOptional";
-}
+import {
+  policyLabel,
+  profileDescriptionLabel,
+  profileNameLabel,
+  unitNameLabel,
+  validatorLabel,
+} from "@/i18n/labels";
 
 function scopeKey(profile: WorkProfile): string {
   if (profile.is_builtin) return "profiles.scopeBuiltin";
@@ -65,7 +66,9 @@ function ProfileCard({
   exporting: boolean;
   canWrite: boolean;
 }) {
-  const unitName = profile.spec?.unit?.name ?? "-";
+  const unitName = profile.spec?.unit?.name
+    ? unitNameLabel(t, profile.spec.unit.name)
+    : "-";
   const words = profile.spec?.unit?.default_words ?? 0;
   const validators = profile.spec?.validation?.validators ?? [];
   const policy = profile.spec?.grounding?.citation_policy ?? "optional";
@@ -81,7 +84,7 @@ function ProfileCard({
     >
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <p className="min-w-0 break-words text-[12.5px] font-semibold text-slate-800 dark:text-slate-100">
-          {profile.name}
+          {profileNameLabel(t, profile)}
         </p>
         <span className="chip-muted shrink-0" data-scope-badge="true">
           {t(scopeKey(profile))}
@@ -92,7 +95,7 @@ function ProfileCard({
       </div>
       {profile.description ? (
         <p className="mt-1 line-clamp-2 break-words text-[10.5px] leading-relaxed text-slate-400 dark:text-slate-500">
-          {profile.description}
+          {profileDescriptionLabel(t, profile)}
         </p>
       ) : null}
       <div className="mt-2 flex flex-wrap gap-1">
@@ -101,11 +104,11 @@ function ProfileCard({
           {unitName}
         </span>
         <span className="chip-muted">{t("profiles.words", { count: words })}</span>
-        <span className="chip-muted">{t(policyKey(policy))}</span>
+        <span className="chip-muted">{policyLabel(t, policy)}</span>
         {validators.length > 0 ? (
           validators.map((item) => (
-            <span key={item} className="chip-muted font-mono text-[9.5px]">
-              {item}
+            <span key={item} className="chip-muted text-[9.5px]">
+              {validatorLabel(t, item)}
             </span>
           ))
         ) : (
@@ -116,8 +119,11 @@ function ProfileCard({
         {t("profiles.summary", {
           unit: unitName,
           count: words,
-          policy: t(policyKey(policy)),
-          validators: validators.length > 0 ? validators.join(", ") : "-",
+          policy: policyLabel(t, policy),
+          validators:
+            validators.length > 0
+              ? validators.map((item) => validatorLabel(t, item)).join(", ")
+              : "-",
         })}
       </p>
       {showOwner ? (
@@ -285,7 +291,9 @@ export default function ProfilesCard({
 
   const openDuplicate = (profile: WorkProfile) => {
     setDuplicateError("");
-    setDuplicateName(t("profiles.duplicateSuffix", { name: profile.name }));
+    setDuplicateName(
+      t("profiles.duplicateSuffix", { name: profileNameLabel(t, profile) }),
+    );
     setDuplicateSource(profile);
   };
 
@@ -731,7 +739,11 @@ export default function ProfilesCard({
         open={Boolean(deleteTarget)}
         title={t("profiles.deleteTitle")}
         description={
-          deleteTarget ? t("profiles.deleteDesc", { name: deleteTarget.name }) : undefined
+          deleteTarget
+            ? t("profiles.deleteDesc", {
+                name: profileNameLabel(t, deleteTarget),
+              })
+            : undefined
         }
         confirmLabel={t("common.delete")}
         busy={deleting}
@@ -744,7 +756,13 @@ export default function ProfilesCard({
 
       <SharePanel
         open={Boolean(shareTarget)}
-        title={shareTarget ? t("profiles.sharesTitle", { name: shareTarget.name }) : ""}
+        title={
+          shareTarget
+            ? t("profiles.sharesTitle", {
+                name: profileNameLabel(t, shareTarget),
+              })
+            : ""
+        }
         subtitle={t("profiles.sharesSubtitle")}
         note={t("profiles.sharesNote")}
         members={shareMemberList}

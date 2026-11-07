@@ -11,6 +11,7 @@ export function Modal({
   onClose,
   children,
   wide,
+  inline = false,
   layer = "z-[70]",
 }: {
   open: boolean;
@@ -19,6 +20,8 @@ export function Modal({
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
+  /** Render as an in-flow card instead of a floating overlay. */
+  inline?: boolean;
   layer?: string;
 }) {
   const { t } = useI18n();
@@ -31,53 +34,71 @@ export function Modal({
     return () => window.removeEventListener("keydown", handler);
   }, [open, onClose]);
 
+  const head = (
+    <div className="mb-3 flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{title}</h2>
+        {subtitle ? (
+          <p className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+            {subtitle}
+          </p>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        className="btn-quiet grid h-8 w-8 shrink-0 place-items-center rounded-full"
+        aria-label={t("dialogs.close")}
+      >
+        <X size={14} />
+      </button>
+    </div>
+  );
+
   return (
     <AnimatePresence>
       {open ? (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className={
-            "fixed inset-0 flex items-end justify-center bg-slate-900/40 p-0 backdrop-blur-sm sm:items-center sm:p-6 " +
-            layer
-          }
-          onClick={onClose}
-        >
+        inline ? (
           <motion.div
-            initial={{ y: 16, opacity: 0, scale: 0.99 }}
-            animate={{ y: 0, opacity: 1, scale: 1 }}
-            exit={{ y: 10, opacity: 0 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            onClick={(event) => event.stopPropagation()}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
             className={clsx(
-              "glass max-h-[92vh] w-full overflow-y-auto rounded-t-3xl border border-white/50 p-5 shadow-glass dark:border-white/10 sm:rounded-3xl",
-              wide ? "sm:max-w-2xl" : "sm:max-w-md",
+              "glass w-full overflow-hidden rounded-2xl border border-white/60 p-5 shadow-glass dark:border-white/10",
+              wide ? "max-w-none" : "max-w-none sm:max-w-xl",
             )}
           >
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                  {title}
-                </h2>
-                {subtitle ? (
-                  <p className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-                    {subtitle}
-                  </p>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                onClick={onClose}
-                className="btn-quiet grid h-8 w-8 shrink-0 place-items-center rounded-full"
-                aria-label={t("dialogs.close")}
-              >
-                <X size={14} />
-              </button>
-            </div>
+            {head}
             {children}
           </motion.div>
-        </motion.div>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className={
+              "fixed inset-0 flex items-end justify-center bg-slate-900/40 p-0 backdrop-blur-sm sm:items-center sm:p-6 " +
+              layer
+            }
+            onClick={onClose}
+          >
+            <motion.div
+              initial={{ y: 16, opacity: 0, scale: 0.99 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 10, opacity: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              onClick={(event) => event.stopPropagation()}
+              className={clsx(
+                "glass max-h-[92vh] w-full overflow-y-auto rounded-t-3xl border border-white/50 p-5 shadow-glass dark:border-white/10 sm:rounded-3xl",
+                wide ? "sm:max-w-2xl" : "sm:max-w-md",
+              )}
+            >
+              {head}
+              {children}
+            </motion.div>
+          </motion.div>
+        )
       ) : null}
     </AnimatePresence>
   );
