@@ -115,6 +115,17 @@ class LockService:
         force: bool = False,
     ) -> EditLock:
         now = time.time()
+        # Re-acquiring a lock you already hold must be idempotent: minting a new
+        # token would invalidate the one the editor is holding, so its release
+        # call would fail and the lock would stay behind until it expired.
+        existing = self.get_edit(resource_type, resource_id)
+        if (
+            existing is not None
+            and existing.user_id == user_id
+            and existing.expires_at > now
+            and not force
+        ):
+            return existing
         token = secrets.token_urlsafe(16)
         expires_at = now + self.ttl_seconds
         method = getattr(self.repository, "try_acquire_edit_lock", None)

@@ -137,6 +137,7 @@ class LLMConfig:
     base_url: str = ""
     api_key: str = ""
     model: str = ""
+    timeout: float = 60.0
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -145,6 +146,7 @@ class LLMConfig:
             base_url=_env("LLM_BASE_URL", ""),
             api_key=_env("LLM_API_KEY", ""),
             model=_env("LLM_MODEL", ""),
+            timeout=max(1.0, float(_env("LLM_TIMEOUT", "60") or 60)),
         )
 
 
@@ -242,7 +244,7 @@ class EmbeddingConfig:
 @dataclass
 class RerankConfig:
     backend: str = "none"
-    top_n: int = 0
+    top_n: int = 12
     weight: float = 0.5
     timeout: float = 20.0
     retries: int = 2
@@ -258,7 +260,7 @@ class RerankConfig:
     def from_env(cls) -> "RerankConfig":
         return cls(
             backend=(_env("RERANK_BACKEND", "none") or "none").strip().lower(),
-            top_n=max(0, int(_env("RERANK_TOP_N", "0") or 0)),
+            top_n=max(0, int(_env("RERANK_TOP_N", "12") or 12)),
             weight=float(_env("RERANK_WEIGHT", "0.5") or 0.5),
             timeout=float(_env("RERANK_TIMEOUT", "20") or 20),
             retries=max(0, int(_env("RERANK_RETRIES", "2") or 2)),

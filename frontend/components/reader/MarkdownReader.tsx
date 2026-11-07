@@ -524,19 +524,8 @@ export default function MarkdownReader({
           {body}
         </ReactMarkdown>
       </CitationNavProvider>
-      {variant === "reader" && showCitations ? (
-        entries.length > 0 ? (
-          <CitationSources
-            entries={entries}
-            activeMarker={activeMarker}
-            onJump={jumpToMarker}
-          />
-        ) : (
-          <p className="mt-8 font-sans text-[11px] text-slate-400 dark:text-slate-500">
-            {tr("citation.noCitations")}
-          </p>
-        )
-      ) : null}
+      {/* The article carries its own inline markers; the separate sources box is
+          not shown because readers open evidence from the marker itself. */}
       <CitationEvidencePanel
         entries={entries}
         activeMarker={activeMarker}

@@ -56,7 +56,7 @@ class ResearchService:
         min_score: float = 0.15,
         reranker_factory: Callable[[str], Any] | None = None,
         rerank_weight: float = 0.5,
-        rerank_top_n: int = 0,
+        rerank_top_n: int = 12,
     ) -> None:
         self.repository = repository
         self.vectorstore = vectorstore
@@ -283,9 +283,12 @@ class ResearchService:
             rerank_model = str(getattr(reranker, "model", "") or "") or None
         if on_progress is not None:
             on_progress("reranking", 0.55)
+        # Only the scoring set is truncated to the candidate count; the evidence
+        # list handed to the writer below keeps every gathered citation.
+        rerank_candidates = citations[:top_n] if top_n > 0 else citations
         try:
             scores = await reranker.rerank(
-                query, [citation.text for citation in citations], top_n
+                query, [citation.text for citation in rerank_candidates], top_n
             )
         except Exception as exc:  # noqa: BLE001
             print(f"[research] rerank failed, skipping rerank: {exc!r}")
@@ -296,9 +299,9 @@ class ResearchService:
             return citations
         if on_progress is not None:
             on_progress("reranking", 0.65)
-        if len(scores) != len(citations):
+        if len(scores) != len(rerank_candidates):
             return citations
-        for citation, score in zip(citations, scores):
+        for citation, score in zip(rerank_candidates, scores):
             final_score = (1.0 - weight) * citation.score + weight * float(score)
             citation.rerank_score = round(float(score), 6)
             citation.score = round(float(final_score), 6)

@@ -257,7 +257,11 @@ class DatabaseLockRepository(LockRepository):
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(resource_type, resource_id) DO UPDATE SET"
             " tenant_id = excluded.tenant_id, user_id = excluded.user_id,"
-            " user_name = excluded.user_name, token = excluded.token,"
+            " user_name = excluded.user_name,"
+            # Keep the token stable for a holder that re-acquires its own lock,
+            # otherwise a double click breaks the release path.
+            " token = CASE WHEN edit_locks.user_id = excluded.user_id"
+            " THEN edit_locks.token ELSE excluded.token END,"
             " heartbeat_at = excluded.heartbeat_at, expires_at = excluded.expires_at"
             " WHERE edit_locks.user_id = excluded.user_id"
             " OR edit_locks.expires_at <= ? OR ? = 1",

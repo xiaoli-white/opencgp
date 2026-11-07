@@ -18,6 +18,7 @@ import ProvidersSection from "@/components/settings/ProvidersSection";
 import RetrievalWeightsSection from "@/components/settings/RetrievalWeightsSection";
 import ServerProvidersCard from "@/components/settings/ServerProvidersCard";
 import ServerProfilesCard from "@/components/settings/ServerProfilesCard";
+import TimeoutSettingsSection from "@/components/settings/TimeoutSettingsSection";
 import UserReviewCard from "@/components/settings/UserReviewCard";
 import SettingsBreadcrumb from "@/components/settings/SettingsBreadcrumb";
 import NoAccessCard from "@/components/common/NoAccessCard";
@@ -124,6 +125,18 @@ export default function ServerSettingsPage() {
 
       <ServerProfilesCard
         canManage={canServer}
+        onNotice={(message) => {
+          setError("");
+          setNotice(message);
+        }}
+        onError={(message) => {
+          setNotice("");
+          setError(message);
+        }}
+      />
+
+      <TimeoutSettingsSection
+        canManage={canServer && can("write")}
         onNotice={(message) => {
           setError("");
           setNotice(message);

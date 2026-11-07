@@ -226,6 +226,18 @@ export function unitStatusLabel(t: Translate, status: string): string {
   return enumLabel(t, "unitStatus", status || "draft");
 }
 
+export function pluralLabel(
+  t: Translate,
+  key: string,
+  count: number,
+): string {
+  if (count === 1) {
+    const singular = lookup(t, `${key}One`);
+    if (singular !== undefined) return singular;
+  }
+  return t(key, { count });
+}
+
 export function jobKindLabel(t: Translate, kind: string): string {
   return enumLabel(t, "jobKind", kind);
 }

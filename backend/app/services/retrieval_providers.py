@@ -742,6 +742,15 @@ class RetrievalProviderService:
             lambda: self._resolve_weights(tenant_id, user_id),
         )
 
+    def resolve_rerank_top_n(
+        self, tenant_id: str, user_id: str, override: int | None = None
+    ) -> tuple[int, str]:
+        """Resolve the rerank candidate count: request > user > tenant > env default."""
+        if override is not None:
+            return max(0, int(override)), "request"
+        weights = self.resolve_weights(tenant_id, user_id)
+        return max(0, int(weights.top_n)), weights.sources.get("top_n", SOURCE_ENV)
+
     def resolve_context(self, tenant_id: str, user_id: str) -> RetrievalContext:
         return self._cached(
             ("context", tenant_id, user_id),
@@ -972,7 +981,8 @@ class RetrievalProviderService:
             if value is None:
                 setting.rerank_top_n = None
             else:
-                setting.rerank_top_n = max(1, int(value))
+                # 0 is a valid, explicit opt-out: score every retrieved candidate.
+                setting.rerank_top_n = max(0, int(value))
         setting.updated_at = int(time.time())
         self.repository.save_setting(setting)
         return self.effective_settings(tenant_id, user_id)

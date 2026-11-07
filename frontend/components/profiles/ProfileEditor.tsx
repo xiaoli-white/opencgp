@@ -63,7 +63,6 @@ type EditorForm = {
   tense: string;
   forbiddenText: string;
   citationPolicy: string;
-  minEvidence: number;
   allowWeb: boolean;
   glossary: boolean;
   settingBook: boolean;
@@ -94,7 +93,6 @@ const EMPTY_FORM: EditorForm = {
   tense: "present",
   forbiddenText: "",
   citationPolicy: "optional",
-  minEvidence: 0,
   allowWeb: false,
   glossary: false,
   settingBook: false,
@@ -183,7 +181,6 @@ function formFromProfile(profile: WorkProfile | null): EditorForm {
     tense: spec.voice?.tense ?? "present",
     forbiddenText: (spec.voice?.forbidden_phrases ?? []).join(", "),
     citationPolicy: spec.grounding?.citation_policy ?? "optional",
-    minEvidence: spec.grounding?.min_evidence ?? 0,
     allowWeb: toBool(spec.grounding?.allow_web, false),
     glossary: toBool(spec.assets?.glossary, false),
     settingBook: toBool(spec.assets?.setting_book, false),
@@ -230,7 +227,6 @@ function buildSpec(form: EditorForm): ProfileSpec {
     },
     grounding: {
       citation_policy: form.citationPolicy,
-      min_evidence: form.minEvidence,
       allow_web: form.allowWeb,
     },
     assets: {
@@ -667,10 +663,6 @@ export default function ProfileEditor({
   const sectionsMaxField = useNumberDraft(form.sectionsMax, (next) =>
     update("sectionsMax", next),
   );
-  const minEvidenceField = useNumberDraft(form.minEvidence, (next) =>
-    update("minEvidence", next),
-  );
-
   const fieldClass = (path: string, base = "input mt-1") =>
     clsx(base, errorsFor(path).length > 0 && "border-rose-400 ring-1 ring-rose-300/60");
 
@@ -1089,33 +1081,20 @@ export default function ProfileEditor({
                   </Section>
 
                   <Section title={t("profiles.groundingSection")}>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                        {t("profiles.fieldCitation")}
-                        <select
-                          value={form.citationPolicy}
-                          onChange={(event) => update("citationPolicy", event.target.value)}
-                          className={fieldClass("grounding.citation_policy", "select mt-1")}
-                          data-field="grounding.citation_policy"
-                        >
-                          <option value="required">{policyLabel(t, "required")}</option>
-                          <option value="optional">{policyLabel(t, "optional")}</option>
-                          <option value="forbidden">{policyLabel(t, "forbidden")}</option>
-                        </select>
-                        {errorText("grounding.citation_policy")}
-                      </label>
-                      <label className="block text-[11px] text-slate-500 dark:text-slate-400">
-                        {t("profiles.fieldMinEvidence")}
-                        <input
-                          type="number"
-                          min={0}
-                          max={20}
-                          {...minEvidenceField}
-                          className={fieldClass("grounding.min_evidence")}
-                        />
-                        {errorText("grounding.min_evidence")}
-                      </label>
-                    </div>
+                    <label className="block text-[11px] text-slate-500 dark:text-slate-400">
+                      {t("profiles.fieldCitation")}
+                      <select
+                        value={form.citationPolicy}
+                        onChange={(event) => update("citationPolicy", event.target.value)}
+                        className={fieldClass("grounding.citation_policy", "select mt-1 w-full")}
+                        data-field="grounding.citation_policy"
+                      >
+                        <option value="required">{policyLabel(t, "required")}</option>
+                        <option value="optional">{policyLabel(t, "optional")}</option>
+                        <option value="forbidden">{policyLabel(t, "forbidden")}</option>
+                      </select>
+                      {errorText("grounding.citation_policy")}
+                    </label>
                     <Toggle
                       label={t("profiles.fieldAllowWeb")}
                       checked={form.allowWeb}

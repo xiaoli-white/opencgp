@@ -103,7 +103,6 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
   const [generating, setGenerating] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
   const [topic, setTopic] = useState("");
-  const [topK, setTopK] = useState(5);
   const [generateMode, setGenerateMode] = useState<GenerationMode>("strict");
   const [chatOpen, setChatOpen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
@@ -359,7 +358,6 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
     try {
       const result = await api.generateUnit(activeUnit.id, {
         topic: topic.trim() || undefined,
-        top_k: topK,
         mode: generateMode,
         expected_version: baseline,
       });
@@ -1274,24 +1272,13 @@ export default function SeriesWorkspace({ seriesId }: { seriesId: string }) {
                           disabled={generating}
                         />
                       </div>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_120px_auto]">
+                      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
                         <input
                           value={topic}
                           onChange={(event) => setTopic(event.target.value)}
                           placeholder={t("series.topicPlaceholder")}
                           className="input"
                         />
-                        <select
-                          value={topK}
-                          onChange={(event) => setTopK(Number(event.target.value))}
-                          className="select"
-                        >
-                          {[3, 5, 8, 12].map((value) => (
-                            <option key={value} value={value}>
-                              {t("series.evidenceCount", { count: value })}
-                            </option>
-                          ))}
-                        </select>
                         <button
                           type="button"
                           {...guard}

@@ -77,6 +77,7 @@ from app.services.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
 from app.services.metrics import get_metrics
 from app.services.textproc import line_diff
 from app.services.validators import ValidatorRunner
+from app.services.runtime_config import OVERRIDABLE
 from app.services.assets import DEFAULT_STYLE, AssetMaterializer
 from app.services.errors import (
     ShareExpiredError,
@@ -172,6 +173,15 @@ async def lifespan(app: FastAPI):
         container.profiles().ensure_builtin()
     except Exception as exc:  # noqa: BLE001
         print(f"[profiles] failed to seed built-in presets: {exc!r}")
+    try:
+        # Load deploy-time defaults first, then apply operator overrides before
+        # any adapter is built, so a restart preserves the stored values.
+        runtime_config = container.runtime_config()
+        runtime_config.ensure_schema()
+        runtime_config.apply(settings)
+        print(f"[runtime-config] applied overrides: {runtime_config.load()}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[runtime-config] failed to apply stored overrides: {exc!r}")
     service = container.job_service()
     try:
         service.recover_stale()
@@ -786,6 +796,8 @@ class SearchRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=50)
     source_ids: list[str] | None = None
+    # Per-request override for the rerank candidate count. 0 scores every candidate.
+    rerank_top_n: int | None = Field(default=None, ge=0)
 
 
 @app.post("/api/v1/kb/search")
@@ -802,9 +814,13 @@ async def kb_search(
     weights = retrieval_ctx.weights
     store = container.vectorstore()
     rerank_enabled = rerank.enabled
+    # Request override > stored user setting > stored tenant (server) setting > env default.
+    top_n, top_n_source = service.resolve_rerank_top_n(
+        tenant_id, user_id, req.rerank_top_n
+    )
     candidate_k = (
-        min(50, max(req.top_k, int(weights.top_n)))
-        if rerank_enabled
+        min(50, max(req.top_k, top_n))
+        if rerank_enabled and top_n > 0
         else req.top_k
     )
     citations, search_meta = await retrieval_ctx.search(
@@ -832,18 +848,24 @@ async def kb_search(
     if embedding.adapter is not None and embedded <= 0:
         if "no_vectors_for_model" not in warnings:
             warnings.append("no_vectors_for_model")
+    retrieved_count = len(citations)
+    rerank_candidate_count = 0
     if rerank_enabled and citations:
+        # Only the scoring set is truncated. The citations/evidence list keeps
+        # every retrieved item and is trimmed later only by the requested top_k.
+        rerank_candidates = citations[:top_n] if top_n > 0 else citations
+        rerank_candidate_count = len(rerank_candidates)
         try:
-            docs = [citation.text for citation in citations]
-            scores = await rerank.adapter.rerank(req.query, docs, int(weights.top_n))
+            docs = [citation.text for citation in rerank_candidates]
+            scores = await rerank.adapter.rerank(req.query, docs, top_n)
         except Exception as exc:  # noqa: BLE001
             print(f"[search] rerank failed, skipping reordering: {exc!r}")
             scores = []
             if "rerank_failed" not in warnings:
                 warnings.append("rerank_failed")
-        if len(scores) == len(citations):
+        if len(scores) == len(rerank_candidates):
             weight = min(1.0, max(0.0, float(weights.rerank)))
-            for citation, score in zip(citations, scores):
+            for citation, score in zip(rerank_candidates, scores):
                 final_score = (
                     (1.0 - weight) * citation.score + weight * float(score)
                 )
@@ -875,11 +897,15 @@ async def kb_search(
             "backend": rerank.backend,
             "source": rerank.source,
             "enabled": rerank_enabled,
+            "top_n": top_n,
+            "top_n_source": top_n_source,
+            "candidates_scored": rerank_candidate_count,
         },
+        "retrieved": retrieved_count,
         "weights": {
             "vector": weights.vector,
             "rerank": weights.rerank,
-            "top_n": weights.top_n,
+            "top_n": top_n,
         },
         "skipped_mismatch": int(search_meta.get("skipped_mismatch") or 0),
         "source": service.effective_settings(tenant_id, user_id).get("source", "env"),
@@ -888,7 +914,7 @@ async def kb_search(
             "rerank": rerank.source,
             "vector_weight": weights.sources.get("vector", "env"),
             "rerank_weight": weights.sources.get("rerank", "env"),
-            "rerank_top_n": weights.sources.get("top_n", "env"),
+            "rerank_top_n": top_n_source,
         },
         "warnings": warnings,
     }
@@ -1116,6 +1142,53 @@ async def retrieval_settings_delete(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/settings/timeouts")
+def get_timeout_settings(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    """Effective adapter timeouts plus which ones come from runtime overrides."""
+    _enforce(ctx, "manage_server")
+    return container.runtime_config().snapshot(settings)
+
+
+@app.put("/api/v1/settings/timeouts")
+def update_timeout_settings(
+    req: dict[str, float | None],
+    ctx: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    """Persist a partial map of timeout overrides and apply them immediately.
+
+    ``null`` (or JSON ``null``) removes an override and restores the
+    environment-backed default. Unknown keys and out-of-range values are 400.
+    """
+    _enforce(ctx, "manage_server")
+    unknown = sorted(key for key in req if key not in OVERRIDABLE)
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown timeout setting(s): {', '.join(unknown)}",
+        )
+    service = container.runtime_config()
+    try:
+        service.save(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    applied = service.apply(settings)
+    changed = set(req.keys())
+    refreshed = container.refresh_timeout_attrs(changed)
+    rebuilt = container.invalidate_timeout_dependents(changed)
+    probes = container.probe_timeouts(changed)
+    print(
+        "[runtime-config] timeouts updated:"
+        f" keys={sorted(changed)}"
+        f" applied={applied}"
+        f" updated_in_place={refreshed}"
+        f" rebuilt={rebuilt}"
+        f" live={probes}"
+    )
+    return service.snapshot(settings)
 
 
 class EmbeddingBackfillRequest(BaseModel):

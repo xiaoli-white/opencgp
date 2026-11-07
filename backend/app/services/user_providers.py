@@ -345,4 +345,5 @@ class UserProviderService:
             model=self.resolve_model(provider, model),
             temperature=SERVER_TEMPERATURE,
             max_tokens=SERVER_MAX_TOKENS,
+            timeout=self.server.timeout,
         )

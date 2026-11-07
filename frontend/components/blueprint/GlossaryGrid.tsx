@@ -12,6 +12,7 @@ import {
 import clsx from "clsx";
 import type { GlossaryTerm } from "@/lib/api";
 import { useI18n } from "@/i18n/I18nProvider";
+import { pluralLabel } from "@/i18n/labels";
 
 type GlossaryGridProps = {
   glossary: GlossaryTerm[];
@@ -237,7 +238,7 @@ export default function GlossaryGrid({
               ) : null}
               {term.node_ids.length > 0 ? (
                 <p className="mt-2 text-[10px] text-slate-400 dark:text-slate-500">
-                  {t("glossary.linkedToNodes", { count: term.node_ids.length })}
+                  {pluralLabel(t, "glossary.linkedToNodes", term.node_ids.length)}
                 </p>
               ) : null}
             </motion.div>

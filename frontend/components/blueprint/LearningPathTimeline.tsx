@@ -12,6 +12,7 @@ import {
 import type { Blueprint, OutlineNode } from "@/lib/api";
 import StatusBadge, { statusDotClass } from "@/components/series/StatusBadge";
 import { useI18n } from "@/i18n/I18nProvider";
+import { pluralLabel } from "@/i18n/labels";
 
 type Translate = (path: string, vars?: Record<string, string | number>) => string;
 
@@ -100,13 +101,13 @@ export default function LearningPathTimeline({
             {node.objectives.length > 0 ? (
               <span className="chip-muted">
                 <ListChecks size={10} />
-                {t("blueprint.objectives", { count: node.objectives.length })}
+                {pluralLabel(t, "blueprint.objectives", node.objectives.length)}
               </span>
             ) : null}
             {node.prerequisites.length > 0 ? (
               <span className="chip-muted">
                 <Lock size={10} />
-                {t("blueprint.prerequisites", { count: node.prerequisites.length })}
+                {pluralLabel(t, "blueprint.prerequisites", node.prerequisites.length)}
               </span>
             ) : null}
             {node.unit_id ? (
@@ -177,7 +178,7 @@ export default function LearningPathTimeline({
                         ) : null}
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                           <span className="chip">
-                            {t("blueprint.nodeCount", { count: nodes.length })}
+                            {pluralLabel(t, "blueprint.nodeCount", nodes.length)}
                           </span>
                           <span className="chip-muted">
                             <Clock3 size={10} />

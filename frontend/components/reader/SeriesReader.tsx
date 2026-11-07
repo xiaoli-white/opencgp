@@ -370,10 +370,7 @@ export default function SeriesReader({
               <div className="mt-7 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70 pt-4 dark:border-white/10">
                 <span className="flex items-center gap-1.5 text-[10.5px] text-slate-400 dark:text-slate-500">
                   <Clock3 size={11} />
-                  {t("reader.charsCites", {
-                    chars: contentLength(unit.content),
-                    cites: citations.length,
-                  })}
+                  {t("reader.chars", { count: contentLength(unit.content) })}
                 </span>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <button

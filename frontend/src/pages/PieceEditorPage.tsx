@@ -864,7 +864,7 @@ export default function PieceEditorPage() {
             </div>
           </div>
 
-          <div className="no-scrollbar flex w-full shrink-0 items-center gap-2 overflow-x-auto lg:w-auto">
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-2 lg:w-auto">
             <button
               type="button"
               onClick={generateAll}
@@ -944,6 +944,7 @@ export default function PieceEditorPage() {
               sourceType="piece"
               sourceId={piece.id}
               fallbackName={piece.title}
+              className="max-lg:w-full max-lg:justify-end"
             />
             <button
               type="button"
@@ -1027,7 +1028,7 @@ export default function PieceEditorPage() {
         ) : null}
       </div>
 
-      <div className="lg:hidden">
+      <div className="xl:hidden">
         <button
           type="button"
           onClick={() => setOutlineOpen((prev) => !prev)}
@@ -1121,8 +1122,8 @@ export default function PieceEditorPage() {
         ) : null}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)_220px]">
-        <aside className="glass hidden h-fit rounded-3xl p-3.5 shadow-glass lg:block">
+      <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)_220px]">
+        <aside className="glass hidden h-fit rounded-3xl p-3.5 shadow-glass xl:block">
           <h2 className="flex items-center gap-1.5 px-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
             <Layers size={12} />
             {t("piece.outline")}

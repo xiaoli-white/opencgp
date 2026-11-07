@@ -487,6 +487,20 @@ export type RetrievalSettingsPayload = {
   rerank_top_n?: number | null;
 };
 
+export type TimeoutSettingItem = {
+  key: string;
+  default: number | null;
+  value: number | null;
+  overridden: boolean;
+  minimum: number;
+  maximum: number;
+};
+
+export type TimeoutsSnapshot = {
+  items: TimeoutSettingItem[];
+  overrides: Record<string, number>;
+};
+
 export type EmbeddingStatus = {
   provider_id: string;
   provider_name: string;
@@ -1381,7 +1395,6 @@ export const api = {
     unitId: string,
     payload: {
       topic?: string;
-      top_k?: number;
       note?: string;
       source_ids?: string[];
       mode?: GenerationMode;
@@ -1513,7 +1526,6 @@ export const api = {
     seriesId: string,
     payload: {
       mode?: GenerationMode;
-      top_k?: number;
       source_ids?: string[];
       focus?: string;
       expected_version?: number | null;
@@ -1523,7 +1535,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({
         mode: payload.mode ?? "strict",
-        top_k: payload.top_k ?? null,
         source_ids: payload.source_ids ?? null,
         focus: payload.focus ?? "",
         expected_version: payload.expected_version ?? null,
@@ -1861,6 +1872,15 @@ export const api = {
       `/api/v1/settings/retrieval/settings?scope=${encodeURIComponent(scope)}`,
       { method: "DELETE" },
     ),
+
+  getTimeoutSettings: () =>
+    request<TimeoutsSnapshot>("/api/v1/settings/timeouts"),
+
+  updateTimeoutSettings: (values: Record<string, number | null>) =>
+    request<TimeoutsSnapshot>("/api/v1/settings/timeouts", {
+      method: "PUT",
+      body: JSON.stringify(values),
+    }),
 
   getEmbeddingStatus: (providerId?: string) =>
     request<EmbeddingStatus>(

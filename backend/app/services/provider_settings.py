@@ -469,6 +469,7 @@ class ProviderSettingsService:
             resolved.max_tokens,
             json.dumps(resolved.extra_body, sort_keys=True, ensure_ascii=False),
             json.dumps(resolved.extra_headers, sort_keys=True, ensure_ascii=False),
+            self.server.timeout,
             resolved.updated_at,
         )
 
@@ -482,6 +483,7 @@ class ProviderSettingsService:
             base_url=resolved.base_url or self.server.base_url,
             api_key=resolved.api_key,
             model=resolved.model or self.server.model,
+            timeout=self.server.timeout,
             temperature=(
                 resolved.temperature
                 if resolved.temperature is not None

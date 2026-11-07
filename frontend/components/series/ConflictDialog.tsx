@@ -74,14 +74,14 @@ export default function ConflictDialog({
               <span className="text-slate-500 dark:text-slate-400">
                 {t("conflict.yourBaseline")}{" "}
                 <span className="font-semibold text-slate-700 tabular-nums dark:text-slate-200">
-                  v{conflict.expectedVersion}
+                  {t("common.versionTag", { version: conflict.expectedVersion })}
                 </span>
               </span>
               <ArrowRight size={13} className="text-slate-300 dark:text-slate-600" />
               <span className="text-slate-500 dark:text-slate-400">
                 {t("conflict.current")}{" "}
                 <span className="font-semibold text-indigo-600 tabular-nums dark:text-indigo-300">
-                  v{conflict.currentVersion}
+                  {t("common.versionTag", { version: conflict.currentVersion })}
                 </span>
               </span>
             </div>

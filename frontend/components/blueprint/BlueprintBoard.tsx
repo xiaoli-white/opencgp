@@ -28,7 +28,7 @@ import {
 import { formatRelative } from "@/lib/format";
 import { useSession } from "@/components/auth/SessionProvider";
 import { useI18n } from "@/i18n/I18nProvider";
-import { modeLabel } from "@/i18n/labels";
+import { modeLabel, pluralLabel } from "@/i18n/labels";
 import ModePicker from "@/components/series/ModePicker";
 import type { VersionConflict } from "@/components/series/ConflictDialog";
 import LearningPathTimeline from "@/components/blueprint/LearningPathTimeline";
@@ -65,7 +65,6 @@ export default function BlueprintBoard({
   const [loadError, setLoadError] = useState("");
   const [mode, setMode] = useState<GenerationMode>("strict");
   const [focus, setFocus] = useState("");
-  const [topK, setTopK] = useState(5);
   const [generating, setGenerating] = useState(false);
   const [regenerateOpen, setRegenerateOpen] = useState(false);
   const [conflict, setConflict] = useState("");
@@ -113,7 +112,6 @@ export default function BlueprintBoard({
       try {
         const result = await api.generateBlueprint(seriesId, {
           mode: useMode,
-          top_k: topK,
           focus: focus.trim(),
           expected_version: baseline,
         });
@@ -153,7 +151,6 @@ export default function BlueprintBoard({
       onNotice,
       onProgressRefresh,
       onVersionConflict,
-      topK,
     ],
   );
 
@@ -165,7 +162,7 @@ export default function BlueprintBoard({
       setBlueprint(result.blueprint);
       onNotice(
         result.created_count > 0
-          ? t("blueprint.appliedCreated", { count: result.created_count })
+          ? pluralLabel(t, "blueprint.appliedCreated", result.created_count)
           : t("blueprint.appliedExisting"),
       );
       await onUnitsChanged();
@@ -186,7 +183,7 @@ export default function BlueprintBoard({
         prev ? { ...prev, glossary: payload.glossary } : prev,
       );
       setEditingGlossary(false);
-      onNotice(t("blueprint.glossarySaved", { count: payload.count }));
+      onNotice(pluralLabel(t, "blueprint.glossarySaved", payload.count));
     } catch (err) {
       onError(err instanceof Error ? err.message : t("blueprint.glossarySaveFailed"));
     } finally {
@@ -205,24 +202,13 @@ export default function BlueprintBoard({
       <div className="mt-3">
         <ModePicker value={mode} onChange={setMode} disabled={generating} />
       </div>
-      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_120px_auto]">
+      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
         <input
           value={focus}
           onChange={(event) => setFocus(event.target.value)}
           placeholder={t("blueprint.focusPlaceholder")}
           className="input"
         />
-        <select
-          value={topK}
-          onChange={(event) => setTopK(Number(event.target.value))}
-          className="select"
-        >
-          {[3, 5, 8, 12].map((value) => (
-            <option key={value} value={value}>
-              {t("blueprint.evidenceItems", { count: value })}
-            </option>
-          ))}
-        </select>
         <button
           type="button"
           onClick={() => void runGenerate()}
@@ -327,7 +313,7 @@ export default function BlueprintBoard({
               </p>
             </div>
             <span className="chip-muted">
-              {t("blueprint.existingUnits", { count: units.length })}
+              {pluralLabel(t, "blueprint.existingUnits", units.length)}
             </span>
           </div>
 
@@ -372,7 +358,9 @@ export default function BlueprintBoard({
               >
                 {blueprint.grounded ? t("blueprint.grounded") : t("blueprint.noEvidence")}
               </span>
-              <span className="chip-muted">v{blueprint.version}</span>
+              <span className="chip-muted">
+                {t("common.versionTag", { version: blueprint.version })}
+              </span>
               {blueprint.provider ? (
                 <span className="chip-muted">{blueprint.provider}</span>
               ) : null}
@@ -519,10 +507,9 @@ export default function BlueprintBoard({
               {t("blueprint.learningPath")}
             </p>
             <span className="chip-muted">
-              {t("blueprint.stagesNodes", {
-                stages: blueprint.learning_path.length,
-                nodes: blueprint.outline.length,
-              })}
+              {pluralLabel(t, "blueprint.stageCount", blueprint.learning_path.length)}
+              <span className="px-1">·</span>
+              {pluralLabel(t, "blueprint.nodeCount", blueprint.outline.length)}
             </span>
           </div>
           <div className="mt-3">
@@ -540,7 +527,7 @@ export default function BlueprintBoard({
               {t("blueprint.glossary")}
             </p>
             <span className="chip-muted">
-              {t("blueprint.termCount", { count: blueprint.glossary.length })}
+              {pluralLabel(t, "blueprint.termCount", blueprint.glossary.length)}
             </span>
           </div>
           <div className="mt-3">
@@ -554,25 +541,29 @@ export default function BlueprintBoard({
           </div>
           {!editingGlossary && blueprint.glossary.length > 0 ? (
             <p className="mt-2 px-1 text-[10px] text-slate-400 dark:text-slate-500">
-              {t("blueprint.totalTermsRelated", { count: blueprint.glossary.length })}
-              {Array.from(
-                new Set(
-                  blueprint.glossary.flatMap((term) =>
-                    term.node_ids
-                      .map((nodeId) => {
-                        const node = blueprint.outline.find(
-                          (item) => item.id === nodeId,
-                        );
-                        return node?.unit_id
-                          ? unitTitleMap.get(node.unit_id) ?? ""
-                          : "";
-                      })
-                      .filter(Boolean),
-                  ),
-                ),
-              )
-                .slice(0, 3)
-                .join(", ") || t("common.none")}
+              {pluralLabel(t, "blueprint.totalTermsRelated", blueprint.glossary.length)}
+              <span className="px-1">·</span>
+              {t("blueprint.relatedUnits", {
+                units:
+                  Array.from(
+                    new Set(
+                      blueprint.glossary.flatMap((term) =>
+                        term.node_ids
+                          .map((nodeId) => {
+                            const node = blueprint.outline.find(
+                              (item) => item.id === nodeId,
+                            );
+                            return node?.unit_id
+                              ? unitTitleMap.get(node.unit_id) ?? ""
+                              : "";
+                          })
+                          .filter(Boolean),
+                      ),
+                    ),
+                  )
+                    .slice(0, 3)
+                    .join(", ") || t("common.none"),
+              })}
             </p>
           ) : null}
         </div>

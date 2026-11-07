@@ -100,7 +100,7 @@ leave a line in `.env` without a value while you decide.
 | `OPENCGP_RERANK_API_KEY` | *(empty)* | string | Provider key |
 | `OPENCGP_RERANK_BASE_URL` | *(empty)* | URL | Required for `generic` / `tei` / `http` |
 | `OPENCGP_RERANK_MODEL` | *(empty)* | string | Required for `generic` / `tei` / `http` |
-| `OPENCGP_RERANK_TOP_N` | `12` | int | Candidates sent to the reranker |
+| `OPENCGP_RERANK_TOP_N` | `12` | int | Candidates sent to the reranker for scoring; `0` = score every candidate |
 | `OPENCGP_RERANK_WEIGHT` | `0.5` | 0–1 | Final blend weight of the rerank score |
 | `OPENCGP_RERANK_TIMEOUT` | `20` | seconds | Per-request timeout |
 | `OPENCGP_RERANK_RETRIES` | `2` | int | Retries on transient failures |

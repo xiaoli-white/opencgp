@@ -34,6 +34,8 @@ type WeightForm = {
   topN: string;
 };
 
+type WeightKey = "vector_weight" | "rerank_weight" | "rerank_top_n";
+
 function errorText(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
@@ -78,6 +80,7 @@ export default function RetrievalWeightsSection({ scope, canManage, onNotice, on
     (value: string) => {
       if (value === "user") return t("retrieval.sourceUser");
       if (value === "tenant") return t("retrieval.sourceTenant");
+      if (value === "inherited") return t("retrieval.sourceInherited");
       if (value === "global") return t("retrieval.scopeBadgeGlobal");
       return t("retrieval.sourceDefault");
     },
@@ -89,9 +92,11 @@ export default function RetrievalWeightsSection({ scope, canManage, onNotice, on
       ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-300"
       : value === "tenant"
         ? "bg-violet-500/10 text-violet-600 dark:text-violet-300"
-        : value === "global"
-          ? "bg-amber-400/15 text-amber-700 dark:text-amber-300"
-          : "chip-muted";
+        : value === "inherited"
+          ? "bg-sky-500/10 text-sky-600 dark:text-sky-300"
+          : value === "global"
+            ? "bg-amber-400/15 text-amber-700 dark:text-amber-300"
+            : "chip-muted";
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -132,9 +137,10 @@ export default function RetrievalWeightsSection({ scope, canManage, onNotice, on
     }
     const topN = weightForm.topN.trim();
     if (topN) {
-      const value = Math.trunc(Number(topN));
+      const value = Number(topN);
       if (Number.isFinite(value)) {
-        payload.rerank_top_n = Math.max(1, Math.min(50, value));
+        // 0 is an explicit opt-out: rerank every retrieved candidate.
+        payload.rerank_top_n = Math.max(0, Math.floor(value));
         count += 1;
       }
     }
@@ -198,36 +204,77 @@ export default function RetrievalWeightsSection({ scope, canManage, onNotice, on
   const activeScope = settings?.scopes?.[scope];
   const sources = settings?.sources ?? {};
   const effectiveWeights = settings?.effective?.weights ?? settings?.weights;
-  const effectiveSources = settings?.effective?.weights?.sources ?? sources;
   const title =
     scope === "user" ? t("retrieval.weightsTitleUser") : t("retrieval.weightsTitleTenant");
   const description =
     scope === "user" ? t("retrieval.weightsDescUser") : t("retrieval.weightsDescTenant");
+  const effectiveTitle =
+    scope === "user" ? t("retrieval.effectiveTitle") : t("retrieval.effectiveTitleTenant");
+  const effectiveHint =
+    scope === "user" ? t("retrieval.effectiveHint") : t("retrieval.effectiveHintTenant");
+
+  /**
+   * Where the value shown on this card actually comes from. The card only ever
+   * talks about its own scope: a value stored at this scope is "space"/"personal",
+   * anything else is inherited (tenant -> default on the personal card, default on
+   * the space card). A personal override must never leak into the space card.
+   */
+  const weightOrigin = (key: WeightKey): string => {
+    const own = settings?.scopes?.[scope]?.[key];
+    if (own !== null && own !== undefined) return scope;
+    if (scope === "user") {
+      const fromSpace = settings?.scopes?.tenant?.[key];
+      if (fromSpace !== null && fromSpace !== undefined) return "inherited";
+    }
+    return "env";
+  };
+
+  /** The value this scope resolves to, mirroring the backend's fallback chain. */
+  const weightValue = (key: WeightKey) => {
+    const origin = weightOrigin(key);
+    if (origin === "user" || origin === "tenant") {
+      return { value: settings?.scopes?.[scope]?.[key] ?? null, origin };
+    }
+    if (origin === "inherited") {
+      return { value: settings?.scopes?.tenant?.[key] ?? null, origin };
+    }
+    return { value: defaults[key], origin };
+  };
+
+  const effectiveRows: Array<{ key: WeightKey; label: string }> = [
+    { key: "vector_weight", label: t("retrieval.vectorShort") },
+    { key: "rerank_weight", label: t("retrieval.rerankShort") },
+    { key: "rerank_top_n", label: t("retrieval.rerankCandidatesShort") },
+  ];
 
   const renderWeightField = (
-    key: "vector_weight" | "rerank_weight" | "rerank_top_n",
+    key: WeightKey,
     label: string,
     value: string,
     placeholder: string,
     onChange: (next: string) => void,
+    options: { inputMode?: "decimal" | "numeric"; unit?: string } = {},
   ) => {
-    const source = sources[key] || "env";
+    const origin = weightOrigin(key);
     return (
       <div className="rounded-2xl border border-white/60 bg-white/40 px-3 py-2.5 dark:border-white/10 dark:bg-white/[0.03]">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[11px] text-slate-600 dark:text-slate-300">{label}</span>
-          <span className={clsx("chip", sourceBadgeClass(source))}>{sourceText(source)}</span>
+          <span className={clsx("chip", sourceBadgeClass(origin))}>{sourceText(origin)}</span>
           <span className="flex-1" />
-          <span className="block w-36 shrink-0">
+          <span className="flex w-40 shrink-0 items-center gap-1">
             <input
               data-weight-field={key}
-              inputMode="decimal"
+              inputMode={options.inputMode ?? "decimal"}
               value={value}
               onChange={(event) => onChange(event.target.value)}
               placeholder={placeholder}
               disabled={!canManage}
-              className="input px-2 py-1 text-[11px]"
+              className="input min-w-0 flex-1 px-2 py-1 text-[11px]"
             />
+            {options.unit ? (
+              <span className="shrink-0 text-[10px] text-slate-400">{options.unit}</span>
+            ) : null}
           </span>
           <button
             type="button"
@@ -313,11 +360,20 @@ export default function RetrievalWeightsSection({ scope, canManage, onNotice, on
               )}
               {renderWeightField(
                 "rerank_top_n",
-                t("retrieval.topN"),
+                t("retrieval.rerankCandidates"),
                 weightForm.topN,
                 t("retrieval.inheritDefault", { value: defaults.rerank_top_n }),
                 (next) => setWeightForm((prev) => ({ ...prev, topN: next })),
+                { inputMode: "numeric", unit: t("retrieval.rerankCandidatesUnit") },
               )}
+              <p className="text-[10px] leading-relaxed text-slate-400">
+                {t("retrieval.rerankCandidatesHint")}
+              </p>
+              {weightForm.topN.trim() === "0" ? (
+                <p className="text-[10px] text-amber-600 dark:text-amber-300">
+                  {t("retrieval.rerankCandidatesZero")}
+                </p>
+              ) : null}
               {weightForm.vector.trim() === "0" ? (
                 <p className="text-[10px] text-amber-600 dark:text-amber-300">
                   {t("retrieval.vectorZero")}
@@ -355,41 +411,23 @@ export default function RetrievalWeightsSection({ scope, canManage, onNotice, on
               <div className="flex items-center gap-1.5">
                 <Gauge size={12} className="text-indigo-500 dark:text-indigo-300" />
                 <span className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">
-                  {t("retrieval.effectiveTitle")}
+                  {effectiveTitle}
                 </span>
               </div>
-              <p className="mt-0.5 text-[9.5px] text-slate-400">{t("retrieval.effectiveHint")}</p>
+              <p className="mt-0.5 text-[9.5px] text-slate-400">{effectiveHint}</p>
               <div className="mt-2 space-y-1.5 font-mono text-[10.5px] text-slate-600 dark:text-slate-300">
-                {[
-                  {
-                    key: "vector_weight",
-                    label: t("retrieval.vectorShort"),
-                    value: effectiveWeights?.vector,
-                  },
-                  {
-                    key: "rerank_weight",
-                    label: t("retrieval.rerankShort"),
-                    value: effectiveWeights?.rerank,
-                  },
-                  {
-                    key: "rerank_top_n",
-                    label: t("retrieval.topNShort"),
-                    value: effectiveWeights?.top_n,
-                  },
-                ].map((row) => (
-                  <div key={row.key} className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-slate-400">{row.label}</span>
-                    <span className="font-semibold">{row.value ?? "-"}</span>
-                    <span
-                      className={clsx(
-                        "chip",
-                        sourceBadgeClass(effectiveSources[row.key] || "env"),
-                      )}
-                    >
-                      {sourceText(effectiveSources[row.key] || "env")}
-                    </span>
-                  </div>
-                ))}
+                {effectiveRows.map((row) => {
+                  const effective = weightValue(row.key);
+                  return (
+                    <div key={row.key} className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-slate-400">{row.label}</span>
+                      <span className="font-semibold">{effective.value ?? "-"}</span>
+                      <span className={clsx("chip", sourceBadgeClass(effective.origin))}>
+                        {sourceText(effective.origin)}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
               <div className="mt-2 space-y-1 border-t border-white/60 pt-2 text-[9.5px] text-slate-400 dark:border-white/10">
                 <p className="break-all">
@@ -437,8 +475,7 @@ export default function RetrievalWeightsSection({ scope, canManage, onNotice, on
                     {t("retrieval.diagWeights")}: {t("retrieval.vectorShort")}=
                     {effectiveWeights?.vector} ({sourceText(sources.vector_weight || "env")}){" "}
                     {t("retrieval.rerankShort")}={effectiveWeights?.rerank} (
-                    {sourceText(sources.rerank_weight || "env")}) {t("retrieval.topNShort")}=
-                    {effectiveWeights?.top_n} ({sourceText(sources.rerank_top_n || "env")})
+                    {sourceText(sources.rerank_weight || "env")})
                   </div>
                 </div>
               </div>

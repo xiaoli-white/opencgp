@@ -62,9 +62,41 @@ from app.services.profiles import ProfileService
 from app.services.validators import ValidatorRunner
 from app.services.accounts import AccountAdminService
 from app.services.media import MediaService
+from app.services.runtime_config import RuntimeConfigService
 from app.services.video import VideoService
 
 PROVIDER_CACHE_SIZE = 64
+
+# Override key -> cached container instance that owns the captured timeout.
+_TIMEOUT_OWNERS: dict[str, tuple[str, ...]] = {
+    "llm.timeout": ("llm",),
+    "image.timeout": ("image_provider",),
+    "video.timeout": ("video_renderer",),
+    "websearch.timeout": ("web_search",),
+    "websearch.fetch_timeout": ("web_search",),
+    "embedding.timeout": ("embedder",),
+    "rerank.timeout": (),  # reranker() builds a fresh instance on every call
+}
+
+# Cached instance -> cached instances it captured by reference. Used to work out
+# which long-lived services must be rebuilt after an adapter is replaced.
+_INSTANCE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
+    "vectorstore": ("embedder",),
+    "ingest": ("vectorstore", "embedder"),
+    "generation": ("vectorstore", "llm", "factcheck", "validators"),
+    "factcheck": ("vectorstore", "llm"),
+    "blueprint": ("vectorstore", "llm"),
+    "conversation": ("llm",),
+    "research": ("vectorstore", "llm", "web_search"),
+    "piece": ("vectorstore", "llm"),
+    "media_service": ("image_provider", "storage"),
+    "video_service": ("media_service", "video_renderer"),
+}
+
+# Lifecycle-owned instances are created and started once in the app lifespan.
+# Dropping them would leave queue workers attached to the old job service, so
+# they are updated in place (see refresh_timeout_attrs) instead of rebuilt.
+_PROTECTED_INSTANCES = frozenset({"job_service", "job_queue", "job_events"})
 
 RERANK_PRESETS = {
     "dashscope": {
@@ -137,6 +169,129 @@ class Container:
             self._instances[key] = builder()
         return self._instances[key]
 
+    def runtime_config(self) -> RuntimeConfigService:
+        def build() -> RuntimeConfigService:
+            return RuntimeConfigService(self.database())
+
+        return self._get_or_build("runtime_config", build)
+
+    # -- runtime timeout maintenance --------------------------------------
+
+    def refresh_timeout_attrs(self, keys: set[str] | list[str]) -> list[dict[str, Any]]:
+        """Push new timeout values onto already-built adapters, in place.
+
+        This keeps the provider cache and the lifecycle-owned job service
+        correct without dropping them; callers that can rebuild still do so via
+        :meth:`invalidate_timeout_dependents`.
+        """
+        wanted = set(keys)
+        bindings: dict[str, tuple[tuple[str, str, str], ...]] = {
+            "llm": (("llm", "timeout", "llm.timeout"),),
+            "embedder": (("embedding", "timeout", "embedding.timeout"),),
+            "web_search": (
+                ("websearch", "timeout", "websearch.timeout"),
+                ("websearch", "fetch_timeout", "websearch.fetch_timeout"),
+            ),
+            "image_provider": (("image", "timeout", "image.timeout"),),
+            "video_renderer": (("video", "timeout", "video.timeout"),),
+        }
+        updated: list[dict[str, Any]] = []
+
+        def apply(owner: str, adapter: Any, group: str, attribute: str, key: str) -> None:
+            if key not in wanted or adapter is None:
+                return
+            target = getattr(self.settings, group, None)
+            if target is None:
+                return
+            value = getattr(target, attribute, None)
+            if value is None or getattr(adapter, attribute, None) == value:
+                return
+            setattr(adapter, attribute, value)
+            updated.append(
+                {
+                    "component": owner,
+                    "kind": type(adapter).__name__,
+                    "attribute": attribute,
+                    "value": value,
+                }
+            )
+
+        for owner, entries in bindings.items():
+            adapter = self._instances.get(owner)
+            for group, attribute, key in entries:
+                apply(owner, adapter, group, attribute, key)
+        if "llm.timeout" in wanted:
+            for adapter in self._provider_cache.values():
+                if hasattr(adapter, "timeout"):
+                    apply(
+                        "provider_cache",
+                        adapter,
+                        "llm",
+                        "timeout",
+                        "llm.timeout",
+                    )
+        return updated
+
+    def invalidate_timeout_dependents(self, keys: set[str] | list[str]) -> list[str]:
+        """Drop cached adapters/services affected by a timeout change.
+
+        ``_provider_cache`` is intentionally preserved (its entries are updated
+        in place by :meth:`refresh_timeout_attrs`) and the job service family is
+        protected because its queue workers are started once per process.
+        """
+        roots: set[str] = set()
+        for key in keys:
+            roots.update(_TIMEOUT_OWNERS.get(key, ()))
+        affected = set(roots)
+        changed = True
+        while changed:
+            changed = False
+            for name, dependencies in _INSTANCE_DEPENDENCIES.items():
+                if name in affected or name in _PROTECTED_INSTANCES:
+                    continue
+                if any(dep in affected for dep in dependencies):
+                    affected.add(name)
+                    changed = True
+        removed: list[str] = []
+        for name in sorted(affected):
+            if name in _PROTECTED_INSTANCES:
+                continue
+            if self._instances.pop(name, None) is not None:
+                removed.append(name)
+        return removed
+
+    def probe_timeouts(self, keys: set[str] | list[str]) -> dict[str, Any]:
+        """Build the affected adapter and report its live timeout attributes.
+
+        Used for the operator-facing log line; it also warms the cache with the
+        rebuilt instance so the next request uses the new value.
+        """
+        wanted = set(keys)
+        probes: dict[str, Any] = {}
+
+        def describe(component: Any) -> dict[str, Any]:
+            if component is None:
+                return {"component": "none", "timeout": None}
+            return {
+                "component": type(component).__name__,
+                "timeout": getattr(component, "timeout", None),
+                "fetch_timeout": getattr(component, "fetch_timeout", None),
+            }
+
+        if "llm.timeout" in wanted:
+            probes["llm.timeout"] = describe(self.llm())
+        if "embedding.timeout" in wanted:
+            probes["embedding.timeout"] = describe(self.embedder())
+        if "image.timeout" in wanted:
+            probes["image.timeout"] = describe(self.image_provider())
+        if "video.timeout" in wanted:
+            probes["video.timeout"] = describe(self.video_renderer())
+        if "websearch.timeout" in wanted or "websearch.fetch_timeout" in wanted:
+            probes["websearch"] = describe(self.web_search())
+        if "rerank.timeout" in wanted:
+            probes["rerank.timeout"] = describe(self.reranker())
+        return probes
+
     def database(self) -> Database:
         def build() -> Database:
             settings = self.settings.database
@@ -195,6 +350,7 @@ class Container:
                     base_url=self.settings.llm.base_url,
                     api_key=self.settings.llm.api_key,
                     model=self.settings.llm.model,
+                    timeout=self.settings.llm.timeout,
                 )
             raise ValueError(f"unsupported llm backend: {backend!r}")
 

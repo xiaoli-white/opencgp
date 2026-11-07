@@ -270,6 +270,7 @@ class ProviderCatalogService:
             model=model or (provider.models[0] if provider.models else self.server.model),
             temperature=SERVER_TEMPERATURE,
             max_tokens=SERVER_MAX_TOKENS,
+            timeout=self.server.timeout,
         )
 
     def resolve_model(self, provider: ServerProvider, model: str = "") -> str:
